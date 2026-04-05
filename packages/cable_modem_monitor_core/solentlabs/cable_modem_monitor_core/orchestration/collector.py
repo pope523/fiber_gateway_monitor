@@ -308,7 +308,7 @@ class ModemDataCollector:
             _logger.debug(
                 "Auth succeeded [%s]: status=%d, url=%s",
                 self._modem_config.model,
-                result.response.status_code if result.response else 0,
+                result.response.status_code if result.response is not None else 0,
                 result.response_url or "(none)",
             )
 

@@ -97,13 +97,13 @@ class HTTPResourceLoader:
         # Check for auth response reuse
         reuse_path = ""
         reuse_response: requests.Response | None = None
-        if auth_result and auth_result.response and auth_result.response_url:
+        if auth_result and auth_result.response is not None and auth_result.response_url:
             reuse_path = auth_result.response_url
             reuse_response = auth_result.response
 
         for target in targets:
             # Auth response reuse — skip fetch if login landed here
-            if reuse_path and reuse_response and target.path == reuse_path:
+            if reuse_path and reuse_response is not None and target.path == reuse_path:
                 _logger.debug(
                     "Reusing auth response for %s [%s]",
                     target.path,

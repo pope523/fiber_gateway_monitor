@@ -261,3 +261,33 @@ class TestHTTPResourceLoader:
         assert "Server Status" in resources["/status.html"].get_text()
         # /info.html should be reused from auth response
         assert "Auth Landing" in resources["/info.html"].get_text()
+
+    def test_auth_response_reuse_with_error_status(self) -> None:
+        """Auth response with error status is still eligible for reuse.
+
+        requests.Response.__bool__() returns False for status >= 400.
+        The reuse check must use ``is not None``, not truthiness.
+        """
+        entries = _build_entries({"/status.html": ("text/html", "<html>Server Status</html>")})
+
+        # Response with 403 — bool(response) is False
+        error_response = requests.Response()
+        error_response.status_code = 403
+        error_response._content = b"<html>Error Landing</html>"
+        error_response.url = "http://192.168.100.1/status.html"
+        error_response.encoding = "utf-8"
+
+        auth_result = AuthResult(
+            success=True,
+            response=error_response,
+            response_url="/status.html",
+        )
+
+        with HARMockServer(entries) as server:
+            session = requests.Session()
+            loader = HTTPResourceLoader(session, server.base_url, timeout=10)
+            targets = [ResourceTarget(path="/status.html", format="table")]
+            resources = loader.fetch(targets, auth_result=auth_result)
+
+        # Should reuse the auth response (error content), not fetch from server
+        assert "Error Landing" in resources["/status.html"].get_text()

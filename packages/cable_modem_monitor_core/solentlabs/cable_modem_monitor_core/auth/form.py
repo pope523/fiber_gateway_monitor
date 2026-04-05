@@ -132,9 +132,9 @@ def _check_success(config: FormAuth, response: requests.Response) -> str:
     Returns an error message on failure, empty string on success.
     """
     if config.success is None:
-        # No explicit success criteria — accept any non-401
-        if response.status_code == 401:
-            return "Login returned 401 Unauthorized"
+        # No explicit success criteria — accept any non-error response
+        if response.status_code >= 400:
+            return f"Login returned HTTP {response.status_code}"
         return ""
 
     if config.success.redirect:

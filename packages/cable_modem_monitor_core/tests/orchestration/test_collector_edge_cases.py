@@ -439,3 +439,64 @@ class TestSessionReusedFlag:
         config = _make_config(auth_type="hnap", transport="hnap")
         collector = ModemDataCollector(config, None, None, "http://localhost", "", "pw")
         assert collector._session_reused is False
+
+
+# ------------------------------------------------------------------
+# Tests — auth success logging uses status_code, not Response truthiness
+# ------------------------------------------------------------------
+
+
+class TestAuthSuccessLogging:
+    """Auth succeeded log shows actual status code, not 0.
+
+    requests.Response.__bool__() returns False for status >= 400,
+    so ``if result.response`` would mask the real status code as 0.
+    The collector must use ``result.response is not None`` instead.
+    """
+
+    def test_error_status_logged_correctly(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Auth result with 4xx response logs actual status code, not 0."""
+        config = _make_config(auth_type="basic")
+        collector = ModemDataCollector(config, MagicMock(), None, "http://localhost", "", "pw")
+
+        error_response = requests.Response()
+        error_response.status_code = 403
+        error_response._content = b"Forbidden"
+
+        with patch.object(
+            collector._auth_manager,
+            "authenticate",
+            return_value=AuthResult(
+                success=True,
+                response=error_response,
+                response_url="/login",
+            ),
+        ):
+            import logging
+
+            with caplog.at_level(logging.DEBUG):
+                collector.authenticate()
+
+        auth_log = [r for r in caplog.records if "Auth succeeded" in r.message]
+        assert len(auth_log) == 1
+        assert "status=403" in auth_log[0].message
+        assert "status=0" not in auth_log[0].message
+
+    def test_none_response_logs_zero(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Auth result with no response object logs status=0."""
+        config = _make_config(auth_type="basic")
+        collector = ModemDataCollector(config, MagicMock(), None, "http://localhost", "", "pw")
+
+        with patch.object(
+            collector._auth_manager,
+            "authenticate",
+            return_value=AuthResult(success=True),
+        ):
+            import logging
+
+            with caplog.at_level(logging.DEBUG):
+                collector.authenticate()
+
+        auth_log = [r for r in caplog.records if "Auth succeeded" in r.message]
+        assert len(auth_log) == 1
+        assert "status=0" in auth_log[0].message

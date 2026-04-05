@@ -248,7 +248,7 @@ auth:
 **Success detection:** If `success` is provided, checks `redirect`
 (path substring match) and/or `indicator` (body substring match).
 Both are optional; if both present, both must pass. If `success` is
-omitted, any response that is not HTTP 401 is treated as success.
+omitted, any response with HTTP status < 400 is treated as success.
 
 Evidence: modems with HTML login forms. Encoding, field names, and
 success indicators vary by manufacturer. Both `goform` and `cgi-bin`
