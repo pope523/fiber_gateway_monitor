@@ -26,6 +26,7 @@ from ..protocol.hnap import (
     hmac_hex,
 )
 from .base import AuthContext, AuthResult, BaseAuthManager
+from .response import parse_json_dict
 
 if TYPE_CHECKING:
     from ..models.modem_config.auth import HnapAuth
@@ -178,19 +179,12 @@ class HnapAuthManager(BaseAuthManager):
                 error=f"HNAP challenge request failed: {e}",
             )
 
-        try:
-            data = response.json()
-        except (ValueError, TypeError):
-            return AuthResult(
-                success=False,
-                error=(f"HNAP challenge response is not valid JSON " f"(status {response.status_code})"),
-            )
-
-        if not isinstance(data, dict):
-            return AuthResult(
-                success=False,
-                error=f"HNAP challenge response is not a JSON object (status {response.status_code})",
-            )
+        data = parse_json_dict(
+            response,
+            context="HNAP challenge response",
+        )
+        if isinstance(data, AuthResult):
+            return data
 
         login_response = data.get("LoginResponse", {})
         challenge = login_response.get("Challenge")
@@ -286,19 +280,12 @@ class HnapAuthManager(BaseAuthManager):
                 error=f"HNAP login request failed: {e}",
             )
 
-        try:
-            data = response.json()
-        except (ValueError, TypeError):
-            return AuthResult(
-                success=False,
-                error=(f"HNAP login response is not valid JSON " f"(status {response.status_code})"),
-            )
-
-        if not isinstance(data, dict):
-            return AuthResult(
-                success=False,
-                error=f"HNAP login response is not a JSON object (status {response.status_code})",
-            )
+        data = parse_json_dict(
+            response,
+            context="HNAP login response",
+        )
+        if isinstance(data, AuthResult):
+            return data
 
         # Store diagnostics (phase 2)
         if self._diagnostics is not None:

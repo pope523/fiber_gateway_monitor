@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -12,12 +11,10 @@ import pytest
 import requests
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESCCM
-from solentlabs.cable_modem_monitor_core.auth.base import AuthResult
 from solentlabs.cable_modem_monitor_core.auth.form_sjcl import (
     FormSjclAuthManager,
     _derive_key,
     _fetch_page_vars,
-    _post_json,
 )
 from solentlabs.cable_modem_monitor_core.models.modem_config.auth import (
     FormSjclAuth,
@@ -414,126 +411,3 @@ class TestFormSjclAuthManager:
             result = manager.authenticate(session, "http://192.168.0.1", "admin", "password")
 
         assert result.success is True
-
-
-# Constants for _post_json tests.
-_LONG_STRING_VALUE = "x" * 300
-
-
-def _mock_response(
-    *,
-    json_value: Any = None,
-    json_error: bool = False,
-    text: str = "",
-    status_code: int = 200,
-) -> MagicMock:
-    """Build a mock Response for _post_json tests."""
-    resp = MagicMock(spec=requests.Response)
-    resp.status_code = status_code
-    resp.text = text
-    if json_error:
-        resp.json.side_effect = ValueError("not json")
-    else:
-        resp.json.return_value = json_value
-    return resp
-
-
-class TestPostJson:
-    """Direct unit tests for _post_json response handling."""
-
-    def test_success_returns_tuple(self, session: requests.Session) -> None:
-        """Dict response returns (response, data) tuple."""
-        resp = _mock_response(json_value={"ok": True}, text='{"ok": true}')
-        with patch.object(session, "post", return_value=resp):
-            result = _post_json(session, "http://modem/api", {}, 10)
-
-        assert isinstance(result, tuple)
-        assert result[1] == {"ok": True}
-
-    def test_not_json_error_includes_body(self, session: requests.Session) -> None:
-        """Non-JSON response error includes response body preview."""
-        resp = _mock_response(json_error=True, text="<html>Login Required</html>")
-        with patch.object(session, "post", return_value=resp):
-            result = _post_json(session, "http://modem/api", {}, 10)
-
-        assert isinstance(result, AuthResult)
-        assert result.success is False
-        assert "not valid json" in result.error.lower()
-        assert "Login Required" in result.error
-
-    # ┌───────────────────────────────────┬──────────┬──────────────────────────────────┐
-    # │ json_value                        │ exp_type │ description                      │
-    # ├───────────────────────────────────┼──────────┼──────────────────────────────────┤
-    # │ "NOSESSION"                       │ "str"    │ modem error string               │
-    # │ _LONG_STRING_VALUE                │ "str"    │ long string truncated            │
-    # │ [1, 2, 3]                         │ "list"   │ list value                       │
-    # │ 42                                │ "int"    │ integer value                    │
-    # │ True                              │ "bool"   │ boolean value                    │
-    # │ None                              │ "None…"  │ null value                       │
-    # └───────────────────────────────────┴──────────┴──────────────────────────────────┘
-    #
-    # fmt: off
-    NON_DICT_JSON_CASES = [
-        # (json_value,          expected_type,  expected_preview,  description)
-        ("NOSESSION",           "str",          "NOSESSION",       "modem error string"),
-        (_LONG_STRING_VALUE,    "str",          "xxx",             "long string truncated"),
-        ([1, 2, 3],             "list",         "[1, 2, 3]",       "list value"),
-        (42,                    "int",          "42",              "integer value"),
-        (True,                  "bool",         "True",            "boolean value"),
-        (None,                  "NoneType",     "None",            "null value"),
-    ]
-    # fmt: on
-
-    @pytest.mark.parametrize(
-        "json_value,expected_type,expected_preview,desc",
-        NON_DICT_JSON_CASES,
-        ids=[c[3] for c in NON_DICT_JSON_CASES],
-    )
-    def test_non_dict_error_includes_type_and_preview(
-        self,
-        session: requests.Session,
-        json_value: object,
-        expected_type: str,
-        expected_preview: str,
-        desc: str,
-    ) -> None:
-        """Non-dict JSON response error includes type name and value preview."""
-        resp = _mock_response(json_value=json_value, text=str(json_value))
-        with patch.object(session, "post", return_value=resp):
-            result = _post_json(session, "http://modem/api", {}, 10)
-
-        assert isinstance(result, AuthResult)
-        assert result.success is False
-        assert expected_type in result.error
-        assert expected_preview in result.error
-
-    def test_long_string_preview_truncated(self, session: requests.Session) -> None:
-        """Long string values are truncated in the error message."""
-        resp = _mock_response(json_value=_LONG_STRING_VALUE, text=_LONG_STRING_VALUE)
-        with patch.object(session, "post", return_value=resp):
-            result = _post_json(session, "http://modem/api", {}, 10)
-
-        assert isinstance(result, AuthResult)
-        assert result.success is False
-        # 300-char value must be truncated — error should not contain
-        # the full repr (306 chars with quotes).
-        assert len(result.error) < 300
-        assert "..." in result.error
-
-    def test_debug_log_on_response(
-        self,
-        session: requests.Session,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """POST response body is logged at DEBUG level."""
-        resp = _mock_response(
-            json_value={"p_status": "AdminMatch"},
-            text='{"p_status": "AdminMatch"}',
-        )
-        with (
-            caplog.at_level(logging.DEBUG, logger="solentlabs.cable_modem_monitor_core.auth.form_sjcl"),
-            patch.object(session, "post", return_value=resp),
-        ):
-            _post_json(session, "http://modem/api", {}, 10)
-
-        assert any("response" in r.message.lower() and "200" in r.message for r in caplog.records)

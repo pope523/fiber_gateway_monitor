@@ -30,7 +30,6 @@ See MODEM_YAML_SPEC.md ``form_sjcl`` strategy.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import logging
@@ -41,6 +40,7 @@ import requests
 
 from ..models.modem_config.auth import FormSjclAuth
 from .base import AuthResult, BaseAuthManager
+from .response import post_json
 
 _logger = logging.getLogger(__name__)
 
@@ -50,16 +50,6 @@ _WANTED_VARS = frozenset({"myIv", "mySalt", "currentSessionId"})
 _VAR_RE = re.compile(
     r"(?:var\s+)?(\w+)\s*=\s*'([^']*)'",
 )
-
-_VALUE_PREVIEW_MAX = 200
-
-
-def _safe_preview(value: object, max_len: int = _VALUE_PREVIEW_MAX) -> str:
-    """Return a repr-based preview of *value*, truncated for safety."""
-    text = repr(value)
-    if len(text) > max_len:
-        return text[:max_len] + "..."
-    return text
 
 
 class FormSjclAuthManager(BaseAuthManager):
@@ -182,7 +172,7 @@ class FormSjclAuthManager(BaseAuthManager):
         # Step 6: Session validation (optional)
         if config.session_validation_endpoint:
             validation_url = f"{base_url}{config.session_validation_endpoint}"
-            val_result = _post_json(session, validation_url, {}, timeout)
+            val_result = post_json(session, validation_url, {}, timeout)
             if isinstance(val_result, AuthResult):
                 return val_result
 
@@ -326,7 +316,7 @@ def _submit_login(
 
     Returns (response, json_body) on success, AuthResult on failure.
     """
-    result = _post_json(session, url, payload, timeout)
+    result = post_json(session, url, payload, timeout)
     if isinstance(result, AuthResult):
         return result
     response, body = result
@@ -340,52 +330,3 @@ def _submit_login(
             response_url=endpoint,
         )
     return response, body
-
-
-def _post_json(
-    session: requests.Session,
-    url: str,
-    payload: dict[str, Any],
-    timeout: int,
-) -> tuple[requests.Response, dict[str, Any]] | AuthResult:
-    """POST JSON and return (response, parsed JSON body).
-
-    Logs the raw response body at DEBUG level for diagnostics.
-    Returns AuthResult on network or parse errors, including a
-    truncated preview of the response value in the error message.
-    """
-    try:
-        resp = session.post(url, json=payload, timeout=timeout)
-    except requests.RequestException as e:
-        if isinstance(e, requests.ConnectionError | requests.Timeout):
-            raise
-        return AuthResult(success=False, error=f"POST failed: {e}")
-
-    _logger.debug(
-        "POST %s response: status=%d, body=%s",
-        url,
-        resp.status_code,
-        _safe_preview(resp.text),
-    )
-
-    try:
-        data = resp.json()
-    except ValueError:
-        return AuthResult(
-            success=False,
-            error=f"Response is not valid JSON: {_safe_preview(resp.text)}",
-        )
-
-    # Some firmwares double-encode: the HTTP body is a JSON string
-    # containing a serialised JSON object.  Unwrap one layer.
-    if isinstance(data, str):
-        with contextlib.suppress(ValueError, TypeError):
-            data = json.loads(data)
-
-    if not isinstance(data, dict):
-        return AuthResult(
-            success=False,
-            error=f"Expected JSON object, got {type(data).__name__}: {_safe_preview(data)}",
-        )
-
-    return resp, data

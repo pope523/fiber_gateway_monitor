@@ -300,11 +300,10 @@ class TestFormPbkdf2AuthManager:
         json_value: object,
         desc: str,
     ) -> None:
-        """Does not crash when login response JSON is not a dict.
+        """Reports error when login response JSON is not a dict.
 
-        Non-dict login JSON has no ``error`` field to check, so the
-        code should fall through to the HTTP status code check.
-        With a 200 status, that means success.
+        Non-dict login JSON now triggers a proper type check via
+        the shared ``parse_json_dict`` helper.
         """
         config = self._make_config(double_hash=False)
         manager = FormPbkdf2AuthManager(config)
@@ -319,7 +318,8 @@ class TestFormPbkdf2AuthManager:
             mock_post.side_effect = [salt_resp, login_resp]
 
             result = manager.authenticate(session, "http://192.168.100.1", "admin", "password")
-            assert result.success is True
+            assert result.success is False
+            assert "expected json object" in result.error.lower()
 
     def test_login_401_failure(self, session: requests.Session) -> None:
         """Reports error when login returns 401."""

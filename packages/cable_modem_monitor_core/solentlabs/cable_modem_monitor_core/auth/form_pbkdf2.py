@@ -12,6 +12,7 @@ import requests
 
 from ..models.modem_config.auth import FormPbkdf2Auth
 from .base import AuthResult, BaseAuthManager
+from .response import parse_json_dict, post_json
 
 _logger = logging.getLogger(__name__)
 
@@ -155,18 +156,16 @@ def _request_salts(
     Returns AuthResult on failure, dict on success.
     """
     salt_data = {"username": username, "password": salt_trigger}
-    try:
-        salt_response = session.post(login_url, json=salt_data, timeout=timeout)
-        salt_json = salt_response.json()
-    except requests.RequestException as e:
-        if isinstance(e, requests.ConnectionError | requests.Timeout):
-            raise
-        return AuthResult(success=False, error=f"Salt request failed: {e}")
-    except ValueError:
-        return AuthResult(success=False, error="Salt response is not valid JSON")
-
-    if not isinstance(salt_json, dict):
-        return AuthResult(success=False, error="Salt response is not a JSON object")
+    result = post_json(
+        session,
+        login_url,
+        salt_data,
+        timeout,
+        context="Salt response",
+    )
+    if isinstance(result, AuthResult):
+        return result
+    _, salt_json = result
 
     if not salt_json.get("salt"):
         return AuthResult(success=False, error="No salt in server response")
@@ -193,19 +192,20 @@ def _submit_login(
             raise
         return AuthResult(success=False, error=f"Login POST failed: {e}")
 
-    # Check for failure indicators
-    try:
-        result_json = response.json()
-        if isinstance(result_json, dict) and result_json.get("error"):
-            return AuthResult(
-                success=False,
-                error=f"Login rejected: {result_json.get('message', 'unknown error')}",
-            )
-    except ValueError:
-        pass
-
+    # Check HTTP-level failure before attempting JSON parse —
+    # a 401 with an HTML body should not trigger a JSON parse error.
     if response.status_code == 401:
         return AuthResult(success=False, error="Login returned 401 Unauthorized")
+
+    result_json = parse_json_dict(response, context="Login response")
+    if isinstance(result_json, AuthResult):
+        return result_json
+
+    if result_json.get("error"):
+        return AuthResult(
+            success=False,
+            error=f"Login rejected: {result_json.get('message', 'unknown error')}",
+        )
 
     return response
 
