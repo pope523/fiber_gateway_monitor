@@ -30,6 +30,8 @@ from pathlib import Path
 from har_capture.patterns import load_allowlist
 from har_capture.sanitization import check_for_pii
 
+_LFS_POINTER_PREFIX = "version https://git-lfs.github.com/spec/v1"
+
 # ---------------------------------------------------------------------------
 # Load reference data
 # ---------------------------------------------------------------------------
@@ -339,9 +341,16 @@ def check_har_file(filepath: Path) -> list[str]:  # noqa: C901
     issues = []
 
     try:
-        with open(filepath, encoding="utf-8") as f:
-            har_data = json.load(f)
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        content = filepath.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        return [f"  Failed to read HAR file: {e}"]
+
+    if content.startswith(_LFS_POINTER_PREFIX):
+        return [f"  {filepath.name} is a Git LFS pointer — run: git lfs pull"]
+
+    try:
+        har_data = json.loads(content)
+    except json.JSONDecodeError as e:
         return [f"  Failed to parse HAR file: {e}"]
 
     def extract_text(obj: dict | list | str, path: str = "") -> None:  # noqa: C901

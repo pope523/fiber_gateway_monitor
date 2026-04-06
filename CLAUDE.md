@@ -94,32 +94,41 @@ wins over convenience.
     structure is wrong. Restructure the code (extract dependency, make
     injectable), don't paper over it with test complexity.
 
+15. **No forward references.** Helper functions that reference a class
+    must be defined after the class, not before it.
+    `from __future__ import annotations` makes it parse, but the code
+    reads wrong.
+
 ### Testing
 
-15. **Table-driven tests by default.** Identify the pattern BEFORE
+16. **Table-driven tests by default.** Identify the pattern BEFORE
     writing tests, not during review. If 3+ tests share the same
     setup→call→assert structure, start with the table.
 
-16. **Schema tests use fixtures, behavioural tests stay inline.**
+17. **Schema tests use fixtures, behavioural tests stay inline.**
     Valid/invalid configs are JSON fixture files (add a file to add a
     test case). Field defaults, access patterns, and state mutations
     are inline tests.
 
-17. **No inline data blobs in test files.** No inline JSON, HTML, or
+18. **No inline data blobs in test files.** No inline JSON, HTML, or
     multi-line data in test methods. Data comes from fixture files or
     named constants at module top.
 
+19. **No modem-specific references in tests.** Use generic paths and
+    names (`Solent Labs`, `T100`, `/status.html`). No cross-boundary
+    imports — test data lives inside the package's own `tests/`.
+
 ### Process
 
-18. **Only the developer stages files.** Never run `git add`. Show
+20. **Only the developer stages files.** Never run `git add`. Show
     the list of changed files and proposed commit message. Let the
     developer stage them.
 
-19. **No external actions without discussion.** Never create GitHub
+21. **No external actions without discussion.** Never create GitHub
     issues, PRs, commits, pushes, label changes, or any external-
     facing action without explicit discussion first.
 
-20. **Before deleting or moving ANY file, run `rg <filename>` across
+22. **Before deleting or moving ANY file, run `rg <filename>` across
     the entire project.** Files are referenced by non-Python sources
     (CI workflows, Makefiles, docs, VS Code tasks) that linters don't
     scan.
@@ -132,7 +141,8 @@ Authoritative doc indexes:
 | ----- | ----- |
 | `packages/cable_modem_monitor_core/docs/README.md` | Core specs — architecture, auth, parsing, orchestration, onboarding |
 | `custom_components/cable_modem_monitor/docs/README.md` | HA specs — config flow, entities, adapter wiring |
-| `packages/CLAUDE.md` | Coding standards, test patterns, step workflow |
+| `docs/CODE_REVIEW.md` | Coding standards, test patterns, naming conventions |
+| `docs/reference/RELEASING.md` | Release process (alpha, beta, stable) |
 
 ## Contents
 
@@ -141,14 +151,14 @@ Authoritative doc indexes:
 | Core Principles         | Architecture, config, specs, quality, testing, process |
 | Code Review Criteria    | See `docs/CODE_REVIEW.md`                              |
 | Pre-Push Verification   | Run `ruff` and `pytest` before pushing                 |
+| Git LFS                 | HAR files in LFS, `load_har_json()`, CI `lfs: true`   |
+| Log Messages            | `[MODEL]` tag convention for modem-specific logs       |
 | Async/Blocking I/O      | Wrap sync I/O in executor for HA                       |
-| Test Patterns           | Table-driven tests for readability                     |
+| Test Patterns           | See `docs/CODE_REVIEW.md`                              |
 | Irreversible Operations | Stop and verify before destructive git ops             |
 | Branch Management       | Rebase over cherry-pick                                |
 | Merge Strategy          | Merge commits for releases, squash for PRs             |
-| Alpha/Beta Release Flow | Tag on feature branch, CI vs publish distinction       |
-| Stable Release Flow     | Step-by-step stable release process                    |
-| Release Checklist       | Pre-release verification items                         |
+| Release Process         | See `docs/reference/RELEASING.md`                      |
 | PR and Issue Rules      | No auto-close keywords                                 |
 | Issue Labels            | Label meanings and when to change them                 |
 | Shell Commands          | Avoid permission check triggers                        |
@@ -192,6 +202,59 @@ pytest
 **Why?** CI runs on the entire project. Pre-commit hooks only check staged files.
 Skipping this causes CI failures that should have been caught locally.
 
+## Git LFS - HAR Test Fixtures
+
+HAR captures (`.har` files) are stored in Git LFS. They are write-once
+test fixtures that grow with each new modem.
+
+### Loading HAR files
+
+Always use `load_har_json()` from `cable_modem_monitor_core.har`:
+
+```python
+from solentlabs.cable_modem_monitor_core.har import load_har_json
+
+har_data = load_har_json(path)
+```
+
+**Never use raw `json.loads(path.read_text())`** for HAR files. The
+shared loader detects LFS pointers and attempts `git lfs pull`
+automatically. Without it, missing LFS setup produces opaque
+`JSONDecodeError` instead of actionable guidance.
+
+**Exception:** Standalone scripts that intentionally avoid Core as a
+dependency (e.g., `check_fixture_pii.py`) should inline the check:
+
+```python
+if content.startswith("version https://git-lfs.github.com/spec/v1"):
+    # handle LFS pointer
+```
+
+### CI workflows
+
+Add `lfs: true` to `actions/checkout` in any CI job that reads HAR
+file content (tests, PII checks). Jobs that only lint, validate
+manifests, or check versions do not need it.
+
+### Developer setup
+
+`git-lfs` must be installed before cloning. See
+[Getting Started](docs/setup/GETTING_STARTED.md) for setup instructions.
+
+## Log Messages - [MODEL] Tag
+
+Runtime log messages for a specific modem include the `[MODEL]` tag
+at the end of the subject phrase, before the separator (`:` or `—`):
+
+```python
+_logger.info("Parse complete [%s]: %d DS, %d US", model, ds, us)
+_logger.debug("Fetched /path [%s]: 200 (1234 bytes)", model)
+```
+
+Auth success logging belongs in the **collector**, not in individual
+auth managers — the collector has the model name and logs the
+`AuthResult` centrally.
+
 ## Async/Blocking I/O - Home Assistant Event Loop
 
 When calling sync functions from async code (e.g., in `config_flow.py`, `__init__.py`):
@@ -209,39 +272,12 @@ adapter = await hass.async_add_executor_job(get_auth_adapter_for_parser, parser_
 
 **Why?** HA will warn at runtime ("Detected blocking call...") but catching it during development is better. Ruff can't detect this when the blocking call is inside another function.
 
-## Test Patterns - Table-Driven Tests
+## Test Patterns
 
-When tests have multiple cases with same structure but different values, use table-driven tests:
+See [`docs/CODE_REVIEW.md`](docs/CODE_REVIEW.md) for table-driven test
+patterns, fixture conventions, and coverage requirements.
 
-1. **Define data tables at TOP of test file** - all cases visible at a glance
-2. **Use ASCII table in comments** - human-readable documentation
-3. **Use `# fmt: off/on`** - preserve column alignment
-4. **Single parameterized test** - consumes the table
-
-```python
-# ┌──────────┬────────────┬───────┬─────────────┐
-# │ input    │ expected   │ pass? │ description │
-# ├──────────┼────────────┼───────┼─────────────┤
-# │ "valid"  │ True       │ ✓     │ normal case │
-# │ ""       │ False      │ ✗     │ empty input │
-# └──────────┴────────────┴───────┴─────────────┘
-#
-# fmt: off
-TEST_CASES = [
-    # (input,   expected, pass?, description)
-    ("valid",   True,     True,  "normal case"),
-    ("",        False,    False, "empty input"),
-]
-# fmt: on
-
-@pytest.mark.parametrize("input,expected,should_pass,desc", TEST_CASES)
-def test_validation(input, expected, should_pass, desc):
-    ...
-```
-
-**Why?** Easy to review, easy to extend (add a row), self-documenting.
-
-See `tests/modem_config/test_modem_yaml_validation.py` for reference implementation.
+Reference implementation: `tests/modem_config/test_modem_yaml_validation.py`.
 
 ## Irreversible Operations - STOP and VERIFY
 
@@ -283,93 +319,17 @@ When applying a fix to multiple feature branches (e.g., v3.11.0 and v3.12.0):
 
 - Creates one clean commit on main
 
-## Alpha/Beta Release Flow
+## Release Process
 
-Pre-release versions (alpha, beta) are tagged directly on the feature
-branch. **CI runs on push. Publishing runs on tag push. These are
-separate steps — don't skip the tag.**
+See [`docs/reference/RELEASING.md`](docs/reference/RELEASING.md) for
+the full step-by-step release process (alpha, beta, stable).
 
-1. Commit the fix
-2. Run `scripts/release.py <version>` to bump versions
-3. Stage and commit the version bump
-4. Push the branch → CI runs (tests, hassfest, CodeQL)
-5. **Wait for CI to pass**
-6. Tag: `git tag v<version> <sha>`
-7. Push the tag: `git push origin v<version>` → PyPI publish runs
-8. Verify publish: `gh run list --workflow publish.yml --limit 1`
+Key rules:
 
-**Common mistake:** Pushing the branch and assuming the package is
-published. It's not — the publish workflow only triggers on tag push.
-If you skip step 6-7, the version bump is committed but the package
-never reaches PyPI.
-
-## Stable Release Flow
-
-Follow this exact sequence for clean releases:
-
-### 1. Pre-Release Verification
-
-```bash
-ruff check .                    # Full project lint
-pytest                          # Full test suite
-```
-
-### 2. Dogfood on Local HA
-
-- Ask the user to launch HA via VS Code task ("HA: Start (Fresh)") or `make docker-start`
-- User verifies: integration loads, sensors created, no blocking I/O warnings in logs
-- **Never deploy automatically** — no SSH, no SCP, no remote scripts
-- Fix any issues found, commit to release branch
-
-### 3. Merge to Main
-
-- Open PR from `feature/vX.Y.Z` → `main`
-- Wait for all CI checks to pass
-- **Use "Create a merge commit"** (not squash)
-- Delete the feature branch after merge
-
-### 4. Tag the Release
-
-```bash
-git fetch origin
-git tag vX.Y.Z origin/main
-git push origin vX.Y.Z
-```
-
-### 5. Rebase Child Branches
-
-If a child branch exists (e.g., v3.12 while releasing v3.11):
-
-```bash
-git checkout main && git pull origin main
-git checkout feature/vX.Y+1.Z
-git rebase main
-git push --force-with-lease
-```
-
-### 6. Post-Release
-
-- Update release plan status
-- Add journal entry for significant releases
-- Close related GitHub issues
-- Update issue labels (`in-development` → closed, or `needs-testing` if user verification needed)
-
-## Release Checklist - Verify ALL Before Saying "Ready"
-
-1. [ ] Bump pinned tool versions in `.github/workflows/tests.yml` (quarterly)
-2. [ ] Run `scripts/release.py <version>` to bump versions
-3. [ ] `CHANGELOG.md` has entry for this version
-4. [ ] CI checks are passing (all 8 required checks)
-5. [ ] Dogfooded on local HA (for significant changes)
-
-**NEVER manually edit version numbers. ALWAYS use `scripts/release.py`.**
-
-**Tool version bump process (quarterly, at start of each release branch):**
-
-1. `pip install --upgrade ruff black mypy` in the local venv
-2. Update pinned versions in `.github/workflows/tests.yml` lint job
-3. Run `ruff check . && black --check . && mypy . --config-file=mypy.ini` locally
-4. Fix any new lint/type issues before they compound
+- **CI runs on push. Publishing runs on tag push.** Don't skip the tag.
+- **NEVER manually edit version numbers.** Use `scripts/release.py`.
+- **NEVER run `gh release create` manually.** Let CI handle it.
+- **Dogfood on local HA** before stable releases (user launches, not automated).
 
 ## PR and Issue Rules
 

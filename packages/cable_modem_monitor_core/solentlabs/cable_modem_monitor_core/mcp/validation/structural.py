@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ...har import LfsPointerError, load_har_json
 from .har_utils import HARD_STOP_PREFIX
 
 
@@ -24,8 +25,10 @@ def validate_structure(har_path: Path, issues: list[str]) -> dict[str, Any] | No
         return None
 
     try:
-        with open(har_path, encoding="utf-8") as f:
-            har_data: dict[str, Any] = json.load(f)
+        har_data: dict[str, Any] = load_har_json(har_path)
+    except LfsPointerError as e:
+        issues.append(f"{HARD_STOP_PREFIX} {e}")
+        return None
     except json.JSONDecodeError as e:
         issues.append(f"{HARD_STOP_PREFIX} HAR file is not valid JSON: {e}")
         return None

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..har import load_har_json
 from .analysis.actions import ActionsDetail, detect_actions
 from .analysis.auth import AuthDetail, detect_auth
 from .analysis.format import detect_sections
@@ -129,7 +130,7 @@ def _load_har_entries(har_path: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"HAR file not found: {har_path}")
 
     try:
-        data = json.loads(har_path.read_text(encoding="utf-8"))
+        data = load_har_json(har_path)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON in HAR file: {exc}") from exc
 

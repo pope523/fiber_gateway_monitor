@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **HAR files moved to Git LFS** — 36 HAR test fixtures (~7.7 MB) are
+  now stored as lightweight LFS pointers, keeping clones fast. New
+  `load_har_json()` utility detects LFS pointers and auto-recovers
+  across all HAR loading paths. Contributors need `git-lfs` installed
+  (see Getting Started guide).
+- **Consolidated CLAUDE.md** — merged `packages/CLAUDE.md` coding
+  standards into root `CLAUDE.md`, replaced duplicated release/test
+  sections with pointers to existing docs. AI workflow moved to
+  local reference file.
+
 ## [3.14.0-alpha.11] - 2026-04-05
 
 ### Fixed

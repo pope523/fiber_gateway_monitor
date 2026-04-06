@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config_loader import load_modem_config
+from ..har import load_har_json
 from ..models.modem_config.config import ModemConfig
 from .discovery import _resolve_modem_config
 
@@ -140,7 +141,7 @@ def _load_har_entries(har_path: Path) -> list[dict[str, Any]]:
         ValueError: If the file is not valid HAR JSON.
     """
     try:
-        har_data = json.loads(har_path.read_text(encoding="utf-8"))
+        har_data = load_har_json(har_path)
     except (json.JSONDecodeError, OSError) as e:
         raise ValueError(f"Failed to read HAR file {har_path}: {e}") from e
 

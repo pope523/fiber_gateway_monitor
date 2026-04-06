@@ -392,12 +392,23 @@ def main():  # noqa: C901
         print("  Optional: Install Docker Desktop for containerized development")
     print("")
 
-    # 11. Configure git email privacy
+    # 11. Check Git LFS
+    print_step("Checking Git LFS...")
+    try:
+        run_command("git lfs version", quiet=True)
+        print_success("Git LFS is installed")
+    except Exception:
+        print_warning("Git LFS not installed — HAR test fixtures won't download")
+        print("  Install: https://git-lfs.com/")
+        print("  Then:    git lfs install && git lfs pull")
+    print("")
+
+    # 12. Configure git email privacy
     print_step("Checking git email privacy...")
     configure_git_email_privacy()
     print("")
 
-    # 12. Check VS Code extensions
+    # 13. Check VS Code extensions
     print_step("Checking VS Code...")
     if shutil.which("code"):
         try:
@@ -433,7 +444,7 @@ def main():  # noqa: C901
         print("  Optional: Install VS Code for better development experience")
     print("")
 
-    # 13. Run a quick test
+    # 14. Run a quick test
     print_step("Running quick test to verify setup...")
     try:
         run_command(f"{python_cmd} -m pytest tests/parsers/netgear/test_cm600.py::test_fixtures_exist -q", quiet=True)

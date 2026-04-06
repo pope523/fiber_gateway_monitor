@@ -34,6 +34,7 @@ import requests
 from ..auth.base import AuthResult
 from ..auth.factory import create_auth_manager
 from ..config_loader import load_modem_config, load_parser_config
+from ..har import load_har_json
 from ..loaders.fetch_list import collect_fetch_targets
 from ..loaders.hnap import HNAPLoader
 from ..loaders.http import HTTPResourceLoader
@@ -194,9 +195,7 @@ def _load_test_case(
 
     # Load HAR
     try:
-        har_data = json.loads(
-            test_case.har_path.read_text(encoding="utf-8"),
-        )
+        har_data = load_har_json(test_case.har_path)
         entries = har_data["log"]["entries"]
     except Exception as e:
         return TestResult(

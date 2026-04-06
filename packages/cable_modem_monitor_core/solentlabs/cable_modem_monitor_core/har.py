@@ -5,6 +5,11 @@ Builds transport-specific resource dicts from HAR entries. Used by:
 - ``mcp.analysis.format.hnap`` — HNAP format detection
 - ``testing.auth_hnap`` — mock server data response
 
+Also provides :func:`load_har_json`, the single HAR loading entry
+point used across Core, Catalog, and tooling.  Detects Git LFS
+pointers and attempts auto-recovery so tests and MCP tools fail
+with actionable guidance instead of opaque ``JSONDecodeError``.
+
 Candidate for future extraction to the ``har-capture`` package.
 """
 
@@ -13,6 +18,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -20,6 +26,78 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 _logger = logging.getLogger(__name__)
+
+_LFS_POINTER_PREFIX = "version https://git-lfs.github.com/spec/v1"
+
+
+# ---------------------------------------------------------------------------
+# HAR loading with LFS detection
+# ---------------------------------------------------------------------------
+
+
+class LfsPointerError(RuntimeError):
+    """A HAR file is a Git LFS pointer instead of actual content."""
+
+
+def load_har_json(path: Path | str) -> dict[str, Any]:
+    """Read and parse a HAR file, detecting Git LFS pointers.
+
+    If the file is an LFS pointer, attempts ``git lfs pull`` to
+    fetch the real content.  Raises :class:`LfsPointerError` with
+    install/fix instructions if auto-recovery fails.
+
+    Args:
+        path: Path to the HAR file.
+
+    Returns:
+        Parsed HAR JSON as a dict.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        LfsPointerError: If the file is an unresolvable LFS pointer.
+        json.JSONDecodeError: If the file is not valid JSON.
+    """
+    path = Path(path)
+    content = path.read_text(encoding="utf-8")
+
+    if content.startswith(_LFS_POINTER_PREFIX):
+        content = _resolve_lfs_pointer(path)
+
+    result: dict[str, Any] = json.loads(content)
+    return result
+
+
+def _resolve_lfs_pointer(path: Path) -> str:
+    """Attempt to resolve an LFS pointer via ``git lfs pull``."""
+    _logger.info("LFS pointer detected for %s — attempting git lfs pull", path.name)
+
+    try:
+        subprocess.run(
+            ["git", "lfs", "pull"],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+        raise LfsPointerError(_lfs_error_message(path)) from e
+
+    content = path.read_text(encoding="utf-8")
+    if content.startswith(_LFS_POINTER_PREFIX):
+        raise LfsPointerError(_lfs_error_message(path))
+
+    _logger.info("LFS pull succeeded for %s", path.name)
+    return content
+
+
+def _lfs_error_message(path: Path) -> str:
+    """Build an actionable error message for unresolved LFS pointers."""
+    return (
+        f"{path.name} is a Git LFS pointer (not actual HAR content).\n"
+        "Install git-lfs and pull the real files:\n"
+        "  macOS:  brew install git-lfs\n"
+        "  Ubuntu: sudo apt install git-lfs\n"
+        "  Then:   git lfs install && git lfs pull"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +119,7 @@ def build_resource_dict(har_path: str) -> dict[str, Any]:
         Resource dict for the ``ModemParserCoordinator``.
     """
     path = Path(har_path)
-    har_data = json.loads(path.read_text(encoding="utf-8"))
+    har_data = load_har_json(path)
     entries = har_data.get("log", {}).get("entries", [])
 
     hnap_resources = _build_hnap_resources(entries)
