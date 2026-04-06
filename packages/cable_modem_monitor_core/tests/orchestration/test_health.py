@@ -788,3 +788,27 @@ class TestCollectionEvidenceBehavior:
             monitor.ping()
 
         assert "HTTP skipped (collection active)" in caplog.text
+
+    @patch(f"{_MODULE}.subprocess.run")
+    def test_logs_http_skipped_recent_collection(
+        self,
+        mock_run: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Log shows 'recent collection' when skip is post-collection, not active."""
+        mock_run.return_value = _mock_ping_success(1.5)
+
+        monitor, session = _make_monitor()
+
+        # Baseline ping
+        session.head.return_value = _mock_http_response()
+        monitor.ping()
+
+        # Collection completes (not active — already ended)
+        monitor.record_collection_start()
+        monitor.record_collection_end(success=True)
+
+        with caplog.at_level("DEBUG"):
+            monitor.ping()
+
+        assert "HTTP skipped (recent collection)" in caplog.text

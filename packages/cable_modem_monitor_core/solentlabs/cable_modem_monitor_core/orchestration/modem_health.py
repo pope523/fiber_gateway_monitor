@@ -129,14 +129,14 @@ class HealthMonitor:
 
         # HTTP probe — skip when collection evidence makes it redundant
         http_bytes: int | None = None
-        skip_http = self._http_probe and self._should_skip_http_probe()
-        if self._http_probe and not skip_http:
+        skip_reason = self._should_skip_http_probe() if self._http_probe else None
+        if self._http_probe and skip_reason is None:
             http_ok, http_ms, http_bytes = self._probe_http()
 
         # For status derivation, treat collection evidence as proof of
         # HTTP reachability, but don't fabricate measurement values.
         effective_http_ok = http_ok
-        if skip_http:
+        if skip_reason is not None:
             effective_http_ok = True
 
         health_status = self._derive_status(icmp_ok, effective_http_ok)
@@ -148,7 +148,7 @@ class HealthMonitor:
         )
         self._latest = info
 
-        self._log_result(info, icmp_ok, http_ok, http_bytes, skipped_http=skip_http)
+        self._log_result(info, icmp_ok, http_ok, http_bytes, skip_reason=skip_reason)
         self._last_ping_time = time.monotonic()
         return info
 
@@ -164,24 +164,25 @@ class HealthMonitor:
     # Internal — collection evidence
     # ------------------------------------------------------------------
 
-    def _should_skip_http_probe(self) -> bool:
+    def _should_skip_http_probe(self) -> str | None:
         """Check if collection activity makes the HTTP probe redundant.
 
-        Returns True when:
-        - A data collection is currently active (avoids contention), or
-        - A collection succeeded since the previous ping() completed
-          (redundant probe — evidence consumed once).
+        Returns a short reason string when the probe should be skipped,
+        or None when it should run:
+
+        - ``"collection active"`` — collection is running right now
+        - ``"recent collection"`` — collection succeeded since last ping
 
         Never skips before the first ping() completes — consumers need
         at least one real HTTP measurement to establish a baseline.
         """
         if self._last_ping_time is None:
-            return False
+            return None
         if self._collection_active:
-            return True
-        if self._last_collection_success is not None:
-            return self._last_collection_success > self._last_ping_time
-        return False
+            return "collection active"
+        if self._last_collection_success is not None and self._last_collection_success > self._last_ping_time:
+            return "recent collection"
+        return None
 
     # ------------------------------------------------------------------
     # Internal — probes
@@ -340,7 +341,7 @@ class HealthMonitor:
         http_ok: bool | None,
         http_bytes: int | None = None,
         *,
-        skipped_http: bool = False,
+        skip_reason: str | None = None,
     ) -> None:
         """Log the health check result.
 
@@ -349,7 +350,7 @@ class HealthMonitor:
         - INFO: other status transitions (recovery, first check)
         - DEBUG: routine checks with no status change
         """
-        detail = self._probe_detail(info, icmp_ok, http_ok, http_bytes, skipped_http=skipped_http)
+        detail = self._probe_detail(info, icmp_ok, http_ok, http_bytes, skip_reason=skip_reason)
         status = info.health_status.value
         changed = info.health_status != self._previous_status
         self._previous_status = info.health_status
@@ -371,7 +372,7 @@ class HealthMonitor:
         http_ok: bool | None,
         http_bytes: int | None = None,
         *,
-        skipped_http: bool = False,
+        skip_reason: str | None = None,
     ) -> str:
         """Build human-readable probe detail string for log messages."""
         parts: list[str] = []
@@ -384,8 +385,8 @@ class HealthMonitor:
             else:
                 parts.append("ICMP timeout")
 
-        if skipped_http:
-            parts.append("HTTP skipped (collection active)")
+        if skip_reason is not None:
+            parts.append(f"HTTP skipped ({skip_reason})")
         elif http_ok is not None:
             if info.http_latency_ms is not None:
                 size = f", {http_bytes} bytes" if http_bytes else ""

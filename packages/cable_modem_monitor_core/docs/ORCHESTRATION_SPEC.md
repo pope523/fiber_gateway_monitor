@@ -1384,11 +1384,16 @@ and provides network-layer visibility regardless of collection
 activity.
 
 **Logging:** When the HTTP probe is skipped, the log detail shows
-`HTTP skipped (collection active)` instead of the usual latency:
+the skip reason instead of the usual latency:
 
 ```text
 Health check [MODEL]: responsive (ICMP 1.5ms, HTTP skipped (collection active))
+Health check [MODEL]: responsive (ICMP 1.5ms, HTTP skipped (recent collection))
 ```
+
+`collection active` means the probe was skipped to avoid contention
+during an in-progress collection. `recent collection` means a
+collection succeeded since the last ping, making the probe redundant.
 
 ### State Ownership
 
@@ -1438,7 +1443,7 @@ based — the same status at the same level would flood logs every 30s:
 | Transition to responsive (recovery) | INFO | `"Health check [MODEL]: responsive (ICMP 3ms, HTTP GET 110ms)"` |
 | Transition to degraded | WARNING | `"Health check [MODEL]: degraded (ICMP 2ms, HTTP HEAD timeout)"` |
 | Transition to unresponsive | WARNING | `"Health check [MODEL]: unresponsive (ICMP timeout, HTTP HEAD timeout)"` |
-| HTTP skipped (collection evidence) | DEBUG | `"Health check [MODEL]: responsive (ICMP 1.5ms, HTTP skipped (collection active))"` |
+| HTTP skipped (collection evidence) | DEBUG | `"Health check [MODEL]: responsive (ICMP 1.5ms, HTTP skipped (collection active\|recent collection))"` |
 | First check (UNKNOWN → any) | INFO or WARNING | Depending on the target status |
 | Steady-state (no change) | DEBUG | Same format, but only visible with debug logging enabled |
 
