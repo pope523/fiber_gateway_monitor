@@ -7,17 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.0-alpha.12] - 2026-04-06
+
+### Added
+
+- **P8 complete: `javascript_json` format detection** — MCP intake
+  pipeline now detects JS variable assignments containing JSON arrays
+  in `<script>` tags (e.g., TG3442DE `json_dsData = [{...}]`).
+  Closes the last P8 deterministic gap.
+- **P20 complete: native `docsis_status`** — MB7621 (`Network Access`
+  from MotoConnection.asp) and XB6/XB7 (`combined_status` computed
+  from downstream + upstream status). Three modems now have native
+  DOCSIS status instead of relying on lock-status derivation.
+- **form_sjcl MCP detection** — intake pipeline recognizes SJCL
+  AES-CCM login flows (encrypted POST body, JS page variables
+  `myIv`/`mySalt`/`currentSessionId`). Related to #86.
+- **Diagnostics enrichment** — `ResourceFetch` captures `status_code`
+  and `content_type`. `OrchestratorDiagnostics` includes
+  `auth_strategy`. Per-resource timing in HTTP/HNAP/CBN loaders.
+- **`docs/README.md`** — project-level documentation index.
+
 ### Changed
 
-- **HAR files moved to Git LFS** — 36 HAR test fixtures (~7.7 MB) are
-  now stored as lightweight LFS pointers, keeping clones fast. New
-  `load_har_json()` utility detects LFS pointers and auto-recovers
-  across all HAR loading paths. Contributors need `git-lfs` installed
-  (see Getting Started guide).
-- **Consolidated CLAUDE.md** — merged `packages/CLAUDE.md` coding
-  standards into root `CLAUDE.md`, replaced duplicated release/test
-  sections with pointers to existing docs. AI workflow moved to
-  local reference file.
+- **HAR files moved to Git LFS** — 36 HAR test fixtures (~7.7 MB)
+  stored as LFS pointers. New `load_har_json()` utility detects LFS
+  pointers and auto-recovers. Contributors need `git-lfs` installed.
+- **Shared auth JSON response helper** — extracted `auth/response.py`
+  from form_sjcl, form_pbkdf2, and hnap. Consistent error messages
+  with diagnostics logging, double-decode, and type checking.
+  form_pbkdf2 login response now gets a proper type check.
+- **Docs restructured** — `INTAKE_PIPELINE.md` and `MOCK_SERVER.md`
+  moved to Catalog docs (closer to the code they document). Broken
+  links fixed across reference docs.
+- **`zip_release` reverted** — `hacs.json` reverted to
+  `zip_release: false` for alpha branch-tracking installs.
+
+### Fixed
+
+- **P8 pipeline regressions** — session cookie detection expanded
+  (`credential`/`sec` indicators), strategy-aware auth field copy,
+  `html_fields` CSS selector serialization, nested JSON direction
+  inference (G54 recursive key scanning).
+- **P10 internal quality** — `to_dict()` on diagnostics models,
+  mock server `get_challenge_response()`, generic `ComputedField`
+  for derived system_info, CM1200 InitTagValue offset docs.
+- **Computed `system_info` fields** — generic `ComputedField` with
+  named operations (e.g., CGA4236 `memory_used_pct`).
 
 ## [3.14.0-alpha.11] - 2026-04-05
 
