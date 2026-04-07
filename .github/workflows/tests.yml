@@ -86,10 +86,17 @@ jobs:
         run: |
           pytest tests/ -v --tb=short --cov=solentlabs/cable_modem_monitor_catalog --cov-report=term-missing --cov-fail-under=90
 
-      - name: MCP pipeline regression
-        continue-on-error: true
+      - name: MCP pipeline accuracy
         run: |
-          python packages/cable_modem_monitor_catalog/scripts/mcp_pipeline_regression.py -v
+          python packages/cable_modem_monitor_catalog/scripts/mcp_pipeline_regression.py -v --scorecard mcp-scorecard.json
+
+      - name: Upload MCP scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-scorecard
+          path: mcp-scorecard.json
+          retention-days: 90
 
   lint:
     name: Code Quality

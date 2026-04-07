@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""MCP pipeline regression sweep.
+"""MCP pipeline accuracy tracker.
 
 Tests the MCP intake pipeline by treating each catalog HAR as a fresh
 submission. For each modem:
 
 1. Run HAR through validate_har -> analyze_har -> generate_config
-2. Overwrite committed modem.yaml + parser.yaml with generated versions
-3. Run generate_golden_file with the generated parser.yaml
-4. Compare generated golden file against committed golden file
-5. Restore original files
+2. Run generate_golden_file with the generated parser.yaml
+3. Compare generated golden file against committed golden file
+4. Compute field-level accuracy (matching / total committed fields)
 
-Golden file drift = pipeline can't reproduce what was manually crafted.
-Zero drift = pipeline is production-ready for contributor onboarding.
+Reports fleet-wide accuracy percentage so improvements can be tracked
+over time. In CI, writes a GitHub step summary and optional JSON
+scorecard artifact.
 
 Baseline mode (--baseline):
     Compares results against a recorded baseline. Fails only on
@@ -19,19 +19,21 @@ Baseline mode (--baseline):
     the current state after pipeline improvements.
 
 Usage:
-    .venv/bin/python packages/cable_modem_monitor_catalog/scripts/mcp_pipeline_regression.py
-    .venv/bin/python packages/cable_modem_monitor_catalog/scripts/mcp_pipeline_regression.py --modem arris/sb8200
-    .venv/bin/python packages/cable_modem_monitor_catalog/scripts/mcp_pipeline_regression.py -v
-    .venv/bin/python .../mcp_pipeline_regression.py --baseline baseline.json
-    .venv/bin/python .../mcp_pipeline_regression.py --update-baseline baseline.json
+    python .../mcp_pipeline_regression.py
+    python .../mcp_pipeline_regression.py --modem arris/sb8200
+    python .../mcp_pipeline_regression.py -v
+    python .../mcp_pipeline_regression.py --scorecard scorecard.json
+    python .../mcp_pipeline_regression.py --baseline baseline.json
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -53,11 +55,20 @@ class ModemResult:
     golden_diffs: list[str] = field(default_factory=list)
     config_diffs: list[str] = field(default_factory=list)
     channel_counts: dict[str, int] = field(default_factory=dict)
+    total_fields: int = 0
+    matching_fields: int = 0
 
     @property
     def passed(self) -> bool:
         """No stage failures and no golden file drift."""
         return not self.stage_failed and not self.golden_diffs
+
+    @property
+    def accuracy_pct(self) -> float:
+        """Field-level accuracy against committed golden file."""
+        if self.total_fields == 0:
+            return 0.0
+        return self.matching_fields / self.total_fields * 100
 
 
 # ---------------------------------------------------------------------------
@@ -162,17 +173,56 @@ def _diff_section(
 
 def _diff_golden_files(
     generated: dict[str, Any],
-    committed_path: Path,
+    committed: dict[str, Any],
 ) -> list[str]:
-    """Compare generated golden file against committed expected.json."""
-    if not committed_path.exists():
-        return ["no committed golden file to compare"] if generated else []
-
-    committed = json.loads(committed_path.read_text())
+    """Compare generated golden file against committed golden file."""
     diffs: list[str] = []
     for section in ("downstream", "upstream", "system_info"):
         diffs.extend(_diff_section(section, generated.get(section), committed.get(section)))
     return diffs
+
+
+# ---------------------------------------------------------------------------
+# Field-level accuracy counting
+# ---------------------------------------------------------------------------
+
+
+def _count_fields(golden: dict[str, Any]) -> int:
+    """Count total leaf fields in a golden file."""
+    count = 0
+    for section in ("downstream", "upstream"):
+        for ch in golden.get(section, []):
+            if isinstance(ch, dict):
+                count += len(ch)
+    si = golden.get("system_info")
+    if isinstance(si, dict):
+        count += len(si)
+    return count
+
+
+def _count_matching_fields(
+    generated: dict[str, Any],
+    committed: dict[str, Any],
+) -> int:
+    """Count fields in committed that are correctly reproduced in generated."""
+    matching = 0
+    for section in ("downstream", "upstream"):
+        gen_list = generated.get(section, [])
+        com_list = committed.get(section, [])
+        for i, com_ch in enumerate(com_list):
+            if not isinstance(com_ch, dict):
+                continue
+            gen_ch = gen_list[i] if i < len(gen_list) and isinstance(gen_list[i], dict) else {}
+            for key, val in com_ch.items():
+                if gen_ch.get(key) == val:
+                    matching += 1
+    gen_si = generated.get("system_info") or {}
+    com_si = committed.get("system_info") or {}
+    if isinstance(com_si, dict) and isinstance(gen_si, dict):
+        for key, val in com_si.items():
+            if gen_si.get(key) == val:
+                matching += 1
+    return matching
 
 
 def _diff_config_files(
@@ -286,7 +336,17 @@ def _run_golden_comparison(
 
     stem = har_path.stem
     expected_path = har_path.parent / f"{stem}.expected.json"
-    result.golden_diffs = _diff_golden_files(golden_result.golden_file, expected_path)
+
+    if not expected_path.exists():
+        if golden_result.golden_file:
+            result.golden_diffs = ["no committed golden file to compare"]
+        return
+
+    committed = json.loads(expected_path.read_text())
+    generated = golden_result.golden_file or {}
+    result.total_fields = _count_fields(committed)
+    result.matching_fields = _count_matching_fields(generated, committed)
+    result.golden_diffs = _diff_golden_files(generated, committed)
 
 
 def _extract_metadata(modem_dir: Path) -> dict[str, Any]:
@@ -343,6 +403,13 @@ def run_modem(
         result.stage_failed = result.stage_failed or "unknown"
         result.error = str(e)
 
+    # Pipeline failures: count committed golden file fields for accuracy
+    if result.total_fields == 0 and result.stage_failed:
+        stem = har_path.stem
+        expected_path = har_path.parent / f"{stem}.expected.json"
+        if expected_path.exists():
+            result.total_fields = _count_fields(json.loads(expected_path.read_text()))
+
     if verbose:
         _print_result(result)
 
@@ -351,20 +418,22 @@ def run_modem(
 
 def _print_result(result: ModemResult) -> None:
     """Print verbose output for a single modem result."""
+    pct = f"{result.accuracy_pct:5.1f}%" if result.total_fields else "  n/a"
+
     if result.stage_failed:
-        print(f"    FAIL {result.stage_failed}: {result.error}")
+        print(f"    FAIL  {pct}  {result.stage_failed}: {result.error}")
         return
 
     ds = result.channel_counts.get("downstream", 0)
     us = result.channel_counts.get("upstream", 0)
     if result.golden_diffs:
-        print(f"    DRIFT ds={ds} us={us}: {len(result.golden_diffs)} diffs")
+        print(f"    DRIFT {pct}  ds={ds} us={us}: " f"{len(result.golden_diffs)} diffs")
         for d in result.golden_diffs[:5]:
             print(f"      {d}")
         if len(result.golden_diffs) > 5:
             print(f"      ... and {len(result.golden_diffs) - 5} more")
     else:
-        print(f"    OK    ds={ds} us={us}: golden file matches")
+        print(f"    OK    {pct}  ds={ds} us={us}: golden file matches")
 
     if result.config_diffs:
         print(f"    CONFIG diffs: {len(result.config_diffs)}")
@@ -373,34 +442,40 @@ def _print_result(result: ModemResult) -> None:
 
 
 def _print_summary(results: list[ModemResult]) -> None:
-    """Print the final summary."""
+    """Print the final summary with accuracy metrics."""
     passed = [r for r in results if r.passed]
     failed_stage = [r for r in results if r.stage_failed]
     drifted = [r for r in results if r.golden_diffs and not r.stage_failed]
 
+    matching_fields, total_fields, fleet_pct = _fleet_accuracy(results)
+    pipeline_passed = len(results) - len(failed_stage)
+
     print(f"\n{'=' * 60}")
+    print(f"FLEET ACCURACY: {fleet_pct:.1f}%" f"  ({matching_fields} / {total_fields} fields)")
     print(
-        f"RESULTS: {len(passed)} clean, " f"{len(drifted)} with golden drift, " f"{len(failed_stage)} pipeline failures"
+        f"  Pipeline pass rate: {pipeline_passed}/{len(results)} HARs"
+        f"  |  Clean: {len(passed)}"
+        f"  Drift: {len(drifted)}"
+        f"  Failed: {len(failed_stage)}"
     )
     print(f"{'=' * 60}\n")
 
     if failed_stage:
         print("PIPELINE FAILURES:")
         for r in failed_stage:
-            print(f"  {r.modem} ({r.har_file}): " f"{r.stage_failed} — {r.error}")
+            pct = f"  ({r.accuracy_pct:5.1f}%)" if r.total_fields else ""
+            print(f"  {r.modem} ({r.har_file}):{pct}" f"  {r.stage_failed} — {r.error}")
         print()
 
     if drifted:
         print("GOLDEN FILE DRIFT:")
-        total_diffs = 0
-        for r in drifted:
-            total_diffs += len(r.golden_diffs)
-            print(f"  {r.modem} ({r.har_file}): " f"{len(r.golden_diffs)} diffs")
+        for r in sorted(drifted, key=lambda r: r.accuracy_pct):
+            fld = f"{r.matching_fields}/{r.total_fields}" if r.total_fields else "n/a"
+            print(f"  {r.modem} ({r.har_file}):" f"  {r.accuracy_pct:5.1f}% ({fld} fields)")
             for d in r.golden_diffs[:3]:
                 print(f"    {d}")
             if len(r.golden_diffs) > 3:
                 print(f"    ... and {len(r.golden_diffs) - 3} more")
-        print(f"\n  Total golden file diffs: {total_diffs}")
         print()
 
     if passed:
@@ -413,7 +488,7 @@ def _print_summary(results: list[ModemResult]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Baseline comparison
+# Result classification (shared by scorecard and baseline)
 # ---------------------------------------------------------------------------
 
 # Severity ordering: clean < drift < failure
@@ -432,6 +507,117 @@ def _result_status(result: ModemResult) -> str:
 def _result_key(result: ModemResult) -> str:
     """Unique key for a result: modem_id:har_filename."""
     return f"{result.modem}:{result.har_file}"
+
+
+# ---------------------------------------------------------------------------
+# Scorecard and CI summary
+# ---------------------------------------------------------------------------
+
+
+def _fleet_accuracy(results: list[ModemResult]) -> tuple[int, int, float]:
+    """Compute fleet-wide accuracy.
+
+    Returns (matching_fields, total_fields, pct).
+    Only includes modems with committed golden files (total_fields > 0).
+    """
+    scored = [r for r in results if r.total_fields > 0]
+    total = sum(r.total_fields for r in scored)
+    matching = sum(r.matching_fields for r in scored)
+    pct = (matching / total * 100) if total else 0.0
+    return matching, total, pct
+
+
+def _build_scorecard(results: list[ModemResult]) -> dict[str, Any]:
+    """Build a JSON-serialisable scorecard for trend tracking."""
+    matching, total, fleet_pct = _fleet_accuracy(results)
+    failed_count = sum(1 for r in results if r.stage_failed)
+
+    import subprocess
+
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        sha = os.environ.get("GITHUB_SHA", "")[:8]
+
+    return {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "commit": sha,
+        "fleet_accuracy_pct": round(fleet_pct, 2),
+        "pipeline_pass_rate_pct": round((len(results) - failed_count) / len(results) * 100, 2) if results else 0.0,
+        "total_fields": total,
+        "matching_fields": matching,
+        "total_hars": len(results),
+        "pipeline_passed": len(results) - failed_count,
+        "modems": [
+            {
+                "modem": r.modem,
+                "har_file": r.har_file,
+                "status": _result_status(r),
+                "accuracy_pct": round(r.accuracy_pct, 2),
+                "total_fields": r.total_fields,
+                "matching_fields": r.matching_fields,
+                "diff_count": len(r.golden_diffs),
+                "stage_failed": r.stage_failed,
+                "error": r.error,
+            }
+            for r in results
+        ],
+    }
+
+
+def _write_scorecard(path: Path, results: list[ModemResult]) -> None:
+    """Write JSON scorecard to disk."""
+    scorecard = _build_scorecard(results)
+    path.write_text(json.dumps(scorecard, indent=2) + "\n")
+    print(f"Scorecard written to {path}")
+
+
+def _write_step_summary(results: list[ModemResult]) -> None:
+    """Write GitHub Actions step summary if running in CI."""
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+
+    matching, total, fleet_pct = _fleet_accuracy(results)
+    failed_count = sum(1 for r in results if r.stage_failed)
+    clean_count = sum(1 for r in results if r.passed)
+    drift_count = sum(1 for r in results if r.golden_diffs and not r.stage_failed)
+
+    lines = [
+        f"## MCP Pipeline Accuracy: **{fleet_pct:.1f}%**",
+        "",
+        "| Metric | Value |",
+        "|--------|-------|",
+        f"| Fleet accuracy | {fleet_pct:.1f}% ({matching}/{total} fields) |",
+        f"| Pipeline pass rate | {len(results) - failed_count}/{len(results)} HARs |",
+        f"| Clean | {clean_count} |",
+        f"| Drift | {drift_count} |",
+        f"| Pipeline failures | {failed_count} |",
+        "",
+        "<details>",
+        "<summary>Per-modem breakdown</summary>",
+        "",
+        "| Modem | HAR | Status | Accuracy | Fields |",
+        "|-------|-----|--------|----------|--------|",
+    ]
+    for r in sorted(results, key=lambda r: r.accuracy_pct):
+        status = _result_status(r)
+        fld = f"{r.matching_fields}/{r.total_fields}" if r.total_fields else "-"
+        pct = f"{r.accuracy_pct:.1f}%" if r.total_fields else "-"
+        lines.append(f"| {r.modem} | {r.har_file} | {status} | {pct} | {fld} |")
+    lines += ["", "</details>", ""]
+
+    with open(summary_path, "a") as f:
+        f.write("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Baseline comparison
+# ---------------------------------------------------------------------------
 
 
 def _load_baseline(path: Path) -> dict[str, str]:
@@ -514,13 +700,19 @@ def _print_baseline_comparison(
 
 def main() -> None:
     """Run the regression sweep."""
-    parser = argparse.ArgumentParser(description="MCP pipeline regression — golden file drift test")
+    parser = argparse.ArgumentParser(description="MCP pipeline regression — accuracy tracking")
     parser.add_argument("--modem", help="Run only this modem (e.g., arris/sb8200)")
     parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
         help="Show per-modem details",
+    )
+    parser.add_argument(
+        "--scorecard",
+        type=Path,
+        metavar="PATH",
+        help="Write JSON scorecard for trend tracking",
     )
     parser.add_argument(
         "--baseline",
@@ -549,6 +741,10 @@ def main() -> None:
         results.append(r)
 
     _print_summary(results)
+    _write_step_summary(results)
+
+    if args.scorecard:
+        _write_scorecard(args.scorecard, results)
 
     # Update baseline mode — write and exit
     if args.update_baseline:
@@ -565,11 +761,6 @@ def main() -> None:
         regressions, improvements = _compare_baseline(results, baseline)
         _print_baseline_comparison(regressions, improvements)
         sys.exit(1 if regressions else 0)
-
-    # Default mode — fail on any failure or drift
-    has_failures = any(r.stage_failed for r in results)
-    has_drift = any(r.golden_diffs and not r.stage_failed for r in results)
-    sys.exit(1 if has_failures or has_drift else 0)
 
 
 if __name__ == "__main__":
