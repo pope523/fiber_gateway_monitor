@@ -359,8 +359,11 @@ produces parse errors — they report the failure state itself (latency
 ² When the modem is unreachable at HA startup, data-dependent entities
 (channels, system metrics, LAN stats) are deferred until the first
 successful poll. Status, Info, and Health sensors are created
-immediately and remain available during the outage. See
-HA_ADAPTER_SPEC § Deferred Entity Creation.
+immediately and remain available during the outage. A delayed
+re-notification (1 second after creation) ensures deferred entities
+receive their initial coordinator update, avoiding an "Unknown" state
+window until the next scheduled poll. See HA_ADAPTER_SPEC § Deferred
+Entity Creation.
 
 ### Sensor Availability Logic
 

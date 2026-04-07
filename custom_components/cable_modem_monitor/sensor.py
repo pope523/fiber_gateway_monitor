@@ -17,6 +17,7 @@ See ENTITY_MODEL_SPEC.md for the full entity catalog.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 from datetime import datetime, timedelta
@@ -992,6 +993,22 @@ def _register_deferred_entity_creation(
             len(new_entities),
         )
         async_add_entities(new_entities)
+
+        # Guarantee initial state for deferred entities.  async_add_entities
+        # schedules entity registration as an eager-start task.  By the time
+        # entities register their coordinator listeners, the triggering
+        # coordinator update has already completed.  This delayed re-set
+        # fires _handle_coordinator_update() on all entities including the
+        # newly registered ones, populating state from current data without
+        # a new modem poll.
+        async def _async_ensure_initial_state() -> None:
+            await asyncio.sleep(1)
+            data_coord.async_set_updated_data(data_coord.data)
+
+        data_coord.hass.async_create_task(
+            _async_ensure_initial_state(),
+            "cable_modem_deferred_entity_state",
+        )
 
     unsub = data_coord.async_add_listener(_on_first_data)
     entry.async_on_unload(unsub)

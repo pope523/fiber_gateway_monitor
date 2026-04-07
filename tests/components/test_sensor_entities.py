@@ -808,3 +808,141 @@ def test_deferred_creation_cleanup_on_unload(mock_runtime_data):
 
     # The unsub callable should be registered for cleanup
     entry.async_on_unload.assert_called_once_with(unsub_fn)
+
+
+# -----------------------------------------------------------------------
+# Deferred entity re-notification (UC-84 step 9a)
+# -----------------------------------------------------------------------
+
+
+def test_deferred_creation_schedules_re_notification(mock_runtime_data):
+    """Deferred listener schedules a re-notification task after entity creation.
+
+    UC-84 step 9a: after async_add_entities, a delayed task is scheduled
+    that calls async_set_updated_data to ensure deferred entities receive
+    _handle_coordinator_update() after their coordinator listeners are
+    registered.
+    """
+    from custom_components.cable_modem_monitor.sensor import (
+        _register_deferred_entity_creation,
+    )
+
+    coord = MagicMock()
+    coord.data = ModemSnapshot(
+        connection_status=ConnectionStatus.UNREACHABLE,
+        docsis_status=DocsisStatus.NOT_LOCKED,
+        modem_data=None,
+    )
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    entry.data = MOCK_ENTRY_DATA
+    entry.runtime_data = mock_runtime_data
+
+    add_entities = MagicMock()
+
+    _register_deferred_entity_creation(coord, entry, add_entities)
+    listener_fn = coord.async_add_listener.call_args[0][0]
+
+    # Simulate coordinator update with valid data
+    coord.data = ModemSnapshot(
+        connection_status=ConnectionStatus.ONLINE,
+        docsis_status=DocsisStatus.OPERATIONAL,
+        modem_data=MOCK_MODEM_DATA,
+    )
+    listener_fn()
+
+    # Re-notification task should be scheduled
+    coord.hass.async_create_task.assert_called_once()
+    task_name = coord.hass.async_create_task.call_args[0][1]
+    assert task_name == "cable_modem_deferred_entity_state"
+
+
+@pytest.mark.asyncio
+async def test_deferred_re_notification_calls_async_set_updated_data(
+    mock_runtime_data,
+):
+    """Scheduled re-notification coroutine calls async_set_updated_data.
+
+    The coroutine body waits for entity registration to complete, then
+    re-sets coordinator data to fire _handle_coordinator_update() on all
+    entities including the newly registered deferred ones.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from custom_components.cable_modem_monitor.sensor import (
+        _register_deferred_entity_creation,
+    )
+
+    snapshot = ModemSnapshot(
+        connection_status=ConnectionStatus.ONLINE,
+        docsis_status=DocsisStatus.OPERATIONAL,
+        modem_data=MOCK_MODEM_DATA,
+    )
+
+    coord = MagicMock()
+    coord.data = ModemSnapshot(
+        connection_status=ConnectionStatus.UNREACHABLE,
+        docsis_status=DocsisStatus.NOT_LOCKED,
+        modem_data=None,
+    )
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    entry.data = MOCK_ENTRY_DATA
+    entry.runtime_data = mock_runtime_data
+
+    add_entities = MagicMock()
+
+    _register_deferred_entity_creation(coord, entry, add_entities)
+    listener_fn = coord.async_add_listener.call_args[0][0]
+
+    # Simulate data arrival
+    coord.data = snapshot
+    listener_fn()
+
+    # Capture the coroutine passed to async_create_task
+    coro = coord.hass.async_create_task.call_args[0][0]
+
+    # Await the coroutine with sleep patched out
+    with patch(
+        "custom_components.cable_modem_monitor.sensor.asyncio.sleep",
+        new_callable=AsyncMock,
+    ):
+        await coro
+
+    coord.async_set_updated_data.assert_called_once_with(snapshot)
+
+
+def test_deferred_re_notification_not_scheduled_when_no_data(mock_runtime_data):
+    """No re-notification when modem_data is still None.
+
+    UC-84 step 5: listener fires but modem_data=None, so no entities
+    are created and no re-notification is scheduled.
+    """
+    from custom_components.cable_modem_monitor.sensor import (
+        _register_deferred_entity_creation,
+    )
+
+    coord = MagicMock()
+    coord.data = ModemSnapshot(
+        connection_status=ConnectionStatus.UNREACHABLE,
+        docsis_status=DocsisStatus.NOT_LOCKED,
+        modem_data=None,
+    )
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    entry.data = MOCK_ENTRY_DATA
+    entry.runtime_data = mock_runtime_data
+
+    add_entities = MagicMock()
+
+    _register_deferred_entity_creation(coord, entry, add_entities)
+    listener_fn = coord.async_add_listener.call_args[0][0]
+
+    # Simulate update — still no data
+    listener_fn()
+
+    add_entities.assert_not_called()
+    coord.hass.async_create_task.assert_not_called()

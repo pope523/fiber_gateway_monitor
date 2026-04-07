@@ -1618,6 +1618,7 @@ sequenceDiagram
 | 7 | Immediate poll: orchestrator clears backoff | UNREACHABLE to ONLINE | Health RESPONSIVE + backoff active → reset_connectivity() |
 | 8 | Deferred listener: creates data entities | | Channel, system, LAN sensors appear |
 | 9 | Listener unsubscribes | | One-shot complete |
+| 9a | Re-notification fires (1s delay) | async_set_updated_data | Deferred entities receive _handle_coordinator_update() |
 | 10 | Normal polling resumes | | All entities updating normally |
 
 **Assertions:**
@@ -1625,6 +1626,8 @@ sequenceDiagram
 - Status sensor always available during outage (shows "Unreachable")
 - Health sensors always available (show probe results independently)
 - Data-dependent entities created on first successful poll, not at startup
+- Deferred entities receive initial state within 1 second of creation
+  via delayed coordinator re-notification (no Unknown window)
 - No duplicate entities — deferred creation is one-shot
 - Deferred listener does not fire after unsubscribe
 - If consumer unloads before modem recovers, listener is cleaned up
