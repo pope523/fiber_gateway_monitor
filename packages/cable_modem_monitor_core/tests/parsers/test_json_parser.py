@@ -49,8 +49,12 @@ def test_extraction(fixture_path: Path) -> None:
     """Parse JSON data and verify extracted channels match expected."""
     data = _load_fixture(fixture_path)
 
-    resource_key = data["_resource"]
-    resources = _build_resources(data.get("_json"), resource_key)
+    # Multi-resource fixtures use _resources dict; single-resource use _resource + _json
+    if "_resources" in data:
+        resources: dict[str, Any] = data["_resources"]
+    else:
+        resource_key = data["_resource"]
+        resources = _build_resources(data.get("_json"), resource_key)
 
     section_config = JSONSection.model_validate(data["_config"])
     parser = JSONParser(section_config)

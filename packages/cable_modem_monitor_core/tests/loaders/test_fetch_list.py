@@ -118,6 +118,17 @@ class TestCollectFetchTargets:
         assert targets[0].path == "10"
         assert targets[0].format == "xml"
 
+    def test_json_per_array_resources(self) -> None:
+        """JSON arrays with per-array resources produce one target per unique resource."""
+        data = json.loads((FIXTURES_DIR / "json_multi_resource_arrays.json").read_text())
+        config = ParserConfig.model_validate(data)
+        targets = collect_fetch_targets(config)
+
+        paths = sorted(t.path for t in targets)
+        assert paths == ["/api/ofdm", "/api/qam"]
+        assert all(t.format == "json" for t in targets)
+        assert all(t.encoding == "base64" for t in targets)
+
     def test_resource_target_is_frozen(self) -> None:
         """ResourceTarget is immutable."""
         target = ResourceTarget(path="/test.html", format="table")

@@ -319,15 +319,33 @@
       "power": 13.400002,
       "snr": 40.366287,
       "uncorrected": 0
+    },
+    {
+      "channel_id": 0,
+      "channel_type": "ofdm",
+      "frequency": 275600000,
+      "power": 11.199997,
+      "snr": 41.0
+    },
+    {
+      "channel_id": 1,
+      "channel_type": "ofdm",
+      "frequency": 827600000,
+      "power": 13.0,
+      "snr": 41.0
     }
   ],
   "system_info": {
-    "downstream_channel_count": 32,
+    "bootloader_version": "CGR2.86C.635901.R.2001161552",
+    "docsis_description": "Docsis 3.1/DOCSIS 3.1 Cable Modem",
+    "downstream_channel_count": 34,
+    "firmware_build_time": "Fri Jul 12 12:58:34 2024",
     "firmware_name": "DM1000-V1.21.04.025",
     "hardware_version": "1.0",
     "model": "DM1000",
     "software_version": "1.21.04.025",
-    "upstream_channel_count": 4
+    "upstream_channel_count": 5,
+    "vendor": "Sercomm Corporation"
   },
   "upstream": [
     {
@@ -357,6 +375,13 @@
       "frequency": 25900000,
       "modulation": "64QAM",
       "power": 30.520599
+    },
+    {
+      "channel_id": 0,
+      "channel_type": "ofdma",
+      "frequency": 42000000,
+      "modulation": "OFDMA",
+      "power": 43.391663
     }
   ]
 }

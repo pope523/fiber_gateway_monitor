@@ -2,8 +2,9 @@
 
 JSON format: path navigation and key access in JSON API responses.
 Supports flat form (single array_path + fields) or multi-array form
-(arrays list) for modems with multiple channel arrays in one response.
-Per PARSING_SPEC.md JSONParser section.
+(arrays list). In multi-array form, each array may specify its own
+resource endpoint — following the same per-table resource pattern
+used by XMLSection. Per PARSING_SPEC.md JSONParser section.
 """
 
 from __future__ import annotations
@@ -16,9 +17,16 @@ from .common import ChannelTypeConfig, FilterValue, JsonChannelMapping
 
 
 class JSONArrayDefinition(BaseModel):
-    """A single array within a multi-array JSONParser section."""
+    """A single array within a multi-array JSONParser section.
+
+    When ``resource`` is set, the array fetches from that endpoint
+    instead of the section-level resource. This allows a single
+    channel section to combine data from multiple API endpoints
+    (e.g., QAM from one endpoint, OFDM from another).
+    """
 
     model_config = ConfigDict(extra="forbid")
+    resource: str = ""
     array_path: str
     fields: list[JsonChannelMapping]
     channel_type: ChannelTypeConfig | None = None
@@ -34,7 +42,7 @@ class JSONSection(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     format: Literal["json"]
-    resource: str
+    resource: str = ""
     encoding: str = ""
 
     # Flat form
@@ -57,4 +65,20 @@ class JSONSection(BaseModel):
             raise ValueError("json: must have either array_path/fields or arrays")
         if has_flat and (not self.array_path or self.fields is None):
             raise ValueError("json flat form requires both array_path and fields")
+        if has_flat and not self.resource:
+            raise ValueError("json flat form requires a resource")
+        return self
+
+    @model_validator(mode="after")
+    def validate_resource_coverage(self) -> JSONSection:
+        """In multi-array form, ensure every array can resolve a resource."""
+        if self.arrays is None:
+            return self
+        if self.resource:
+            return self  # section resource is the shared default
+        missing = [i for i, a in enumerate(self.arrays) if not a.resource]
+        if missing:
+            raise ValueError(
+                "json arrays: either provide section-level 'resource' " "or give every array its own 'resource'"
+            )
         return self

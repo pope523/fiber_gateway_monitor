@@ -1152,6 +1152,32 @@ downstream:
 Each array entry has its own `array_path`, `fields`, `channel_type`,
 and `filter`. Results from all arrays are concatenated.
 
+**Per-array resources** — when channel data lives on separate API
+endpoints (following the same pattern as XML tables), each array can
+specify its own ``resource``:
+
+```yaml
+downstream:
+  format: json
+  encoding: base64
+  arrays:
+    - resource: "/api/qam"
+      array_path: "nodes"
+      channel_type:
+        fixed: qam
+      fields: [...]
+    - resource: "/api/ofdm"
+      array_path: "nodes"
+      channel_type:
+        fixed: ofdm
+      fields: [...]
+```
+
+When a per-array ``resource`` is set, it overrides the section-level
+resource for that array. Either provide a shared section-level
+``resource`` or give every array its own — partial coverage is a
+validation error.
+
 **Extraction algorithm:**
 
 1. Get resource dict entry by path

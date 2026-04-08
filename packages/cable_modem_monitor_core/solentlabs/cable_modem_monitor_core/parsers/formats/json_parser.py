@@ -68,7 +68,7 @@ class JSONParser(BaseParser):
         self._config = config
 
     def parse(self, resources: dict[str, Any]) -> list[dict[str, Any]]:
-        """Extract channels from the configured JSON resource.
+        """Extract channels from the configured JSON resource(s).
 
         Args:
             resources: Resource dict (path -> parsed JSON dict).
@@ -76,21 +76,12 @@ class JSONParser(BaseParser):
         Returns:
             List of channel dicts with converted field values.
         """
-        data = resources.get(self._config.resource)
-        if data is None:
-            _logger.warning("Resource '%s' not found", self._config.resource)
-            return []
-
-        if not isinstance(data, dict):
-            _logger.warning(
-                "Resource '%s' is not a dict (got %s)",
-                self._config.resource,
-                type(data).__name__,
-            )
-            return []
-
         if self._config.arrays is not None:
-            return self._parse_multi_array(data)
+            return self._parse_multi_array(resources)
+
+        data = _get_resource(resources, self._config.resource)
+        if data is None:
+            return []
         return self._parse_single_array(data)
 
     def _parse_single_array(self, data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -103,10 +94,18 @@ class JSONParser(BaseParser):
             self._config.filter,
         )
 
-    def _parse_multi_array(self, data: dict[str, Any]) -> list[dict[str, Any]]:
-        """Parse channels from multiple arrays and concatenate results."""
+    def _parse_multi_array(self, resources: dict[str, Any]) -> list[dict[str, Any]]:
+        """Parse channels from multiple arrays and concatenate results.
+
+        Each array may specify its own resource endpoint. When absent,
+        the section-level resource is used as the default.
+        """
         channels: list[dict[str, Any]] = []
         for array_def in self._config.arrays or []:
+            resource_key = array_def.resource or self._config.resource
+            data = _get_resource(resources, resource_key)
+            if data is None:
+                continue
             channels.extend(
                 _extract_from_array(
                     data,
@@ -117,6 +116,18 @@ class JSONParser(BaseParser):
                 )
             )
         return channels
+
+
+def _get_resource(resources: dict[str, Any], key: str) -> dict[str, Any] | None:
+    """Look up a resource by path, logging warnings on miss or wrong type."""
+    data = resources.get(key)
+    if data is None:
+        _logger.warning("Resource '%s' not found", key)
+        return None
+    if not isinstance(data, dict):
+        _logger.warning("Resource '%s' is not a dict (got %s)", key, type(data).__name__)
+        return None
+    return data
 
 
 def _extract_from_array(

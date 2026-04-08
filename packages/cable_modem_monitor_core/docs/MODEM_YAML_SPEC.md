@@ -236,14 +236,20 @@ auth:
 | `action` | string | required | Form POST URL |
 | `method` | string | `POST` | HTTP method |
 | `username_field` | string | `"username"` | Form field name for username |
-| `password_field` | string | `"password"` | Form field name for password |
+| `password_field` | string or list | `"password"` | Form field name(s) for password. All fields receive the same encoded password. Use a list when the modem POSTs the password to multiple form fields. |
 | `encoding` | enum | `plain` | `plain` or `base64` — how the password is encoded before POST |
 | `cookie_name` | string | `""` | Session cookie produced by login. Auth owns the cookie it produces — see ARCHITECTURE_DECISIONS.md. |
-| `hidden_fields` | map | `{}` | Additional form fields to include (e.g., CSRF tokens, static values) |
-| `login_page` | string | `""` | Page to fetch before login to extract hidden fields or nonces. If empty, POST directly without pre-fetch. |
-| `form_selector` | string | `""` | CSS selector to find the login form on `login_page` (for extracting action URL and hidden fields dynamically) |
+| `hidden_fields` | map | `{}` | Additional form fields to include in the POST (e.g., hidden inputs, CSRF tokens, static values). The MCP intake pipeline extracts these from the login page HTML at build time. |
+| `login_page` | string | `""` | Page to fetch before login (for cookies/nonces). If empty, POST directly without pre-fetch. |
+| `form_selector` | string | `""` | CSS selector to find the login form. Used by the MCP intake pipeline at build time to extract hidden fields from the login page HTML. Not used at runtime. |
 | `success.redirect` | string | `""` | Expected redirect URL after successful login |
 | `success.indicator` | string | `""` | String to match in response body to confirm success |
+
+**Form POST body:** The POST body is built entirely from config. The
+auth manager sends `username_field`, all `password_field` entries (each
+with encoding applied), and all `hidden_fields`. No runtime HTML
+parsing — the YAML is the complete, intentional declaration of what
+gets POSTed.
 
 **Success detection:** If `success` is provided, checks `redirect`
 (path substring match) and/or `indicator` (body substring match).

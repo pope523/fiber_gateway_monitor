@@ -8,8 +8,18 @@ auth:
   action: "/setup.cgi"
   login_page: "/login.html"
   username_field: login_user
-  password_field: pws
+  password_field:
+    - pws
+    - passwd
   encoding: base64
+  hidden_fields:
+    todo: "login"
+    this_file: "login.html"
+    next_file: ""
+    language: "en"
+    is_parent_window: "1"
+    message: ""
+    cur_passwd: ""
 
 hardware:
   docsis_version: "3.1"

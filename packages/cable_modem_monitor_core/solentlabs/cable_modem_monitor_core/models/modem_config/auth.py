@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, field_validator
 
 
 class NoneAuth(BaseModel):
@@ -43,13 +43,21 @@ class FormAuth(BaseModel):
     action: str
     method: str = "POST"
     username_field: str = "username"
-    password_field: str = "password"
+    password_field: list[str] = Field(default=["password"])
     encoding: Literal["plain", "base64"] = "plain"
     cookie_name: str = ""
     hidden_fields: dict[str, str] = Field(default_factory=dict)
     login_page: str = ""
     form_selector: str = ""
     success: FormSuccess | None = None
+
+    @field_validator("password_field", mode="before")
+    @classmethod
+    def _normalize_password_field(cls, v: str | list[str]) -> list[str]:
+        """Accept a single string or a list — normalize to list."""
+        if isinstance(v, str):
+            return [v]
+        return v
 
 
 class FormNonceAuth(BaseModel):

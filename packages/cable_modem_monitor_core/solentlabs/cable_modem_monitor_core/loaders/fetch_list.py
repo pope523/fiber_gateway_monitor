@@ -70,9 +70,8 @@ def _add_section_target(
 ) -> None:
     """Extract resource target(s) from a section and add if unique.
 
-    Handles both single-resource sections (HTML table, JSON, etc.)
-    and multi-resource sections (XML tables where each table has its
-    own resource).
+    Handles single-resource sections (HTML table, JSON flat form, etc.),
+    multi-resource XML tables, and per-array JSON resources.
     """
     if section is None:
         return
@@ -81,11 +80,12 @@ def _add_section_target(
     if fmt == "hnap":
         return
 
-    # Single-resource sections (table, json, javascript, etc.)
+    encoding: str = getattr(section, "encoding", "")
+
+    # Single-resource sections (table, json flat form, javascript, etc.)
     resource: str = getattr(section, "resource", "")
     if resource:
         if resource not in seen_paths:
-            encoding: str = getattr(section, "encoding", "")
             seen_paths[resource] = ResourceTarget(
                 path=resource,
                 format=fmt,
@@ -93,13 +93,27 @@ def _add_section_target(
             )
         return
 
-    # Multi-resource sections (XML tables — each table has its own resource)
-    tables: list[object] | None = getattr(section, "tables", None)
-    if tables:
-        for table in tables:
-            table_resource: str = getattr(table, "resource", "")
-            if table_resource and table_resource not in seen_paths:
-                seen_paths[table_resource] = ResourceTarget(
-                    path=table_resource,
-                    format=fmt,
-                )
+    # Multi-resource: XML tables or JSON arrays with per-item resources
+    _add_child_targets(section, "tables", fmt, "", seen_paths)
+    _add_child_targets(section, "arrays", fmt, encoding, seen_paths)
+
+
+def _add_child_targets(
+    section: object,
+    attr: str,
+    fmt: str,
+    encoding: str,
+    seen_paths: dict[str, ResourceTarget],
+) -> None:
+    """Collect per-child resources from tables or arrays lists."""
+    children: list[object] | None = getattr(section, attr, None)
+    if not children:
+        return
+    for child in children:
+        child_resource: str = getattr(child, "resource", "")
+        if child_resource and child_resource not in seen_paths:
+            seen_paths[child_resource] = ResourceTarget(
+                path=child_resource,
+                format=fmt,
+                encoding=encoding,
+            )

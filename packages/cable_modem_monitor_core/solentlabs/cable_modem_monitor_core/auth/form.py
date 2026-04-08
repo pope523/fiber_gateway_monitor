@@ -60,7 +60,7 @@ class FormAuthManager(BaseAuthManager):
         """
         config = self._config
 
-        # Step 1: Pre-fetch login page if configured
+        # Step 1: Pre-fetch login page if configured (for cookies/nonces)
         if config.login_page:
             try:
                 session.get(
@@ -75,12 +75,11 @@ class FormAuthManager(BaseAuthManager):
                     error=f"Login page pre-fetch failed: {e}",
                 )
 
-        # Step 2: Build form data
+        # Step 2: Build form data from config
         encoded_password = _encode_password(password, config.encoding)
-        form_data: dict[str, str] = {
-            config.username_field: username,
-            config.password_field: encoded_password,
-        }
+        form_data: dict[str, str] = {config.username_field: username}
+        for field_name in config.password_field:
+            form_data[field_name] = encoded_password
         form_data.update(config.hidden_fields)
 
         # Step 3: POST to login endpoint with Referer header.

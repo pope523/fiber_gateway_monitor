@@ -74,6 +74,40 @@ class TestFormAuthManager:
             result = manager.authenticate(session, server.base_url, "admin", "password")
             assert result.success is True
 
+    def test_password_field_list(self, session: requests.Session) -> None:
+        """password_field as list sends encoded password to all fields."""
+        entries, modem_config = load_auth_fixture("har_form_login.json")
+
+        with HARMockServer(entries, modem_config=modem_config) as server:
+            config = FormAuth(
+                strategy="form",
+                action="/goform/login",
+                encoding="base64",
+                password_field=["pws", "passwd"],
+            )
+            manager = FormAuthManager(config)
+            manager.configure_session(session, {})
+
+            result = manager.authenticate(session, server.base_url, "admin", "password")
+            assert result.success is True
+
+    def test_password_field_string_normalized(self, session: requests.Session) -> None:
+        """password_field as string is normalized to single-element list."""
+        entries, modem_config = load_auth_fixture("har_form_login.json")
+
+        with HARMockServer(entries, modem_config=modem_config) as server:
+            config = FormAuth(
+                strategy="form",
+                action="/goform/login",
+                password_field="mypasswd",  # type: ignore[arg-type]  # validator normalizes str→list
+            )
+            assert config.password_field == ["mypasswd"]
+            manager = FormAuthManager(config)
+            manager.configure_session(session, {})
+
+            result = manager.authenticate(session, server.base_url, "admin", "password")
+            assert result.success is True
+
     def test_success_redirect_check(self, session: requests.Session) -> None:
         """Success check via redirect URL matching."""
         entries, modem_config = load_auth_fixture("har_form_login.json")
@@ -198,12 +232,67 @@ class TestFormAuthManager:
             assert "/dashboard" in result.error
 
 
+class TestHiddenFieldsAndCredentialRouting:
+    """Explicit hidden_fields and password_field list in form POST."""
+
+    def test_hidden_fields_included_in_post(self, session: requests.Session) -> None:
+        """Static hidden_fields from config are sent in the POST."""
+        entries, modem_config = load_auth_fixture("har_form_login.json")
+
+        with HARMockServer(entries, modem_config=modem_config) as server:
+            config = FormAuth(
+                strategy="form",
+                action="/goform/login",
+                hidden_fields={"todo": "login", "language": "en"},
+            )
+            manager = FormAuthManager(config)
+            manager.configure_session(session, {})
+
+            result = manager.authenticate(session, server.base_url, "admin", "password")
+            assert result.success is True
+
+    def test_password_field_list_with_hidden_fields(self, session: requests.Session) -> None:
+        """password_field list populates before hidden_fields are merged."""
+        entries, modem_config = load_auth_fixture("har_form_login.json")
+
+        with HARMockServer(entries, modem_config=modem_config) as server:
+            config = FormAuth(
+                strategy="form",
+                action="/goform/login",
+                encoding="base64",
+                password_field=["pws", "passwd"],
+                hidden_fields={"cur_passwd": ""},
+            )
+            manager = FormAuthManager(config)
+            manager.configure_session(session, {})
+
+            result = manager.authenticate(session, server.base_url, "admin", "secret")
+            assert result.success is True
+
+    def test_login_page_prefetch_for_cookies(self, session: requests.Session) -> None:
+        """login_page pre-fetch establishes cookies without parsing HTML."""
+        entries, modem_config = load_auth_fixture("har_form_login_with_hidden_fields.json")
+
+        with HARMockServer(entries, modem_config=modem_config) as server:
+            config = FormAuth(
+                strategy="form",
+                action="/goform/login",
+                login_page="/login.html",
+                hidden_fields={"csrf_token": "abc123", "mode": "login"},
+            )
+            manager = FormAuthManager(config)
+            manager.configure_session(session, {})
+
+            result = manager.authenticate(session, server.base_url, "admin", "password")
+            assert result.success is True
+
+
 # ---------------------------------------------------------------------------
 # Network error paths — table-driven
 # ---------------------------------------------------------------------------
 
 # ┌──────────────────────────┬─────────────────────────────┬──────────────────────────┐
-# │ scenario                 │ config                      │ expected error fragment   │
+# │ scenario                 │ config                      │ expected error fragment  │
 # ├──────────────────────────┼─────────────────────────────┼──────────────────────────┤
 # │ login page prefetch fail │ login_page="/login.html"    │ "pre-fetch failed"       │
 # │ login POST fail          │ no login_page               │ "POST failed"            │
