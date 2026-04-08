@@ -98,8 +98,9 @@ async def async_migrate(
         "password": old_data.get("password", ""),
         "protocol": protocol,
         "legacy_ssl": old_data.get("legacy_ssl", False),
-        "supports_icmp": old_data.get("supports_icmp", False),
-        "supports_head": old_data.get("supports_head", False),
+        # supports_icmp / supports_head intentionally omitted —
+        # v1 values are stale one-shot detections that may be wrong.
+        # Omitting lets modem.yaml HealthConfig defaults apply at startup.
         "scan_interval": old_data.get("scan_interval", 600),
         "health_check_interval": 30,
     }

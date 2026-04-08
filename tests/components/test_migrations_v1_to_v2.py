@@ -295,6 +295,8 @@ class TestResolveVariant:
 # =============================================================================
 
 # v2 schema: the complete set of keys that must exist after migration
+# supports_icmp / supports_head are intentionally omitted — stale
+# one-shot detections are not carried forward; modem.yaml defaults apply.
 V2_REQUIRED_KEYS = frozenset(
     {
         "manufacturer",
@@ -308,8 +310,6 @@ V2_REQUIRED_KEYS = frozenset(
         "password",
         "protocol",
         "legacy_ssl",
-        "supports_icmp",
-        "supports_head",
         "scan_interval",
         "health_check_interval",
     }
@@ -368,8 +368,7 @@ def _transform_v1_to_v2(v1: dict, modem_dir: str, variant: str | None = None) ->
         "password": v1["password"],
         "protocol": protocol,
         "legacy_ssl": v1.get("legacy_ssl", False),
-        "supports_icmp": v1.get("supports_icmp", False),
-        "supports_head": v1.get("supports_head", False),
+        # supports_icmp / supports_head intentionally omitted
         "scan_interval": v1.get("scan_interval", 600),
         "health_check_interval": 30,
     }
@@ -401,8 +400,8 @@ class TestFullMigrationShape:
         assert v2["protocol"] == "http"
         assert v2["modem_dir"] == "vendor/model"
         assert v2["host"] == "192.168.100.1"
-        assert v2["supports_icmp"] is True
-        assert v2["supports_head"] is False
+        assert "supports_icmp" not in v2
+        assert "supports_head" not in v2
         assert v2["health_check_interval"] == 30
 
     def test_defaults_when_optional_keys_missing(self):
@@ -418,8 +417,8 @@ class TestFullMigrationShape:
 
         assert v2["entity_prefix"] == "none"
         assert v2["legacy_ssl"] is False
-        assert v2["supports_icmp"] is False
-        assert v2["supports_head"] is False
+        assert "supports_icmp" not in v2
+        assert "supports_head" not in v2
         assert v2["scan_interval"] == 600
         assert v2["health_check_interval"] == 30
 
