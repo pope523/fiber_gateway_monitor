@@ -199,29 +199,28 @@ health checks, and entity creation all work end-to-end.
 Each variant gets its own verification artifact because each has its
 own auth strategy and potentially different channel data.
 
-**Required fields** (everything else stripped):
+**Contents:** The verified file is a faithful copy of the HA
+diagnostics `data` section with two additions (`verified_at`,
+`version`) and PII/environment sections removed. All modem data —
+including `system_info`, coordinator state, `lock_status` on channels,
+full `core_diagnostics` (auth strategy, resource fetches, timestamps),
+and raw numeric precision — must be preserved verbatim.
 
-```json
-{
-  "verified_at": "2026-03-28",
-  "version": "3.14.0-beta.1",
-  "config_entry": { ... },
-  "core_diagnostics": { ... },
-  "modem_data": { ... },
-  "downstream_channels": [ ... ],
-  "upstream_channels": [ ... ]
-}
-```
+**Stripped sections** (not modem data):
 
-The `modem_data` section uses Core canonical field names. See
-[HA_ADAPTER_SPEC.md § modem_data Summary](../../../custom_components/cable_modem_monitor/docs/HA_ADAPTER_SPEC.md#modem_data-summary)
-for the complete field schema with types and sources.
+- `home_assistant` — host environment
+- `custom_components` — installed integrations
+- `integration_manifest` — derivable from code
+- `setup_times` — internal HA timings
+- `_solentlabs` — tool metadata
+- `_review_before_sharing` — instruction text
+- `recent_logs` — ephemeral log lines
 
-**Stripped:** `home_assistant` (environment), `setup_times` (internals),
-`recent_logs` (ephemeral), `integration_manifest` (derivable),
-`_review_before_sharing` (instruction text).
+Everything else stays exactly as the diagnostics produced it. Do not
+round numbers, reorder fields, or drop fields that are part of the
+modem's live output.
 
-See `motorola/mb7621/test_data/modem.verified.json` for the reference
+See `arris/s33v2/test_data/modem.verified.json` for the reference
 example.
 
 ---

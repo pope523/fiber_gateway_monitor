@@ -29,7 +29,7 @@ hardware:
   chipset: Broadcom BCM3390
   release_date: "2020"
 
-status: awaiting_verification
+status: confirmed
 sources:
   auth_config: "[#117 S33v2 crash](https://github.com/solentlabs/cable_modem_monitor/issues/117)"
   chipset: "Same platform as S33"
@@ -48,7 +48,6 @@ notes: |
   Same firmware family (TB01.03.*) and HNAP protocol as S33.
   Parser is identical to S33.
   Compatible: S33 (same parser, MD5 HMAC).
-  S33v2 blocks ICMP ping - HTTP-only health checks required.
   Modem UI swaps CustomerConnSystemUpTime display with clock time (JS bug); HNAP API returns real uptime.
   Known anti-brute-force: LOCKUP (temp lock) and REBOOT (forces restart).
 references:
