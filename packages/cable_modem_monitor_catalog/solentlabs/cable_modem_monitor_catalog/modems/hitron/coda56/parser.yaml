@@ -61,17 +61,24 @@ upstream:
         "ATDMA": "atdma"
         "TDMA": "atdma"
 
-# System info extracted by parser.py PostProcessor from getSysInfo.asp.
-# The JSON system_info source declaration triggers the resource fetch;
-# actual extraction from the root-level array is in parser.py.
+# System info from getSysInfo.asp. Response is a root-level JSON array;
+# the loader wraps it as {"_raw": [...]}.
 system_info:
   sources:
     - format: json
       resource: "/data/getSysInfo.asp"
+      array_path: "_raw"
       fields:
-        - key: _placeholder
+        - key: hwVersion
           field: hardware_version
           type: string
+        - key: swVersion
+          field: software_version
+          type: string
+        - key: systemUptime
+          field: system_uptime
+          type: uptime
+          format: "{hours}h:{minutes}m:{seconds}s"
 
 # DOCSIS 3.1: aggregate QAM-only totals. OFDM LDPC codewords operate
 # at a vastly different scale and are not aggregated.

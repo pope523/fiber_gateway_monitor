@@ -218,8 +218,9 @@ def _build_http_resources(
 ) -> dict[str, Any]:
     """Build HTTP resource dict from HAR entries.
 
-    Extracts HTML response bodies keyed by URL path. For duplicate
-    paths, last successful (200) response wins.
+    Extracts response bodies keyed by URL path. For duplicate paths,
+    last successful (200) response wins. Decoding uses Content-Type
+    first, then body sniffing for JSON served as ``text/html``.
     """
     resources: dict[str, Any] = {}
 
@@ -249,16 +250,37 @@ def _build_http_resources(
                 _logger.debug("Failed to base64-decode response for %s", url_path)
                 continue
 
-        mime_type = content.get("mimeType", "")
-        if _is_json_content(mime_type):
-            try:
-                resources[url_path] = json.loads(text)
-            except (ValueError, TypeError):
-                _logger.debug("Failed to parse JSON for %s", url_path)
-        elif _is_html_content(mime_type, text):
-            resources[url_path] = BeautifulSoup(text, "html.parser")
+        decoded = _decode_har_entry(text, content.get("mimeType", ""), url_path)
+        if decoded is not None:
+            resources[url_path] = decoded
 
     return resources
+
+
+def _decode_har_entry(text: str, mime_type: str, url_path: str) -> Any:
+    """Decode a HAR response body into a resource value.
+
+    Tries Content-Type first, then body sniffing for JSON served as
+    ``text/html`` (common with ``.asp`` endpoints on GoAhead-Webs
+    firmware).
+    """
+    if _is_json_content(mime_type):
+        try:
+            return _wrap_json(json.loads(text))
+        except (ValueError, TypeError):
+            _logger.debug("Failed to parse JSON for %s", url_path)
+            return None
+
+    if _is_json_body(text):
+        try:
+            return _wrap_json(json.loads(text))
+        except (ValueError, TypeError):
+            return BeautifulSoup(text, "html.parser")
+
+    if _is_html_content(mime_type, text):
+        return BeautifulSoup(text, "html.parser")
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -282,9 +304,30 @@ def _merge_action_keys(
             merged[key] = value
 
 
+def _wrap_json(data: Any) -> Any:
+    """Wrap non-dict JSON in ``{"_raw": data}``.
+
+    Mirrors the HTTP resource loader's behaviour so that root-level
+    arrays are accessible via ``array_path: "_raw"`` in parser.yaml.
+    """
+    if isinstance(data, dict):
+        return data
+    return {"_raw": data}
+
+
 def _is_json_content(mime_type: str) -> bool:
     """Check if content is JSON based on MIME type."""
     return "json" in mime_type.lower()
+
+
+def _is_json_body(text: str) -> bool:
+    """Check if response body looks like JSON regardless of Content-Type.
+
+    Some modem firmware (e.g., GoAhead-Webs) serves JSON from ``.asp``
+    endpoints with ``Content-Type: text/html``.
+    """
+    stripped = text.lstrip()
+    return stripped[:1] in ("{", "[")
 
 
 def _is_html_content(mime_type: str, text: str) -> bool:

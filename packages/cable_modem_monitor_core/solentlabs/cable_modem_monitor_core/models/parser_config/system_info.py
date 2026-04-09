@@ -135,12 +135,20 @@ class JSONSystemInfoFieldMapping(BaseModel):
 
 
 class JSONSystemInfoSource(BaseModel):
-    """JSON API source for system_info."""
+    """JSON API source for system_info.
+
+    When the response is a root-level JSON array, the loader wraps it
+    as ``{"_raw": [...]}``.  Set ``array_path`` (e.g., ``"_raw"``) to
+    navigate to the array and use its first element as the source
+    object for field lookups — same concept as the channel parser's
+    ``array_path``.
+    """
 
     model_config = ConfigDict(extra="forbid")
     format: Literal["json"]
     resource: str
     encoding: str = ""
+    array_path: str = ""
     fields: list[JSONSystemInfoFieldMapping]
 
 

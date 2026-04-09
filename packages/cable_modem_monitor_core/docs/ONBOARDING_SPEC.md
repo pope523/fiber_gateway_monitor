@@ -474,7 +474,7 @@ structural details from HAR response bodies:
 **Direction inference:** `response_key` names containing "Downstream"
 or "DSChannel" → downstream. "Upstream" or "USChannel" → upstream.
 
-See [HNAPParser](PARSING_SPEC.md#hnapparser) for the validated
+See [HNAPParser](FORMAT_HNAP_SPEC.md#hnapparser) for the validated
 record layout and parser.yaml example.
 
 #### HTTP format detection
@@ -876,7 +876,7 @@ tables use CSS classes to indicate pass/fail status. During onboarding,
 these fields start as Tier 3 (passthrough) since they are
 modem-specific. They can be elevated to Tier 2 when the same pattern
 appears across multiple modems. See
-[PARSING_SPEC.md](PARSING_SPEC.md) for full `html_fields` semantics.
+[SYSTEM_INFO_SPEC.md](SYSTEM_INFO_SPEC.md) for full `html_fields` semantics.
 
 ### parser.py contract
 

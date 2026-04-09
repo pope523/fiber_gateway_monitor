@@ -35,20 +35,29 @@ _logger = logging.getLogger(__name__)
 
 
 def _navigate_path(data: Any, path: str) -> Any:
-    """Navigate a dot-notation path within a nested dict.
+    """Navigate a dot-notation path within nested dicts and lists.
+
+    Supports dict keys and numeric list indices::
+
+        "downstream.channels"   → data["downstream"]["channels"]
+        "_raw.0"                → data["_raw"][0]
 
     Args:
-        data: Root dict to navigate.
-        path: Dot-separated key path (e.g., ``"downstream.channels"``).
+        data: Root structure to navigate.
+        path: Dot-separated path (keys or integer indices).
 
     Returns:
-        The value at the path, or ``None`` if any key is missing.
+        The value at the path, or ``None`` if any segment is missing.
     """
     current = data
     for key in path.split("."):
-        if not isinstance(current, dict):
+        if isinstance(current, dict):
+            current = current.get(key)
+        elif isinstance(current, list) and key.isdigit():
+            idx = int(key)
+            current = current[idx] if idx < len(current) else None
+        else:
             return None
-        current = current.get(key)
         if current is None:
             return None
     return current

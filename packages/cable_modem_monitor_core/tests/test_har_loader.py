@@ -1,4 +1,8 @@
-"""Tests for load_har_json() — LFS pointer detection and normal loading."""
+"""Tests for HAR loading and resource building.
+
+Covers load_har_json() (LFS pointer detection, normal loading) and
+build_resource_dict() (JSON body sniffing, root-level array wrapping).
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from solentlabs.cable_modem_monitor_core.har import LfsPointerError, load_har_json
+from solentlabs.cable_modem_monitor_core.har import (
+    LfsPointerError,
+    build_resource_dict,
+    load_har_json,
+)
 
 LFS_POINTER = (
     "version https://git-lfs.github.com/spec/v1\n"
@@ -115,3 +123,81 @@ class TestLoadHarJsonLfsDetection:
         result = load_har_json(har_file)
 
         assert result["version"] == "1.2"
+
+
+def _har_entry(
+    url: str,
+    body: str,
+    mime: str = "text/html",
+    status: int = 200,
+    method: str = "GET",
+) -> dict:
+    """Build a minimal HAR entry for testing."""
+    return {
+        "request": {"url": url, "method": method},
+        "response": {
+            "status": status,
+            "content": {"mimeType": mime, "text": body},
+        },
+    }
+
+
+def _har_file(tmp_path: Path, entries: list[dict]) -> Path:
+    """Write a HAR file and return its path."""
+    path = tmp_path / "modem.har"
+    path.write_text(json.dumps({"log": {"entries": entries}}), encoding="utf-8")
+    return path
+
+
+class TestBuildResourceDictJsonSniffing:
+    """JSON body sniffing when Content-Type says text/html."""
+
+    def test_json_object_with_html_content_type(self, tmp_path: Path) -> None:
+        body = json.dumps({"hwVersion": "1A", "swVersion": "2.0"})
+        har = _har_file(tmp_path, [_har_entry("https://192.168.100.1/data/info.asp", body)])
+
+        resources = build_resource_dict(str(har))
+
+        assert isinstance(resources["/data/info.asp"], dict)
+        assert resources["/data/info.asp"]["hwVersion"] == "1A"
+
+    def test_json_array_wrapped_as_raw(self, tmp_path: Path) -> None:
+        body = json.dumps([{"channelId": "1", "frequency": "495000000"}])
+        har = _har_file(tmp_path, [_har_entry("https://192.168.100.1/data/dsinfo.asp", body)])
+
+        resources = build_resource_dict(str(har))
+
+        result = resources["/data/dsinfo.asp"]
+        assert isinstance(result, dict)
+        assert "_raw" in result
+        assert result["_raw"][0]["channelId"] == "1"
+
+    def test_json_content_type_also_wraps_arrays(self, tmp_path: Path) -> None:
+        body = json.dumps([{"id": 1}])
+        har = _har_file(tmp_path, [_har_entry("https://192.168.100.1/api/status", body, mime="application/json")])
+
+        resources = build_resource_dict(str(har))
+
+        result = resources["/api/status"]
+        assert isinstance(result, dict)
+        assert result["_raw"][0]["id"] == 1
+
+    def test_html_body_not_parsed_as_json(self, tmp_path: Path) -> None:
+        from bs4 import BeautifulSoup
+
+        body = "<html><body><table></table></body></html>"
+        har = _har_file(tmp_path, [_har_entry("https://192.168.100.1/status.html", body)])
+
+        resources = build_resource_dict(str(har))
+
+        assert isinstance(resources["/status.html"], BeautifulSoup)
+
+    def test_invalid_json_with_html_content_type_falls_back_to_html(self, tmp_path: Path) -> None:
+        from bs4 import BeautifulSoup
+
+        body = "[invalid json but starts with bracket"
+        har = _har_file(tmp_path, [_har_entry("https://192.168.100.1/data/broken.asp", body)])
+
+        resources = build_resource_dict(str(har))
+
+        assert isinstance(resources["/data/broken.asp"], BeautifulSoup)

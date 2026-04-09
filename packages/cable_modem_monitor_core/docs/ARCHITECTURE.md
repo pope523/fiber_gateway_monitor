@@ -575,9 +575,11 @@ its `system_info` uses `html_fields` or `javascript`. `parser.yaml`
 declares the format and field mappings per section. Capabilities are
 implicit — the presence of a mapping IS the capability declaration.
 
-See `PARSING_SPEC.md` for the full specification: per-section format
-selection, parser.yaml schema per format, parser.py post-processing
-contract, resource dict contract, and output format.
+See `PARSING_SPEC.md` for common concepts, output contract, and
+post-processing hooks. Format-specific extraction is documented in
+`FORMAT_TABLE_SPEC.md`, `FORMAT_JAVASCRIPT_SPEC.md`,
+`FORMAT_HNAP_SPEC.md`, `FORMAT_JSON_SPEC.md`, and `FORMAT_XML_SPEC.md`.
+System info extraction is in `SYSTEM_INFO_SPEC.md`.
 
 ### Data Models
 
@@ -1376,7 +1378,13 @@ levels; Core only emits log records.
 | `ARCHITECTURE_DECISIONS.md` | Design rationale — the "why" behind the architecture |
 | `MODEM_YAML_SPEC.md` | modem.yaml schema — identity, auth, session, actions |
 | `MODEM_DIRECTORY_SPEC.md` | Catalog directory structure, file roles, assembly rules |
-| `PARSING_SPEC.md` | Extraction formats, parser.yaml schema, parser.py contract, output format |
+| `PARSING_SPEC.md` | Parsing overview — common concepts, output contract, channel types, aggregates, post-processing |
+| `FORMAT_TABLE_SPEC.md` | HTMLTableParser, HTMLTableTransposedParser, companion table merging |
+| `FORMAT_JAVASCRIPT_SPEC.md` | JSEmbeddedParser, JSJsonParser |
+| `FORMAT_HNAP_SPEC.md` | HNAPParser — delimiter-separated HNAP responses |
+| `FORMAT_JSON_SPEC.md` | JSONParser — JSON API field paths and array navigation |
+| `FORMAT_XML_SPEC.md` | XMLParser — XML element tag navigation |
+| `SYSTEM_INFO_SPEC.md` | system_info extraction — multi-source, format schemas, field tiers |
 | `RESOURCE_LOADING_SPEC.md` | Resource dict contract, loader behavior per transport |
 | `ORCHESTRATION_SPEC.md` | Orchestrator, collector, health monitor, restart monitor — interface contracts and data models |
 | `ORCHESTRATION_USE_CASES.md` | Scenario-based use cases — normal ops, auth failures, connectivity, restart, health, lifecycle |

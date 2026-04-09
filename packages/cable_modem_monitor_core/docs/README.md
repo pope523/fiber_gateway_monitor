@@ -9,7 +9,13 @@
 | [AUTH_CBN_SPEC.md](AUTH_CBN_SPEC.md) | `form_cbn` — CBN AES-256-CBC protocol, session token rotation |
 | [MODEM_YAML_SPEC.md](MODEM_YAML_SPEC.md) | modem.yaml schema — identity, auth, session, actions |
 | [MODEM_DIRECTORY_SPEC.md](MODEM_DIRECTORY_SPEC.md) | Catalog directory structure, file roles, assembly rules |
-| [PARSING_SPEC.md](PARSING_SPEC.md) | 6 extraction formats, parser.yaml schema, parser.py contract |
+| [PARSING_SPEC.md](PARSING_SPEC.md) | Parsing overview — common concepts, output contract, channel types, aggregates, post-processing |
+| [FORMAT_TABLE_SPEC.md](FORMAT_TABLE_SPEC.md) | HTMLTableParser, HTMLTableTransposedParser, companion table merging |
+| [FORMAT_JAVASCRIPT_SPEC.md](FORMAT_JAVASCRIPT_SPEC.md) | JSEmbeddedParser (delimited strings), JSJsonParser (JSON in JS) |
+| [FORMAT_HNAP_SPEC.md](FORMAT_HNAP_SPEC.md) | HNAPParser — delimiter-separated values in HNAP JSON responses |
+| [FORMAT_JSON_SPEC.md](FORMAT_JSON_SPEC.md) | JSONParser — JSON API responses via field paths and array navigation |
+| [FORMAT_XML_SPEC.md](FORMAT_XML_SPEC.md) | XMLParser — XML element children via tag name navigation |
+| [SYSTEM_INFO_SPEC.md](SYSTEM_INFO_SPEC.md) | system_info extraction — multi-source, format schemas, field tiers |
 | [RESOURCE_LOADING_SPEC.md](RESOURCE_LOADING_SPEC.md) | Resource dict contract, loader behavior, HNAP batching |
 | [ORCHESTRATION_SPEC.md](ORCHESTRATION_SPEC.md) | Orchestrator, collector, health monitor, restart monitor — interface contracts and data models |
 | [ORCHESTRATION_USE_CASES.md](ORCHESTRATION_USE_CASES.md) | 81 scenario-based use cases — normal ops, auth failures, connectivity, restart, health, lifecycle |

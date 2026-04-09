@@ -56,10 +56,22 @@ class JSONSystemInfoParser(BaseParser):
             )
             return {}
 
+        # Navigate array_path and take the first element (same concept
+        # as the channel parser's array_path).
+        if self._config.array_path:
+            array = _navigate_path(data, self._config.array_path)
+            if not isinstance(array, list) or not array:
+                _logger.warning(
+                    "array_path '%s' did not resolve to a non-empty list",
+                    self._config.array_path,
+                )
+                return {}
+            data = array[0] if isinstance(array[0], dict) else {}
+
         result: dict[str, str] = {}
 
         for field_def in self._config.fields:
-            # Navigate optional path before key lookup
+            # Navigate optional per-field path before key lookup
             target = data
             if field_def.path:
                 target = _navigate_path(data, field_def.path)

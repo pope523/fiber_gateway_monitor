@@ -21,6 +21,10 @@ sources:
   auth_config:
     "[#89 Hitron CODA56](https://github.com/solentlabs/cable_modem_monitor/issues/89)
     — guest mode (user=nologin/pws=nologin)"
+  docsis_version:
+    "[Hitron CODA56 Product Page](https://us.hitrontech.com/products/consumers/coda56/)
+    — DOCSIS 3.1, 2.5 Gbps, 2x2 OFDM;
+    [Datasheet (PDF)](https://us.hitrontech.com/wp-content/uploads/2022/11/DS-CODA56RES.pdf)"
 
 attribution:
   contributors:
@@ -31,10 +35,11 @@ isps:
   - Comcast
   - Xfinity
 notes: |
-  DOCSIS 3.0 cable modem. GoAhead-Webs server with HTTPS + HSTS.
+  DOCSIS 3.1 cable modem. GoAhead-Webs server with HTTPS + HSTS.
   JSON API via /data/*.asp endpoints (Content-Type: text/html but JSON body).
   HAR captured in guest mode (user=nologin, pws=nologin) — read-only access.
-  Authenticated mode untested. OFDM/OFDMA channels on separate endpoints;
+  Authenticated mode untested. OFDM/OFDMA channels on separate endpoints
+  (dsofdminfo.asp, usofdminfo.asp) but disabled in this capture;
   SC-QAM channels parsed from dsinfo.asp and usinfo.asp.
 
 references:

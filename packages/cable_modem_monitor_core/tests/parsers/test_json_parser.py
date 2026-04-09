@@ -19,6 +19,7 @@ from solentlabs.cable_modem_monitor_core.models.parser_config.json_format import
 )
 from solentlabs.cable_modem_monitor_core.parsers.formats.json_parser import (
     JSONParser,
+    _navigate_path,
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "json_parser"
@@ -65,3 +66,28 @@ def test_extraction(fixture_path: Path) -> None:
     assert result == expected, (
         f"Mismatch for {fixture_path.stem}:\n" f"  actual:   {result}\n" f"  expected: {expected}"
     )
+
+
+NAVIGATE_PATH_CASES = [
+    ("dict key", {"a": {"b": 1}}, "a.b", 1),
+    ("nested dict", {"a": {"b": {"c": 2}}}, "a.b.c", 2),
+    ("single key", {"x": 42}, "x", 42),
+    ("missing key", {"a": 1}, "b", None),
+    ("missing nested key", {"a": {"b": 1}}, "a.c", None),
+    ("list index", {"_raw": [{"id": 1}, {"id": 2}]}, "_raw.0", {"id": 1}),
+    ("list second element", {"_raw": [{"id": 1}, {"id": 2}]}, "_raw.1", {"id": 2}),
+    ("list then key", {"_raw": [{"id": 1}]}, "_raw.0.id", 1),
+    ("index out of bounds", {"_raw": [{"id": 1}]}, "_raw.5", None),
+    ("index on dict", {"a": {"b": 1}}, "a.0", None),
+    ("key on list", {"a": [1, 2]}, "a.x", None),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "data", "path", "expected"),
+    NAVIGATE_PATH_CASES,
+    ids=[c[0] for c in NAVIGATE_PATH_CASES],
+)
+def test_navigate_path(label: str, data: Any, path: str, expected: Any) -> None:
+    """_navigate_path handles dict keys and list indices."""
+    assert _navigate_path(data, path) == expected

@@ -139,7 +139,7 @@ normalization):
 When downstream channels lack `lock_status`, the derivation falls back
 to `system_info.docsis_status` and returns the raw string.  Modem-
 specific values are normalized to `"Operational"` via YAML `map`
-entries in parser.yaml (see PARSING_SPEC.md § Canonical Values).
+entries in parser.yaml (see SYSTEM_INFO_SPEC.md § Canonical Values).
 Only a missing or empty field produces `"unknown"`.
 
 The platform adapter composes `connection_status`, `docsis_status`,
