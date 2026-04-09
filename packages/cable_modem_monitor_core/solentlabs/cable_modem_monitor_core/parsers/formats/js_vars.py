@@ -64,7 +64,12 @@ class JSVarsParser(BaseParser):
                 var_name = match.group(1)
                 field_def = var_to_mapping.get(var_name)
                 if field_def is not None:
-                    converted = convert_value(match.group(2), field_def.type, map_config=field_def.map)
+                    converted = convert_value(
+                        match.group(2),
+                        field_def.type,
+                        map_config=field_def.map,
+                        input_format=field_def.format,
+                    )
                     if converted is not None:
                         result[field_def.field] = str(converted)
 

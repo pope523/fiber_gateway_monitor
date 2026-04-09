@@ -127,20 +127,16 @@ def _extract_channel(element: Element, table: XMLTableDefinition) -> dict[str, A
 
 
 def _extract_column(element: Element, col: Any) -> Any:
-    """Extract and convert a single column value from an XML element.
-
-    Applies ``scale`` multiplication when configured. Whole-number
-    results are cast to int.
-    """
+    """Extract and convert a single column value from an XML element."""
     sub = element.find(col.source)
     if sub is None or sub.text is None:
         return None
-    value = convert_value(sub.text.strip(), col.type)
-    if value is not None and col.scale is not None:
-        value = value * col.scale
-        if isinstance(value, float) and value == int(value):
-            value = int(value)
-    return value
+    return convert_value(
+        sub.text.strip(),
+        col.type,
+        scale=col.scale,
+        input_format=col.format,
+    )
 
 
 def _apply_channel_type(

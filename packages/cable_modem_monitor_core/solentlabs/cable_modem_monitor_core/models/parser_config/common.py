@@ -30,7 +30,9 @@ class ColumnMapping(BaseModel):
     field: str
     type: str
     unit: str = ""
+    format: str = ""
     map: dict[str, str] | None = None
+    scale: int | float | None = None
 
     @model_validator(mode="after")
     def validate_field_type(self) -> ColumnMapping:
@@ -47,7 +49,9 @@ class RowMapping(BaseModel):
     field: str
     type: str
     unit: str = ""
+    format: str = ""
     map: dict[str, str] | None = None
+    scale: int | float | None = None
 
     @model_validator(mode="after")
     def validate_field_type(self) -> RowMapping:
@@ -65,8 +69,10 @@ class ChannelMapping(BaseModel):
     field: str
     type: str
     unit: str = ""
+    format: str = ""
     fallback_key: str = ""
     map: dict[str, str] | None = None
+    scale: int | float | None = None
 
     @model_validator(mode="after")
     def validate_has_position(self) -> ChannelMapping:
@@ -96,11 +102,13 @@ class JsonChannelMapping(BaseModel):
     field: str
     type: str
     unit: str = ""
+    format: str = ""
     fallback_key: str = ""
     truthy: Any | None = None
     map: dict[str, str] | None = None
     separator: str = ""
     separator_index: int = 0
+    scale: int | float | None = None
 
     @model_validator(mode="after")
     def validate_field_type(self) -> JsonChannelMapping:

@@ -116,7 +116,8 @@ system_info:
           type: string
         - field: system_uptime
           label: "System Up Time"
-          type: string
+          type: uptime
+          format: "{days} days {hours}h:{minutes}m:{seconds}s"
         - field: docsis_status
           label: "Network Access"
           type: string

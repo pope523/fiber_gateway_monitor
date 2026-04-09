@@ -86,7 +86,8 @@ system_info:
           type: string
         - css: "table.simpleTable:nth-of-type(2) tr:nth-of-type(2) td:nth-of-type(2)"
           field: system_uptime
-          type: string
+          type: uptime
+          format: "{days} days {hours}h:{minutes}m:{seconds}s"
 
 # DOCSIS 3.1: aggregate QAM-only totals. OFDM LDPC codewords operate
 # at a vastly different scale and are not aggregated.

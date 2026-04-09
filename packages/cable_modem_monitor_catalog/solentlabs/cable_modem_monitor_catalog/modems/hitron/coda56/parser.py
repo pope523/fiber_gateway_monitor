@@ -8,6 +8,15 @@ Response format::
 
     [{"hwVersion": "1A", "swVersion": "7.3.5.3.2b1",
       "systemUptime": "479h:40m:38s", ...}]
+
+TODO: system_uptime is passed through as the raw firmware string
+("479h:40m:38s") instead of the canonical fleet format. To
+standardize, either:
+  1. Apply convert_value(raw, "uptime",
+     input_format="{hours}h:{minutes}m:{seconds}s") here, or
+  2. Restructure to extract uptime via a parser.yaml system_info
+     source with type: uptime / format so the PostProcessor is
+     no longer needed for this field.
 """
 
 from __future__ import annotations

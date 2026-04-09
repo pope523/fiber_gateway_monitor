@@ -98,7 +98,6 @@
       "lock_status": "locked",
       "modulation": "qam_4096",
       "power": 5.3,
-      "snr": 38.5,
       "uncorrected": 0
     }
   ],
@@ -106,7 +105,7 @@
     "docsis_status": "Operational",
     "docsis_version": "3.1",
     "downstream_channel_count": 9,
-    "system_uptime": "1471890",
+    "system_uptime": "17 days 00h:51m:30s",
     "total_corrected": 635,
     "total_uncorrected": 0,
     "upstream_channel_count": 3

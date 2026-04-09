@@ -68,7 +68,8 @@ system_info:
       fields:
         - field: system_uptime
           source: MotoConnSystemUpTime
-          type: string
+          type: uptime
+          format: "{days} days {hours}h:{minutes}m:{seconds}s"
         - field: docsis_status
           source: MotoConnNetworkAccess
           type: string

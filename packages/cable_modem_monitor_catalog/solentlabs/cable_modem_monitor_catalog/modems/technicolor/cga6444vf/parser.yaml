@@ -110,5 +110,6 @@ system_info:
           path: "data"
         - key: uptime
           field: system_uptime
-          type: string
+          type: uptime
+          format: seconds
           path: "data"

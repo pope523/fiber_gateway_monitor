@@ -177,6 +177,8 @@ class JSEmbeddedParser(BaseParser):
                 mapping.type,
                 unit=mapping.unit,
                 map_config=mapping.map,
+                scale=mapping.scale,
+                input_format=mapping.format,
             )
 
             if value is not None:

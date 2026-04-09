@@ -262,6 +262,7 @@ Every field mapping declares a type that controls parsing and conversion:
 | `string` | any | `str` | Strip whitespace |
 | `frequency` | `"507 MHz"`, `507000000` | `int` (Hz) | Auto-detect Hz vs MHz by magnitude; strip unit suffix |
 | `boolean` | `true`, `"Locked"` | `bool` | Configurable truthy value |
+| `uptime` | `"1471890"`, `"D: 39 H: 06..."` | `str` | Requires `format`. Normalizes to `"N days HHh:MMm:SSs"` |
 
 Only explicitly mapped fields are extracted. Source fields without a
 mapping in parser.yaml are ignored — no implicit pass-through from
@@ -282,6 +283,47 @@ that the strategy strips before type conversion.
   type: float
   unit: "dBmV"
 ```
+
+#### Scale Multiplication
+
+Any numeric field mapping can declare an optional `scale` multiplier
+applied after type conversion. Whole-number float results are cast to
+int. Available across all channel parser formats (table, table_transposed,
+json, xml, hnap, javascript).
+
+```yaml
+- field: symbol_rate
+  type: float
+  scale: 1000        # Msym/s → ksym/s
+```
+
+#### Uptime Normalization
+
+The `uptime` type normalizes raw uptime values to a canonical format:
+`"N days HHh:MMm:SSs"` (e.g., `"17 days 00h:51m:30s"`).
+
+Requires a `format` field declaring the raw input format. Preset
+formats:
+
+- `seconds` — raw integer seconds (e.g., `"1471890"`)
+
+Custom formats use `{days}`, `{hours}`, `{minutes}`, `{seconds}`
+placeholders to parse modem-specific strings:
+
+```yaml
+# Raw seconds (Hub 5, CGA4236, G54)
+- field: system_uptime
+  type: uptime
+  format: seconds
+
+# Custom pattern (TG3442DE: "D: 39 H: 06 M: 24 S: 26")
+- field: system_uptime
+  type: uptime
+  format: "D: {days} H: {hours} M: {minutes} S: {seconds}"
+```
+
+Missing components default to 0. Whitespace in format strings is
+matched flexibly. Compiled patterns are cached.
 
 #### Filter Rules
 
@@ -1122,6 +1164,8 @@ upstream:
 | `fields` | list | yes* | Key→field mappings within each JSON object |
 | `fields[].key` | string | yes | JSON key name in the source object |
 | `fields[].fallback_key` | string | no | Alternative key if primary is missing |
+| `fields[].format` | string | no | Input format for types that require it (e.g., `seconds` for `uptime`). |
+| `fields[].scale` | number | no | Multiplier applied after type conversion. Whole-number results cast to int. |
 | `arrays` | list | yes* | Multi-array form (alternative to array_path/fields) |
 
 \* Mutually exclusive: use either flat form (`array_path` + `fields`)
@@ -1309,7 +1353,7 @@ upstream:
 | `columns` | list | yes | Mappings from XML sub-element tags to canonical field names |
 | `columns[].source` | string | yes | XML child element tag name (e.g., `"freq"`, `"pow"`) |
 | `columns[].field` | string | yes | Canonical field name (from field registry) |
-| `columns[].type` | string | yes | Target type: `integer`, `float`, `string`, `frequency`, `boolean`, `lock_status` |
+| `columns[].type` | string | yes | Target type: `integer`, `float`, `string`, `frequency`, `boolean`, `lock_status`, `uptime` |
 | `columns[].scale` | number | no | Multiplier applied after type conversion (e.g., `1000` for Msym/s → ksym/s). Whole-number results cast to int. |
 | `channel_type` | object | no | Fixed or field-derived channel type assignment |
 | `lock_status` | object | no | `all_of`: list of sub-element tag names whose boolean values are ANDed — all true → `"locked"`, otherwise `"not_locked"` |

@@ -357,7 +357,7 @@
     "downstream_channel_count": 32,
     "hardware_version": "1.01",
     "software_version": "V3.02.01",
-    "system_uptime": "13 days 06:59:07",
+    "system_uptime": "13 days 06h:59m:07s",
     "total_corrected": 156700,
     "total_uncorrected": 107568,
     "upstream_channel_count": 3

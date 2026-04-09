@@ -140,7 +140,8 @@ system_info:
       fields:
         - key: "uptime"
           field: system_uptime
-          type: string
+          type: uptime
+          format: seconds
         - key: "version"
           field: software_version
           type: string

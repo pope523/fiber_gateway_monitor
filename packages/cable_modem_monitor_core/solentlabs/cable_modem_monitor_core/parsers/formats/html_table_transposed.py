@@ -170,6 +170,8 @@ def _extract_channel(
             row_def.type,
             unit=row_def.unit,
             map_config=row_def.map,
+            scale=row_def.scale,
+            input_format=row_def.format,
         )
 
         if value is not None:

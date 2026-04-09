@@ -76,7 +76,8 @@ system_info:
         - field: system_uptime
           id: "SystemUpTime"
           pattern: "System Up Time:\\s*(.*)"
-          type: string
+          type: uptime
+          format: "{hours}:{minutes}:{seconds}"
         - field: current_time
           id: "CurrentSystemTime"
           pattern: "Current System Time:\\s*(.*)"

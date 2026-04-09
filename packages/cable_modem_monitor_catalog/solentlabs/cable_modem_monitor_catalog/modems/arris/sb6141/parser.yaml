@@ -68,7 +68,8 @@ system_info:
       fields:
         - label: "System Up Time"
           field: system_uptime
-          type: string
+          type: uptime
+          format: "{days} days {hours}h:{minutes}m:{seconds}s"
 
     - format: html_fields
       resource: "/cmHelpData.htm"

@@ -108,6 +108,8 @@ def _extract_row(
             col.type,
             unit=col.unit,
             map_config=col.map,
+            scale=col.scale,
+            input_format=col.format,
         )
 
         if value is not None:

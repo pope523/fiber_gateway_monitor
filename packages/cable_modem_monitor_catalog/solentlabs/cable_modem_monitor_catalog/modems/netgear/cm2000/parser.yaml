@@ -143,7 +143,8 @@ system_info:
               type: string
             - offset: 14
               field: system_uptime
-              type: string
+              type: uptime
+              format: "{days} days {hours}:{minutes}:{seconds}"
               # High-level status indicators (green/yellow/red boxes)
               # Values are numeric codes: 0/1/2 mapped to status strings.
         - name: "InitCableDiagTagValue"

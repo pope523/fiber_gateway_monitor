@@ -83,7 +83,8 @@ system_info:
             "Allowed": "Operational"
         - field: system_uptime
           label: "System Up Time"
-          type: string
+          type: uptime
+          format: "{days} days {hours}h:{minutes}m:{seconds}s"
     - format: html_fields
       resource: "/MotoSwInfo.asp"
       fields:

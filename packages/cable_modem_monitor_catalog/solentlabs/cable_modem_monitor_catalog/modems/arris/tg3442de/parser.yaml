@@ -102,7 +102,8 @@ system_info:
           type: string
         - source: js_Duration
           field: system_uptime
-          type: string
+          type: uptime
+          format: "D: {days} H: {hours} M: {minutes} S: {seconds}"
     - format: javascript_vars
       resource: "/php/overview_data.php"
       fields:

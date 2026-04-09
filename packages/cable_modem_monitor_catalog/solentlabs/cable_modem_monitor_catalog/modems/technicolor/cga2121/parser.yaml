@@ -62,7 +62,8 @@ system_info:
           type: string
         - css: "th[data-i18n='atg_system_uptime'] + td"
           field: system_uptime
-          type: string
+          type: uptime
+          format: "{days} days {hours}h:{minutes}m:{seconds}s"
     - format: html_fields
       resource: "/st_docsis.html"
       fields:

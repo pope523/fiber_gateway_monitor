@@ -258,3 +258,75 @@ class TestNumericCleanup:
         """Value with multiple dots fails both parse attempts."""
         result = convert_value("1.2.3", "float")
         assert result is None
+
+
+# --- Scale multiplication ---
+
+# fmt: off
+SCALE_CASES = [
+    # (raw,     type,      scale, expected,  description)
+    ("53",      "float",   0.1,   5.3,       "float scale down by 0.1"),
+    ("5.12",    "float",   1000,  5120,      "float scale up, whole-number cast to int"),
+    ("5120",    "integer", 0.001, 5.12,      "integer scale down to float"),
+    ("100",     "integer", 10,    1000,      "integer scale up stays int"),
+    ("hello",   "string",  2,     "hello",   "string ignores scale"),
+    ("",        "float",   0.1,   None,      "empty value, scale not applied"),
+]
+# fmt: on
+
+
+@pytest.mark.parametrize(
+    "raw,field_type,scale,expected,desc",
+    SCALE_CASES,
+    ids=[c[4] for c in SCALE_CASES],
+)
+def test_convert_value_with_scale(
+    raw: str,
+    field_type: str,
+    scale: float,
+    expected: object,
+    desc: str,
+) -> None:
+    """Test scale multiplication after type conversion."""
+    result = convert_value(raw, field_type, scale=scale)
+    if isinstance(expected, float):
+        assert result == pytest.approx(expected), f"{desc}: expected {expected!r}, got {result!r}"
+    else:
+        assert result == expected, f"{desc}: expected {expected!r}, got {result!r}"
+
+
+# --- Uptime type with format ---
+
+# fmt: off
+UPTIME_CASES = [
+    # (raw,        format,     expected,                     description)
+    ("1471890",    "seconds",  "17 days 00h:51m:30s",        "Hub 5 uptime"),
+    ("0",          "seconds",  "0 days 00h:00m:00s",         "zero seconds"),
+    ("86400",      "seconds",  "1 days 00h:00m:00s",         "exactly one day"),
+    ("3661",       "seconds",  "0 days 01h:01m:01s",         "1h 1m 1s"),
+    ("",           "seconds",  None,                         "empty string"),
+    ("abc",        "seconds",  None,                         "non-numeric"),
+    ("D: 39 H: 06 M: 24 S: 26",                              # noqa: E501
+     "D: {days} H: {hours} M: {minutes} S: {seconds}",
+     "39 days 06h:24m:26s", "TG3442DE custom format"),
+    ("479h:40m:38s",
+     "{hours}h:{minutes}m:{seconds}s",
+     "19 days 23h:40m:38s", "hours-only custom format"),
+]
+# fmt: on
+
+
+@pytest.mark.parametrize(
+    "raw,input_format,expected,desc",
+    UPTIME_CASES,
+    ids=[c[3] for c in UPTIME_CASES],
+)
+def test_convert_uptime(
+    raw: str,
+    input_format: str,
+    expected: object,
+    desc: str,
+) -> None:
+    """Test uptime conversion with format parameter."""
+    result = convert_value(raw, "uptime", input_format=input_format)
+    assert result == expected, f"{desc}: expected {expected!r}, got {result!r}"

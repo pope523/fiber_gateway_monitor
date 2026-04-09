@@ -58,7 +58,12 @@ class HNAPFieldsParser(BaseParser):
         for field_mapping in self._config.fields:
             value = action_response.get(field_mapping.source, "")
             if value:
-                converted = convert_value(value, field_mapping.type, map_config=field_mapping.map)
+                converted = convert_value(
+                    value,
+                    field_mapping.type,
+                    map_config=field_mapping.map,
+                    input_format=field_mapping.format,
+                )
                 if converted is not None:
                     result[field_mapping.field] = str(converted)
 

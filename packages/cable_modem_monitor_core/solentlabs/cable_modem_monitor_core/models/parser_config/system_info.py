@@ -19,6 +19,7 @@ class HTMLFieldMapping(BaseModel):
     model_config = ConfigDict(extra="forbid")
     field: str
     type: str
+    format: str = ""
     label: str = ""
     id: str = ""
     css: str = ""
@@ -56,6 +57,7 @@ class HNAPFieldMapping(BaseModel):
     source: str
     field: str
     type: str
+    format: str = ""
     map: dict[str, str] | None = None
 
     @model_validator(mode="after")
@@ -81,6 +83,7 @@ class JSSystemInfoFieldMapping(BaseModel):
     offset: int
     field: str
     type: str
+    format: str = ""
     map: dict[str, str] | None = None
 
     @model_validator(mode="after")
@@ -120,6 +123,7 @@ class JSONSystemInfoFieldMapping(BaseModel):
     key: str
     field: str
     type: str
+    format: str = ""
     path: str = ""
     map: dict[str, str] | None = None
 
@@ -151,6 +155,7 @@ class JSVarsFieldMapping(BaseModel):
     source: str
     field: str
     type: str
+    format: str = ""
     map: dict[str, str] | None = None
 
     @model_validator(mode="after")
@@ -182,6 +187,7 @@ class XMLSystemInfoFieldMapping(BaseModel):
     source: str
     field: str
     type: str
+    format: str = ""
     map: dict[str, str] | None = None
 
     @model_validator(mode="after")

@@ -91,7 +91,8 @@ system_info:
       fields:
         - field: system_uptime
           label: "System Uptime"
-          type: string
+          type: uptime
+          format: "{days} days {hours}h:{minutes}m:{seconds}s"
         - field: software_version
           label: "Download Version"
           type: string

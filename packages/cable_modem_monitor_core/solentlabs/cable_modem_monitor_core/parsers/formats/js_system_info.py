@@ -72,7 +72,12 @@ class JSSystemInfoParser(BaseParser):
                     continue
 
                 raw_value = values[field_def.offset].strip()
-                converted = convert_value(raw_value, field_def.type, map_config=field_def.map)
+                converted = convert_value(
+                    raw_value,
+                    field_def.type,
+                    map_config=field_def.map,
+                    input_format=field_def.format,
+                )
                 if converted is not None:
                     result[field_def.field] = str(converted)
 

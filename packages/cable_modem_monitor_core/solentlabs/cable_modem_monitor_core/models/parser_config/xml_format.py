@@ -27,6 +27,7 @@ class XMLColumnMapping(BaseModel):
     source: str
     field: str
     type: str
+    format: str = ""
     scale: int | float | None = None
 
     @model_validator(mode="after")

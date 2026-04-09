@@ -271,7 +271,7 @@
     "docsis_status": "Operational",
     "provisioning_status": "Modem Mode",
     "software_version": "CH7465MT-AT-NCIP-6.15.32p3TM-GA-NOSH",
-    "system_uptime": "0day(s)0h:16m:36s",
+    "system_uptime": "0 days 00h:16m:36s",
     "total_corrected": 674991443,
     "total_uncorrected": 32471,
     "upstream_channel_count": 8

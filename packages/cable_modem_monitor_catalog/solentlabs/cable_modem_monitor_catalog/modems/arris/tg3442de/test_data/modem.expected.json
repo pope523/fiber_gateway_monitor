@@ -293,7 +293,7 @@
     "downstream_channel_count": 32,
     "hardware_version": "7",
     "software_version": "01.05.063.13.EURO.PC20",
-    "system_uptime": "39 days 06:24:26",
+    "system_uptime": "39 days 06h:24m:26s",
     "upstream_channel_count": 5
   },
   "upstream": [

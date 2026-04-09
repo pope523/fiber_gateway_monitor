@@ -134,7 +134,8 @@ system_info:
       fields:
         - field: system_uptime
           label: "System Uptime"
-          type: string
+          type: uptime
+          format: "{days} d: {hours} h: {minutes} m"
         - field: docsis_status
           label: "CM Status"
           type: string

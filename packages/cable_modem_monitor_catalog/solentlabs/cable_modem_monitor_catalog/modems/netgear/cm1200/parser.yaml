@@ -164,7 +164,8 @@ system_info:
             # Index 14 — extended format only (see comment above)
             - offset: 14
               field: system_uptime
-              type: string
+              type: uptime
+              format: "{days} days {hours}:{minutes}:{seconds}"
     # /RouterStatus.htm exposes hardware and firmware version via a
     # separate InitTagValue function. Same JS comment pattern as
     # DocsisStatus.htm (real data on one line, example data in a

@@ -54,7 +54,12 @@ class HTMLFieldsParser(BaseParser):
         for field_cfg in self._fields:
             value = _extract_field(soup, field_cfg)
             if value is not None:
-                converted = convert_value(value, field_cfg.type, map_config=field_cfg.map)
+                converted = convert_value(
+                    value,
+                    field_cfg.type,
+                    map_config=field_cfg.map,
+                    input_format=field_cfg.format,
+                )
                 if converted is not None:
                     result[field_cfg.field] = str(converted)
 

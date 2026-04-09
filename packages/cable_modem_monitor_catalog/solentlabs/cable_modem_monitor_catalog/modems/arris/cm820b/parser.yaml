@@ -76,7 +76,8 @@ system_info:
             "OPERATIONAL": "Operational"
         - field: system_uptime
           label: "System Uptime"
-          type: string
+          type: uptime
+          format: "{days} d: {hours} h: {minutes} m"
     - format: html_fields
       resource: "/cgi-bin/vers_cgi"
       fields:

@@ -1,7 +1,8 @@
 """Type conversion for parser field values.
 
 Handles field type conversion (integer, float, string, frequency, boolean,
-lock_status), unit suffix stripping, value mapping, and frequency normalization.
+lock_status, uptime_seconds), unit suffix stripping, value mapping,
+scale multiplication, and frequency normalization.
 
 See PARSING_SPEC.md Field Types for the authoritative type definitions.
 """
@@ -100,12 +101,17 @@ def normalize_frequency(raw: str | int | float) -> int:
     return int(round(value))
 
 
+_TYPE_HANDLERS: dict[str, Any] = {}  # populated after handler definitions
+
+
 def convert_value(
     raw: Any,
     field_type: str,
     *,
     unit: str = "",
     map_config: dict[str, str] | None = None,
+    scale: int | float | None = None,
+    input_format: str = "",
 ) -> int | float | str | bool | None:
     """Convert a raw value to the declared field type.
 
@@ -114,13 +120,20 @@ def convert_value(
     2. Apply map (on raw stripped text, before type conversion)
     3. Strip unit suffix
     4. Type conversion
+    5. Scale multiplication (numeric types only)
 
     Args:
         raw: The raw value (typically a string from HTML cell text).
         field_type: One of ``"integer"``, ``"float"``, ``"string"``,
-            ``"frequency"``, ``"boolean"``.
+            ``"frequency"``, ``"boolean"``, ``"lock_status"``,
+            ``"uptime"``.
         unit: Unit suffix to strip before numeric conversion.
         map_config: Optional value mapping (e.g., ``{"Locked": "locked"}``).
+        scale: Optional multiplier applied after type conversion.
+            Only affects numeric results (int/float). Whole-number
+            float results are cast to int.
+        input_format: Sub-format selector for types that accept
+            multiple raw formats (e.g., ``"seconds"`` for ``uptime``).
 
     Returns:
         Converted value, or ``None`` if the raw value is empty or
@@ -139,28 +152,23 @@ def convert_value(
     if unit:
         value = strip_unit(value, unit)
 
-    # Step 4: type conversion
-    if field_type == "string":
-        return value
+    # Step 4: type conversion via dispatch table
+    handler = _TYPE_HANDLERS.get(field_type)
+    if handler is None:
+        _logger.warning("Unknown field type '%s', returning as string", field_type)
+        result = value
+    elif field_type == "uptime":
+        result = handler(value, input_format)
+    else:
+        result = handler(value)
 
-    if field_type == "integer":
-        return _to_integer(value)
+    # Step 5: scale multiplication (numeric types only)
+    if result is not None and scale is not None and isinstance(result, int | float):
+        result = round(result * scale, 10)
+        if isinstance(result, float) and result == int(result):
+            result = int(result)
 
-    if field_type == "float":
-        return _to_float(value)
-
-    if field_type == "frequency":
-        return _to_frequency(value)
-
-    if field_type == "boolean":
-        return _to_boolean(value)
-
-    if field_type == "lock_status":
-        return _to_lock_status(value)
-
-    # Unknown type — pass through as string
-    _logger.warning("Unknown field type '%s', returning as string", field_type)
-    return value
+    return result
 
 
 def _to_integer(value: str) -> int | None:
@@ -221,3 +229,106 @@ def _to_lock_status(value: str) -> str:
     ``"YES"``, ``"True"``, ``"Active"``, etc.
     """
     return "locked" if value.lower() in _LOCKED_VALUES else "not_locked"
+
+
+def _to_uptime(value: str, input_format: str) -> str | None:
+    """Convert raw uptime value to canonical ``"Nd HH:MM:SS"`` string.
+
+    Preset formats:
+    - ``"seconds"`` — integer seconds (e.g., ``"1471890"`` → ``"17d 00:51:30"``)
+
+    Custom formats use ``{days}``, ``{hours}``, ``{minutes}``, ``{seconds}``
+    placeholders (e.g., ``"D: {days} H: {hours} M: {minutes} S: {seconds}"``).
+    Missing components default to 0.
+    """
+    if not input_format:
+        _logger.warning("uptime type requires a format")
+        return value
+    if input_format == "seconds":
+        return _uptime_from_seconds(value)
+    if "{" in input_format:
+        return _uptime_from_pattern(value, input_format)
+    _logger.warning("Unknown uptime format '%s'", input_format)
+    return value
+
+
+def _uptime_from_seconds(value: str) -> str | None:
+    """Convert seconds to ``"Nd HH:MM:SS"`` uptime string."""
+    try:
+        total = int(float(value))
+    except (ValueError, OverflowError):
+        _logger.debug("Cannot convert '%s' to uptime seconds", value)
+        return None
+    if total < 0:
+        return None
+    return _format_uptime_canonical(total)
+
+
+_UPTIME_COMPONENTS = ("days", "hours", "minutes", "seconds")
+
+# Cache compiled patterns to avoid recompilation on each poll.
+_uptime_pattern_cache: dict[str, re.Pattern[str]] = {}
+
+
+def _compile_uptime_pattern(format_str: str) -> re.Pattern[str]:
+    """Convert a placeholder format string to a compiled regex.
+
+    Replaces ``{days}``, ``{hours}``, ``{minutes}``, ``{seconds}`` with
+    named capture groups. Whitespace in literal text is matched flexibly.
+    """
+    cached = _uptime_pattern_cache.get(format_str)
+    if cached is not None:
+        return cached
+
+    # Split on placeholders, preserving the matched group names.
+    parts = re.split(r"\{(days|hours|minutes|seconds)\}", format_str)
+    regex_parts: list[str] = []
+    for part in parts:
+        if part in _UPTIME_COMPONENTS:
+            regex_parts.append(f"\\s*(?P<{part}>\\d+)")
+        else:
+            escaped = re.escape(part)
+            escaped = re.sub(r"\\ ", r"\\s*", escaped)
+            regex_parts.append(escaped)
+
+    pattern = re.compile("".join(regex_parts))
+    _uptime_pattern_cache[format_str] = pattern
+    return pattern
+
+
+def _uptime_from_pattern(value: str, format_str: str) -> str | None:
+    """Parse uptime from a custom placeholder format string."""
+    pattern = _compile_uptime_pattern(format_str)
+    m = pattern.search(value)
+    if not m:
+        _logger.debug("Uptime pattern '%s' did not match '%s'", format_str, value)
+        return None
+    groups = m.groupdict()
+    days = int(groups.get("days", 0) or 0)
+    hours = int(groups.get("hours", 0) or 0)
+    minutes = int(groups.get("minutes", 0) or 0)
+    seconds = int(groups.get("seconds", 0) or 0)
+    total = days * 86400 + hours * 3600 + minutes * 60 + seconds
+    return _format_uptime_canonical(total)
+
+
+def _format_uptime_canonical(total_seconds: int) -> str:
+    """Format total seconds as ``"N days HHh:MMm:SSs"``."""
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{days} days {hours:02d}h:{minutes:02d}m:{seconds:02d}s"
+
+
+# Populate the dispatch table now that all handlers are defined.
+_TYPE_HANDLERS.update(
+    {
+        "string": lambda v: v,
+        "integer": _to_integer,
+        "float": _to_float,
+        "frequency": _to_frequency,
+        "boolean": _to_boolean,
+        "lock_status": _to_lock_status,
+        "uptime": _to_uptime,
+    }
+)

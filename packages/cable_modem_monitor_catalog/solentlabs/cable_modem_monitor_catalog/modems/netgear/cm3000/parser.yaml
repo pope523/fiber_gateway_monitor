@@ -143,7 +143,8 @@ system_info:
               type: string
             - offset: 14
               field: system_uptime
-              type: string
+              type: uptime
+              format: "{hours}:{minutes}:{seconds}"
     - format: javascript
       resource: "/RouterStatus.htm"
       functions:

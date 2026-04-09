@@ -131,7 +131,8 @@ system_info:
           path: "data"
         - key: UpTime
           field: system_uptime
-          type: string
+          type: uptime
+          format: seconds
           path: "data"
         - key: CMStatus
           field: docsis_status
