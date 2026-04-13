@@ -152,7 +152,7 @@ def build_model_display_name(summary: ModemSummary) -> str:
     if summary.model_aliases:
         parts.append(f"({', '.join(summary.model_aliases)})")
 
-    if summary.status != "verified":
+    if summary.status != "confirmed":
         parts.append("*")
 
     return " ".join(parts)
@@ -286,7 +286,11 @@ def _detect_and_inject_form_nonce_encoding(
 
     No-op for non-form_nonce auth strategies — returns defaults.
 
-    Falls back to ``("plain", "")`` on any error.
+    Raises ``ConnectionError`` if the login page is unreachable
+    (connectivity failure) — caller should surface this rather than
+    proceeding to a doomed auth attempt.  Falls back to
+    ``("plain", "")`` for non-connectivity errors (malformed HTML,
+    unexpected response, etc.).
 
     Args:
         base_url: Full URL including protocol.
@@ -295,6 +299,9 @@ def _detect_and_inject_form_nonce_encoding(
 
     Returns:
         Tuple of ``(encoding, credential_field)``.
+
+    Raises:
+        ConnectionError: Login page unreachable (modem not responding).
     """
     from solentlabs.cable_modem_monitor_core.models.modem_config.auth import (
         FormNonceAuth,
@@ -303,6 +310,7 @@ def _detect_and_inject_form_nonce_encoding(
     if not isinstance(modem_config.auth, FormNonceAuth):
         return ("plain", "")
 
+    import requests as req_lib
     from solentlabs.cable_modem_monitor_core.auth.form_nonce import (
         _analyze_login_form,
     )
@@ -314,10 +322,14 @@ def _detect_and_inject_form_nonce_encoding(
     try:
         session = create_session(legacy_ssl=legacy_ssl)
         response = session.get(login_url, timeout=10)
-    except Exception:
+    except (req_lib.ConnectionError, req_lib.Timeout) as exc:
+        # Modem unreachable or unresponsive — no point proceeding to _try_collect
+        _LOGGER.info("Login page unreachable during validation (%s): %s", login_url, exc)
+        raise ConnectionError(str(exc)) from exc
+    except Exception as exc:
         _LOGGER.debug(
-            "Login page pre-fetch failed during validation, using plain encoding",
-            exc_info=True,
+            "Login page pre-fetch failed during validation, using plain encoding: %s",
+            exc,
         )
         return ("plain", "")
 
@@ -353,10 +365,12 @@ def _run_validation(
 
     Pipeline:
         1. Protocol detection (HTTP/HTTPS/legacy SSL)
-        2. Health-probe discovery (ICMP, HTTP HEAD)
-        3. Load modem + parser config from catalog
-        4. Create ModemDataCollector and execute one poll
-        5. Return results for config entry
+        2. Load modem + parser config from catalog
+        2a. Detect form_nonce credential encoding (pre-fetch)
+        3. Test data collection (one poll)
+        3a. Protocol retry (UC-85) if auth fails on HTTP
+        4. Health-probe discovery (ICMP, HTTP HEAD)
+        5. Build and return config entry dict
 
     Args:
         host: Bare hostname/IP (no protocol prefix).

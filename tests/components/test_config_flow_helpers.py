@@ -1,9 +1,10 @@
-"""Tests for config_flow_helpers — validation pipeline protocol retry.
+"""Tests for config_flow_helpers — validation pipeline and encoding detection.
 
 Tests the _run_validation() function directly (sync, no HA dependency).
 All Core I/O is mocked: detect_protocol, config loaders, ModemDataCollector.
 
 UC-85: Protocol fallback — HTTP reachable but auth requires HTTPS.
+Pre-fetch encoding detection — connectivity vs non-connectivity error handling.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from solentlabs.cable_modem_monitor_core.orchestration.signals import (
 )
 
 from custom_components.cable_modem_monitor.config_flow_helpers import (
+    _detect_and_inject_form_nonce_encoding,
     _run_validation,
     build_model_display_name,
     classify_error,
@@ -173,8 +175,8 @@ def test_filter_by_manufacturer_no_match():
 # ┌──────────────┬──────────┬───────────────┬──────────────────────────┬──────────────────────────────┬────────────────┐
 # │ manufacturer │ model    │ aliases       │ status                   │ expected                     │ description    │
 # ├──────────────┼──────────┼───────────────┼──────────────────────────┼──────────────────────────────┼────────────────┤
-# │ "ARRIS"      │ "SB8200" │ []            │ "verified"               │ "Arris SB8200"               │ basic          │
-# │ "Motorola"   │ "MB8611" │ ["MB8612"]    │ "verified"               │ "Motorola MB8611 (MB8612)"   │ with_alias     │
+# │ "ARRIS"      │ "SB8200" │ []            │ "confirmed"              │ "Arris SB8200"               │ basic          │
+# │ "Motorola"   │ "MB8611" │ ["MB8612"]    │ "confirmed"              │ "Motorola MB8611 (MB8612)"   │ with_alias     │
 # │ "netgear"    │ "CM1100" │ []            │ "awaiting_verification"  │ "Netgear CM1100 *"           │ unverified     │
 # │ "ARRIS"      │ "CM820B" │ ["Zoom 5370"] │ "awaiting_verification"  │ "Arris CM820B (Zoom 5370) *" │ alias_and_star │
 # └──────────────┴──────────┴───────────────┴──────────────────────────┴──────────────────────────────┴────────────────┘
@@ -184,8 +186,8 @@ def test_filter_by_manufacturer_no_match():
 #
 # fmt: off
 DISPLAY_NAME_CASES = [
-    ("ARRIS",    "SB8200", [],             "verified",              "Arris SB8200",                "basic"),
-    ("Motorola", "MB8611", ["MB8612"],     "verified",              "Motorola MB8611 (MB8612)",    "with_alias"),
+    ("ARRIS",    "SB8200", [],             "confirmed",             "Arris SB8200",                "basic"),
+    ("Motorola", "MB8611", ["MB8612"],     "confirmed",             "Motorola MB8611 (MB8612)",    "with_alias"),
     ("netgear",  "CM1100", [],             "awaiting_verification", "Netgear CM1100 *",            "unverified"),
     ("ARRIS",    "CM820B", ["Zoom 5370"],  "awaiting_verification", "Arris CM820B (Zoom 5370) *",  "alias_and_star"),
 ]
@@ -669,3 +671,71 @@ class TestProtocolRetryNotTriggered:
 
         assert result["protocol"] == "http"
         assert mock_collector_cls.call_count == 1
+
+
+# =====================================================================
+# Pre-fetch encoding detection — _detect_and_inject_form_nonce_encoding
+# =====================================================================
+
+
+class TestDetectAndInjectFormNonceEncoding:
+    """Verify pre-fetch behavior for form_nonce encoding detection."""
+
+    def _form_nonce_config(self) -> MagicMock:
+        """Build a MagicMock that passes the isinstance(auth, FormNonceAuth) check."""
+        from solentlabs.cable_modem_monitor_core.models.modem_config.auth import (
+            FormNonceAuth,
+        )
+
+        auth = FormNonceAuth(
+            strategy="form_nonce",
+            action="/login",
+            nonce_field="ar_nonce",
+        )
+        config = MagicMock()
+        config.auth = auth
+        return config
+
+    @patch("solentlabs.cable_modem_monitor_core.connectivity.create_session")
+    def test_connection_error_raises(self, mock_create_session):
+        """ConnectionError from requests propagates as builtins.ConnectionError."""
+        import requests
+
+        session = MagicMock()
+        session.get.side_effect = requests.ConnectionError("Connection refused")
+        mock_create_session.return_value = session
+
+        with pytest.raises(ConnectionError, match="Connection refused"):
+            _detect_and_inject_form_nonce_encoding("http://192.168.100.1", self._form_nonce_config())
+
+    @patch("solentlabs.cable_modem_monitor_core.connectivity.create_session")
+    def test_timeout_raises(self, mock_create_session):
+        """Timeout from requests propagates as builtins.ConnectionError."""
+        import requests
+
+        session = MagicMock()
+        session.get.side_effect = requests.Timeout("Read timed out")
+        mock_create_session.return_value = session
+
+        with pytest.raises(ConnectionError, match="Read timed out"):
+            _detect_and_inject_form_nonce_encoding("http://192.168.100.1", self._form_nonce_config())
+
+    @patch("solentlabs.cable_modem_monitor_core.connectivity.create_session")
+    def test_non_connectivity_error_falls_back_to_plain(self, mock_create_session):
+        """Non-connectivity errors (e.g. bad HTML) fall back to plain encoding."""
+        session = MagicMock()
+        session.get.side_effect = ValueError("Unexpected response")
+        mock_create_session.return_value = session
+
+        encoding, field = _detect_and_inject_form_nonce_encoding("http://192.168.100.1", self._form_nonce_config())
+        assert encoding == "plain"
+        assert field == ""
+
+    def test_non_form_nonce_skips(self):
+        """Non-form_nonce auth returns defaults without any network call."""
+        config = MagicMock()
+        config.auth = MagicMock()  # Not a FormNonceAuth instance
+
+        encoding, field = _detect_and_inject_form_nonce_encoding("http://192.168.100.1", config)
+        assert encoding == "plain"
+        assert field == ""

@@ -149,7 +149,7 @@ def _make_stub_modem_config(
     config = MagicMock()
     config.manufacturer = "Solent Labs"
     config.model = "TPS-2000"
-    config.status = "verified"
+    config.status = "confirmed"
 
     if hardware:
         config.hardware.docsis_version = "3.0"
@@ -181,7 +181,7 @@ MOCK_SUMMARIES: list[ModemSummary] = [
         model="TPS-2000",
         default_host="192.168.100.1",
         auth_strategy="none",
-        status="verified",
+        status="confirmed",
         path=FAKE_CATALOG / "solentlabs" / "tps-2000",
     ),
     ModemSummary(
@@ -189,7 +189,7 @@ MOCK_SUMMARIES: list[ModemSummary] = [
         model="TPS-3000",
         default_host="192.168.100.1",
         auth_strategy="basic",
-        status="verified",
+        status="confirmed",
         path=FAKE_CATALOG / "solentlabs" / "tps-3000",
     ),
 ]
@@ -217,7 +217,7 @@ def mock_modem_identity() -> ModemIdentity:
         model="TPS-2000",
         docsis_version="3.0",
         release_date="2024",
-        status="verified",
+        status="confirmed",
     )
 
 

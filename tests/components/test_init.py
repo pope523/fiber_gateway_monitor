@@ -231,7 +231,7 @@ def test_wiring_loads_config_and_returns_tuple():
     assert health_monitor is not None
     assert identity.manufacturer == "Solent Labs"
     assert identity.model == "TPS-2000"
-    assert identity.status == "verified"
+    assert identity.status == "confirmed"
 
 
 def test_wiring_variant_uses_variant_yaml():
@@ -435,7 +435,7 @@ async def test_setup_entry_happy_path():
         model="TPS-2000",
         docsis_version="3.0",
         release_date="2024",
-        status="verified",
+        status="confirmed",
     )
 
     call_count = 0
@@ -507,7 +507,7 @@ def test_update_device_registry():
         model="TPS-2000",
         docsis_version="3.0",
         release_date="2024",
-        status="verified",
+        status="confirmed",
     )
     entry.runtime_data = MagicMock()
     entry.runtime_data.modem_identity = identity

@@ -251,7 +251,7 @@ def test_modem_info_sensor(mock_runtime_data):
     assert sensor.native_value == "TPS-2000"
     attrs = sensor.extra_state_attributes
     assert attrs["manufacturer"] == "Solent Labs"
-    assert attrs["status"] == "verified"
+    assert attrs["status"] == "confirmed"
 
 
 def test_modem_status_sensor_operational(mock_runtime_data):
