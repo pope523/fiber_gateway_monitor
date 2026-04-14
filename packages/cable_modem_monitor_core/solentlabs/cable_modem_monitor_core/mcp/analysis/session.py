@@ -40,6 +40,7 @@ class SessionDetail:
     max_concurrent: int | None = None
     max_concurrent_confidence: str = "unknown"
     headers: dict[str, str] = field(default_factory=dict)
+    query_params: dict[str, str] = field(default_factory=dict)
     token_prefix: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,6 +50,7 @@ class SessionDetail:
             "max_concurrent": self.max_concurrent,
             "max_concurrent_confidence": self.max_concurrent_confidence,
             "headers": self.headers,
+            "query_params": self.query_params,
             "token_prefix": self.token_prefix,
         }
 

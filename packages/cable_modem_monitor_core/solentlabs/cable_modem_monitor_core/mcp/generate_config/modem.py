@@ -119,6 +119,8 @@ def _build_session_block(session: dict[str, Any]) -> dict[str, Any] | None:
         result["max_concurrent"] = session["max_concurrent"]
     if session.get("headers"):
         result["headers"] = session["headers"]
+    if session.get("query_params"):
+        result["query_params"] = session["query_params"]
 
     return result if result else None
 

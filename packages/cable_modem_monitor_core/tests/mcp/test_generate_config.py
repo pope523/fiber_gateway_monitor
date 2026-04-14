@@ -147,6 +147,13 @@ class TestSessionBehavior:
         assert modem["auth"]["strategy"] == "form"
         assert "token_prefix" not in modem["auth"]
 
+    def test_session_with_query_params(self) -> None:
+        """Session query_params appear in modem.yaml."""
+        fixture = load_fixture(self._find_fixture("session_with_query_params"))
+        result = generate_config(fixture["_analysis"], fixture["_metadata"])
+        modem = yaml.safe_load(result.modem_yaml)
+        assert modem["session"]["query_params"] == {"_n": "13127"}
+
     def test_form_sjcl_injects_crypto_defaults(self) -> None:
         """form_sjcl auth injects SJCL crypto defaults (iterations, key_length, tag_length)."""
         fixture = load_fixture(self._find_fixture("form_sjcl_defaults"))

@@ -804,6 +804,48 @@ Only static URL string literals are matched. Variable references
 investigates whether the uncaptured endpoint is relevant to the
 modem's auth, session, or data flow.
 
+### Post-Analysis: Request Requirements
+
+After JS endpoint discovery, the pipeline scans data-fetch entries
+for query parameters that appear on every request, indicating a
+session-level requirement the modem firmware imposes on all AJAX
+calls.
+
+**Why:** Request-side patterns are invisible in response analysis.
+The TG3442DE requires `_n=<random>` on every AJAX request — the
+server returns 400 without it. The parameter was on every data-fetch
+entry in the HAR from day one but went undetected for five alpha
+iterations (issue #86) because the pipeline only analyzed responses.
+
+**Detection rule:**
+
+1. Identify data-fetch entries using `identify_data_pages()` (same
+   filter as Phase 5: status 200, non-static, has content, data
+   Content-Type).
+2. Require at least 2 data-fetch entries — with a single entry,
+   session-level cannot be distinguished from endpoint-specific.
+3. Extract query parameters from each entry's request URL.
+4. Exclude entries with no query string — navigation pages and
+   initial page loads carry no information about session-level
+   parameters.
+5. A parameter present on **every** data-fetch entry that carries
+   a query string is a session requirement. Parameters appearing
+   on fewer entries are endpoint-specific and ignored.
+6. Filter known non-session parameters: jQuery's `cache: false`
+   adds `_=<timestamp>` to every AJAX request. The bare `_` key
+   is always excluded.
+7. Filter auth-managed token params: if Phase 3 detected a
+   `token_prefix` (url_token auth), query params whose name
+   starts with that prefix are auth-owned, not session-owned.
+
+**Output:** Detected parameters are added to `session.query_params`
+in the analysis result. The config generator emits them in the
+session block of modem.yaml. A warning is appended noting the
+detected parameters for maintainer review.
+
+**HNAP:** Skipped. HNAP uses SOAP-over-HTTP; query parameters are
+not part of the session contract.
+
 ### Phase 7: Metadata Enrichment
 
 Hardware metadata, branding, and ISP information are not present in the

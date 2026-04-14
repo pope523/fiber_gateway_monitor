@@ -23,6 +23,7 @@ from .analysis.actions import ActionsDetail, detect_actions
 from .analysis.auth import AuthDetail, detect_auth
 from .analysis.format import detect_sections
 from .analysis.js_endpoints import detect_uncaptured_endpoints
+from .analysis.request_requirements import detect_request_requirements
 from .analysis.session import SessionDetail, detect_session
 from .analysis.transport import TransportResult, detect_transport
 from .analysis.types import CoreGap, FleetPatterns
@@ -107,6 +108,9 @@ def analyze_har(
 
     # Post-analysis: JS endpoint discovery
     detect_uncaptured_endpoints(entries, warnings)
+
+    # Post-analysis: Request requirements detection
+    detect_request_requirements(entries, transport_result.transport, session_result, warnings)
 
     return AnalysisResult(
         transport=transport_result,

@@ -9,6 +9,11 @@ Pipeline phases:
 - Phase 5: ``format`` - data page format classification (HTTP / HNAP)
 - Phase 6: ``mapping`` - field mapping, channel type, filters, system_info
 
+Post-analysis:
+
+- ``js_endpoints`` - uncaptured JS endpoint discovery
+- ``request_requirements`` - session-level query param detection
+
 Shared result types live in ``types``.
 """
 
