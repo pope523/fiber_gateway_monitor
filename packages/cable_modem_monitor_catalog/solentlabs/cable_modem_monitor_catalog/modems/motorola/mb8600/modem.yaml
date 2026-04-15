@@ -12,6 +12,7 @@ actions:
   restart:
     type: hnap
     action_name: SetStatusSecuritySettings
+    pre_fetch_action: GetMotoStatusSecXXX
     params:
       MotoStatusSecXXX: XXX
       MotoStatusSecurityAction: "1"
