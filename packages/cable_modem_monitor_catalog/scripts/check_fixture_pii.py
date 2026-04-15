@@ -171,8 +171,8 @@ def _is_safe_finding(finding: dict[str, str]) -> bool:
         return _is_safe_serial_finding(match)
     if pattern == "password_field":
         return _has_code_indicators(match) or match == "password=password"
-    if pattern == "session_token":
-        return _has_code_indicators(match)
+    if pattern in ("session_token", "account_id"):
+        return _has_code_indicators(match) or " " in match
     if pattern == "ipv6":
         match_lower = match.lower()
         if any(match_lower.startswith(p) for p in _SAFE_IPV6_PREFIXES):

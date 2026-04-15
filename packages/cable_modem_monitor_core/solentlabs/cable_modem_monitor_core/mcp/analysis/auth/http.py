@@ -46,6 +46,8 @@ _SJCL_POST_FIELDS: tuple[str, ...] = get_sjcl_post_fields()
 # Base64 pattern: login_<base64> or login%5f<base64> in URL
 _URL_TOKEN_PATTERN = re.compile(r"login[_\-%]", re.IGNORECASE)
 _BASE64_CHARS = re.compile(r"^[A-Za-z0-9+/=]{4,}$")
+# Bare base64 credential: base64(user:pass) as a query param name with empty value
+_BARE_BASE64_CREDENTIAL = re.compile(r"^[A-Za-z0-9+/]{8,}={0,2}$")
 
 
 # ---------------------------------------------------------------------------
@@ -251,14 +253,8 @@ def _check_entry_auth_signals(
             signals.basic_challenge = True
             signals.basic_challenge_cookie = _has_challenge_cookie_retry(all_entries, entry)
 
-    # URL token pattern: login_<base64> in URL
-    if _URL_TOKEN_PATTERN.search(url):
-        token_match = _extract_url_token_parts(url)
-        if token_match is not None:
-            signals.url_token_entry = entry
-            signals.url_token_login_prefix = token_match[0]
-            signals.url_token_login_page = token_match[1]
-            signals.has_any_auth_signal = True
+    # URL token pattern: login_<base64> or bare base64 credential in URL
+    _check_url_token_signals(url, req, entry, signals)
 
     # POST requests
     if method == "POST":
@@ -268,6 +264,30 @@ def _check_entry_auth_signals(
     if has_set_cookie(resp) and signals.form_post_entry is not None:
         signals.has_set_cookie_after_login = True
         signals.has_any_auth_signal = True
+
+
+def _check_url_token_signals(
+    url: str,
+    req: dict[str, Any],
+    entry: dict[str, Any],
+    signals: _HttpAuthSignals,
+) -> None:
+    """Check for URL token auth: login_<base64> prefix or bare base64 credential."""
+    if _URL_TOKEN_PATTERN.search(url):
+        token_match = _extract_url_token_parts(url)
+        if token_match is not None:
+            signals.url_token_entry = entry
+            signals.url_token_login_prefix = token_match[0]
+            signals.url_token_login_page = token_match[1]
+            signals.has_any_auth_signal = True
+    elif signals.url_token_entry is None:
+        # Bare base64 fallback: query param name is base64(user:pass)
+        bare = _detect_bare_base64_credential(req)
+        if bare is not None:
+            signals.url_token_entry = entry
+            signals.url_token_login_prefix = ""
+            signals.url_token_login_page = bare
+            signals.has_any_auth_signal = True
 
 
 def _check_post_signals(
@@ -864,6 +884,31 @@ def _extract_url_token_parts(url: str) -> tuple[str, str] | None:
         # The login page is the path without query string
         return prefix, path
 
+    return None
+
+
+def _detect_bare_base64_credential(req: dict[str, Any]) -> str | None:
+    """Detect bare base64 credential token in a query parameter.
+
+    Some modems (e.g. SB8200 HW v7) pass base64(user:pass) as a query
+    parameter name with an empty value, without any ``login_`` prefix.
+
+    Returns:
+        The login page path if a bare base64 credential is found, else None.
+    """
+    for param in req.get("queryString", []):
+        name = param.get("name", "")
+        value = param.get("value", "")
+        # Bare credential: name is base64, value is empty
+        if value or not _BARE_BASE64_CREDENTIAL.match(name):
+            continue
+        try:
+            decoded = base64.b64decode(name).decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        # Credential format: user:pass (must have exactly one colon)
+        if ":" in decoded and decoded.count(":") == 1:
+            return path_from_url(req.get("url", ""))
     return None
 
 
