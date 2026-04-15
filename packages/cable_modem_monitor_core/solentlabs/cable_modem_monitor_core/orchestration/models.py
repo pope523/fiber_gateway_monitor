@@ -117,9 +117,10 @@ class HealthInfo:
             collection evidence.
         icmp_latency_ms: Round-trip time in milliseconds. None if
             ICMP failed, not supported, or not attempted.
-        http_latency_ms: HTTP response time in milliseconds. None if
-            HTTP failed, not attempted, or suppressed by collection
-            evidence.
+        http_latency_ms: HTTP server response time in milliseconds,
+            excluding TCP connection setup overhead. Reflects modem
+            web-server load. None if HTTP failed, not attempted, or
+            suppressed by collection evidence.
     """
 
     health_status: HealthStatus

@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from solentlabs.cable_modem_monitor_core.orchestration.models import HealthInfo
 from solentlabs.cable_modem_monitor_core.orchestration.modem_health import (
     _PING_TIME_RE,
     HealthMonitor,
@@ -31,6 +32,18 @@ from solentlabs.cable_modem_monitor_core.orchestration.signals import HealthStat
 # ------------------------------------------------------------------
 
 _MODULE = "solentlabs.cable_modem_monitor_core.orchestration.modem_health"
+
+
+@pytest.fixture(autouse=True)
+def _mock_tcp_socket():
+    """Mock socket.create_connection for TCP probe in all health tests.
+
+    Returns a mock socket instantly so TCP connect time is ~0ms.
+    Server latency ~ response.elapsed (negligible subtraction).
+    """
+    mock_sock = MagicMock()
+    with patch(f"{_MODULE}.socket.create_connection", return_value=mock_sock):
+        yield
 
 
 def _make_monitor(
@@ -173,6 +186,43 @@ HOST_CASES = [
 def test_extract_host(url: str, expected: str, _desc: str) -> None:
     """Verify host extraction from URLs."""
     assert HealthMonitor._extract_host(url) == expected
+
+
+# ------------------------------------------------------------------
+# URL port extraction
+# ------------------------------------------------------------------
+
+
+# ┌──────────────────────────────────────┬──────────┬─────────────┐
+# │ url                                  │ expected │ description │
+# ├──────────────────────────────────────┼──────────┼─────────────┤
+# │ "http://192.168.100.1"               │ 80       │ http_default│
+# │ "https://192.168.100.1"              │ 443      │ https_def   │
+# │ "http://192.168.100.1:8080"          │ 8080     │ custom_port │
+# │ "https://modem.local:9443/path"      │ 9443     │ https_custom│
+# │ "http://10.0.0.1/"                   │ 80       │ trailing_sl │
+# └──────────────────────────────────────┴──────────┴─────────────┘
+#
+# fmt: off
+PORT_CASES = [
+    ("http://192.168.100.1",          80,   "http_default"),
+    ("https://192.168.100.1",         443,  "https_default"),
+    ("http://192.168.100.1:8080",     8080, "custom_port"),
+    ("https://modem.local:9443/path", 9443, "https_custom_port"),
+    ("http://10.0.0.1/",              80,   "trailing_slash"),
+    ("192.168.100.1",                 80,   "no_scheme"),
+]
+# fmt: on
+
+
+@pytest.mark.parametrize(
+    "url, expected, _desc",
+    PORT_CASES,
+    ids=[c[2] for c in PORT_CASES],
+)
+def test_extract_port(url: str, expected: int, _desc: str) -> None:
+    """Verify port extraction from URLs."""
+    assert HealthMonitor._extract_port(url) == expected
 
 
 # ------------------------------------------------------------------
@@ -812,3 +862,139 @@ class TestCollectionEvidenceBehavior:
             monitor.ping()
 
         assert "HTTP skipped (recent collection)" in caplog.text
+
+
+# ------------------------------------------------------------------
+# TCP connect probe
+# ------------------------------------------------------------------
+
+
+class TestTCPConnectProbe:
+    """Verify TCP connect timing is measured and logged separately."""
+
+    @patch(f"{_MODULE}.subprocess.run")
+    def test_tcp_time_in_log(
+        self,
+        mock_run: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Log includes TCP connect time when probe succeeds."""
+        mock_run.return_value = _mock_ping_success(3.0)
+
+        monitor, session = _make_monitor()
+        session.head.return_value = _mock_http_response(0.012)
+
+        with caplog.at_level("INFO"):
+            monitor.ping()
+
+        assert "TCP " in caplog.text
+
+    @patch(f"{_MODULE}.subprocess.run")
+    def test_tcp_failure_omitted_from_log(
+        self,
+        mock_run: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Log omits TCP entry when TCP probe fails."""
+        mock_run.return_value = _mock_ping_success(3.0)
+
+        monitor, session = _make_monitor()
+        session.head.return_value = _mock_http_response(0.012)
+
+        with (
+            patch(
+                f"{_MODULE}.socket.create_connection",
+                side_effect=OSError("refused"),
+            ),
+            caplog.at_level("INFO"),
+        ):
+            info = monitor.ping()
+
+        assert "TCP " not in caplog.text
+        # http_latency_ms uses full elapsed when TCP is unavailable
+        assert info.http_latency_ms is not None
+
+    @patch(f"{_MODULE}.subprocess.run")
+    def test_server_latency_subtracts_tcp(self, mock_run: MagicMock) -> None:
+        """http_latency_ms reflects server time, not total elapsed."""
+        mock_run.return_value = _mock_ping_success(3.0)
+
+        monitor, session = _make_monitor()
+        # elapsed=12ms, TCP probe will measure ~2ms
+        session.head.return_value = _mock_http_response(0.012)
+
+        # Override the autouse fixture with a controlled TCP time
+        with patch.object(monitor, "_measure_tcp_connect", return_value=2.0):
+            info = monitor.ping()
+
+        # server_ms = 12.0 - 2.0 = 10.0
+        assert info.http_latency_ms == pytest.approx(10.0, abs=0.1)
+
+    @patch(f"{_MODULE}.subprocess.run")
+    def test_tcp_exceeds_elapsed_uses_full_elapsed(self, mock_run: MagicMock) -> None:
+        """When TCP >= elapsed (pool warm edge case), use full elapsed."""
+        mock_run.return_value = _mock_ping_success(3.0)
+
+        monitor, session = _make_monitor()
+        session.head.return_value = _mock_http_response(0.005)  # 5ms
+
+        # TCP took longer than the full request (shouldn't subtract)
+        with patch.object(monitor, "_measure_tcp_connect", return_value=10.0):
+            info = monitor.ping()
+
+        # No subtraction — use full elapsed
+        assert info.http_latency_ms == pytest.approx(5.0, abs=0.1)
+
+    @patch(f"{_MODULE}.subprocess.run")
+    def test_tcp_logged_http_failed(self, mock_run: MagicMock) -> None:
+        """TCP is measured even when HTTP request fails."""
+        mock_run.return_value = _mock_ping_success(3.0)
+
+        monitor, session = _make_monitor()
+        session.head.side_effect = requests.Timeout("timeout")
+
+        with patch.object(monitor, "_measure_tcp_connect", return_value=2.0):
+            info = monitor.ping()
+
+        assert info.health_status == HealthStatus.DEGRADED
+        assert info.http_latency_ms is None
+
+    @patch(f"{_MODULE}.subprocess.run")
+    def test_http_ok_no_latency_detail(self, mock_run: MagicMock) -> None:
+        """Probe detail shows 'HTTP OK' when success but no latency."""
+        mock_run.return_value = _mock_ping_success(3.0)
+
+        monitor, session = _make_monitor()
+        # Build a HealthInfo with http_ok=True but no http_latency_ms
+        info = HealthInfo(health_status=HealthStatus.RESPONSIVE)
+        detail = monitor._probe_detail(
+            info,
+            icmp_ok=True,
+            http_ok=True,
+        )
+        assert "HTTP HEAD OK" in detail
+
+    @patch(f"{_MODULE}.subprocess.run")
+    def test_no_tcp_when_http_skipped(
+        self,
+        mock_run: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """TCP probe does not run when HTTP is skipped by evidence."""
+        mock_run.return_value = _mock_ping_success(1.5)
+
+        monitor, session = _make_monitor()
+
+        # Baseline ping
+        session.head.return_value = _mock_http_response()
+        monitor.ping()
+
+        monitor.record_collection_start()
+        monitor.record_collection_end(success=True)
+
+        caplog.clear()
+        with caplog.at_level("DEBUG"):
+            monitor.ping()
+
+        assert "TCP " not in caplog.text
+        assert "HTTP skipped" in caplog.text

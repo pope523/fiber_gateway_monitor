@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import platform
 import re
+import socket
 import subprocess
 import time
 
@@ -68,6 +69,7 @@ class HealthMonitor:
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._host = self._extract_host(base_url)
+        self._port = self._extract_port(base_url)
         self._model = model
         self._supports_icmp = supports_icmp
         self._http_probe = http_probe
@@ -129,9 +131,10 @@ class HealthMonitor:
 
         # HTTP probe — skip when collection evidence makes it redundant
         http_bytes: int | None = None
+        tcp_ms: float | None = None
         skip_reason = self._should_skip_http_probe() if self._http_probe else None
         if self._http_probe and skip_reason is None:
-            http_ok, http_ms, http_bytes = self._probe_http()
+            http_ok, http_ms, http_bytes, tcp_ms = self._probe_http()
 
         # For status derivation, treat collection evidence as proof of
         # HTTP reachability, but don't fabricate measurement values.
@@ -148,7 +151,7 @@ class HealthMonitor:
         )
         self._latest = info
 
-        self._log_result(info, icmp_ok, http_ok, http_bytes, skip_reason=skip_reason)
+        self._log_result(info, icmp_ok, http_ok, http_bytes, tcp_connect_ms=tcp_ms, skip_reason=skip_reason)
         self._last_ping_time = time.monotonic()
         return info
 
@@ -219,17 +222,48 @@ class HealthMonitor:
             _logger.debug("ICMP probe [%s]: OS error — %s", self._model, exc)
             return False, None
 
-    def _probe_http(self) -> tuple[bool, float | None, int | None]:
-        """Run an HTTP HEAD or GET probe.
+    def _measure_tcp_connect(self) -> float | None:
+        """Measure TCP connection setup time to the modem.
 
-        Uses a pre-configured session (no auth, verify=False, optional
-        legacy SSL).  This is a connectivity check — any response means
-        the modem's web server is alive.  Redirects are not followed;
-        a 3xx is as valid a sign of life as a 200.
+        Opens and immediately closes a raw TCP socket to measure
+        network-level latency independent of HTTP overhead. This
+        isolates infrastructure timing (TCP handshake, ARP, routing)
+        from modem web-server response time.
 
         Returns:
-            Tuple of (success, latency_ms, response_bytes).
-            latency_ms and response_bytes are None on failure.
+            Connect time in milliseconds, or None on failure.
+        """
+        try:
+            start = time.monotonic()
+            sock = socket.create_connection((self._host, self._port), timeout=self._timeout)
+            elapsed_ms = (time.monotonic() - start) * 1000
+            sock.close()
+            return elapsed_ms
+        except OSError:
+            return None
+
+    def _probe_http(self) -> tuple[bool, float | None, int | None, float | None]:
+        """Run an HTTP HEAD or GET probe.
+
+        Measures TCP connection setup separately from HTTP server
+        response time. The HTTP request runs first so the modem's
+        web server gets an uncontested connection — embedded modems
+        are often single-threaded and degrade if a prior TCP probe
+        is still being cleaned up. The TCP probe runs after the HTTP
+        request to measure current network overhead.
+
+        When both measurements are available, the returned latency
+        reflects server response time (elapsed minus TCP overhead).
+        The session's connection pool is typically cold between
+        probes (health checks run every few minutes, past any HTTP
+        keep-alive timeout), so ``response.elapsed`` includes TCP
+        handshake time.
+
+        Returns:
+            Tuple of (success, server_latency_ms, response_bytes,
+            tcp_connect_ms). server_latency_ms and response_bytes
+            are None on HTTP failure. tcp_connect_ms is None if the
+            TCP probe failed.
         """
         try:
             if self._http_method == "HEAD":
@@ -245,12 +279,26 @@ class HealthMonitor:
                     allow_redirects=False,
                 )
 
-            latency_ms = max(0.0, response.elapsed.total_seconds() * 1000)
-            return True, latency_ms, len(response.content)
+            elapsed_ms = max(0.0, response.elapsed.total_seconds() * 1000)
+            http_bytes = len(response.content)
 
         except requests.RequestException as exc:
             _logger.debug("HTTP %s probe [%s] failed: %s", self._http_method, self._model, exc)
-            return False, None, None
+            return False, None, None, self._measure_tcp_connect()
+
+        # TCP probe runs after HTTP to avoid contention on the
+        # modem's web server. Measures current network overhead.
+        tcp_ms = self._measure_tcp_connect()
+
+        # Isolate server response time by subtracting TCP overhead.
+        # response.elapsed includes connection-pool setup (TCP
+        # handshake) when the pool is cold between probes.
+        if tcp_ms is not None and tcp_ms < elapsed_ms:
+            server_ms = elapsed_ms - tcp_ms
+        else:
+            server_ms = elapsed_ms
+
+        return True, server_ms, http_bytes, tcp_ms
 
     # ------------------------------------------------------------------
     # Internal — status derivation
@@ -330,6 +378,18 @@ class HealthMonitor:
         host = host.split(":", 1)[0]
         return host
 
+    @staticmethod
+    def _extract_port(base_url: str) -> int:
+        """Extract port number from a URL, defaulting to scheme standard."""
+        if "://" in base_url:
+            scheme, rest = base_url.split("://", 1)
+        else:
+            scheme, rest = "http", base_url
+        hostport = rest.split("/", 1)[0]
+        if ":" in hostport:
+            return int(hostport.rsplit(":", 1)[1])
+        return 443 if scheme == "https" else 80
+
     # ------------------------------------------------------------------
     # Internal — logging
     # ------------------------------------------------------------------
@@ -341,6 +401,7 @@ class HealthMonitor:
         http_ok: bool | None,
         http_bytes: int | None = None,
         *,
+        tcp_connect_ms: float | None = None,
         skip_reason: str | None = None,
     ) -> None:
         """Log the health check result.
@@ -350,7 +411,14 @@ class HealthMonitor:
         - INFO: other status transitions (recovery, first check)
         - DEBUG: routine checks with no status change
         """
-        detail = self._probe_detail(info, icmp_ok, http_ok, http_bytes, skip_reason=skip_reason)
+        detail = self._probe_detail(
+            info,
+            icmp_ok,
+            http_ok,
+            http_bytes,
+            tcp_connect_ms=tcp_connect_ms,
+            skip_reason=skip_reason,
+        )
         status = info.health_status.value
         changed = info.health_status != self._previous_status
         self._previous_status = info.health_status
@@ -372,6 +440,7 @@ class HealthMonitor:
         http_ok: bool | None,
         http_bytes: int | None = None,
         *,
+        tcp_connect_ms: float | None = None,
         skip_reason: str | None = None,
     ) -> str:
         """Build human-readable probe detail string for log messages."""
@@ -388,6 +457,8 @@ class HealthMonitor:
         if skip_reason is not None:
             parts.append(f"HTTP skipped ({skip_reason})")
         elif http_ok is not None:
+            if tcp_connect_ms is not None:
+                parts.append(f"TCP {tcp_connect_ms:.1f}ms")
             if info.http_latency_ms is not None:
                 size = f", {http_bytes} bytes" if http_bytes else ""
                 parts.append(f"HTTP {self._http_method} {info.http_latency_ms:.1f}ms{size}")

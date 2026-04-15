@@ -1114,17 +1114,36 @@ layer of the modem's stack:
 | Probe | Layer | What it proves | Impact |
 |-------|-------|---------------|--------|
 | ICMP ping | Network | IP stack responds | Zero — no web server involvement |
+| TCP connect | Transport | TCP stack accepts connections | Minimal — SYN/ACK only, no HTTP |
 | HTTP HEAD | Application | Web server responds | Minimal — no response body |
 | HTTP GET | Application | Web server responds (fallback) | Light — response body discarded |
 
-**Probe order:** ICMP first (if supported), then HTTP (if enabled).
-Both run regardless of the other's result — the combination
-determines health status.
+**Probe order:** ICMP first (if supported), then TCP + HTTP (if
+enabled). Both ICMP and HTTP run regardless of the other's result
+— the combination determines health status.
+
+**TCP/HTTP timing split:** The HTTP probe measures two things
+separately: TCP connection setup time (network overhead) and HTTP
+server response time (modem load). A standalone
+`socket.create_connection()` measures the TCP handshake before the
+HTTP request. The session's `response.elapsed` (which includes its
+own TCP handshake because the connection pool is always cold between
+probes) minus the TCP measurement yields the pure server response
+time.
+
+- `http_latency_ms` in `HealthInfo` stores **server response time
+  only** — the modem load indicator consumers care about.
+- TCP connect time is **diagnostic logging only** — visible in logs
+  for troubleshooting but not persisted or exposed as a sensor.
+
+This separation matters because a 100ms health check reading could
+mean "modem under load" (TCP 2ms, HTTP 98ms) or "network hiccup"
+(TCP 97ms, HTTP 3ms). Without the split, these are indistinguishable.
 
 **HTTP method selection:** HEAD is preferred (lightest). Some modems
 return 405 Method Not Allowed or behave unexpectedly with HEAD. When
 `supports_head=False`, the monitor uses GET instead (response body
-is discarded — only the round-trip time matters).
+is discarded — only the server response time matters).
 
 **The HTTP probe is a connectivity check, not a content check.**
 Any response — 200, 302, 401 — means the modem's web server is
@@ -1339,9 +1358,10 @@ class HealthInfo:
             collection evidence.
         icmp_latency_ms: Round-trip time in milliseconds. None if
             ICMP failed, not supported, or not attempted.
-        http_latency_ms: HTTP response time in milliseconds. None if
-            HTTP failed, not attempted, or suppressed by collection
-            evidence.
+        http_latency_ms: HTTP server response time in milliseconds,
+            excluding TCP connection setup overhead. Reflects modem
+            web-server load. None if HTTP failed, not attempted, or
+            suppressed by collection evidence.
     """
 
     health_status: HealthStatus
@@ -1417,8 +1437,16 @@ reachable, but `http_latency_ms` stays `None` (not measured).
 and provides network-layer visibility regardless of collection
 activity.
 
-**Logging:** When the HTTP probe is skipped, the log detail shows
-the skip reason instead of the usual latency:
+**Logging:** The log detail shows TCP and HTTP timing separately
+when the HTTP probe runs. TCP connect time is diagnostic-only —
+it is not stored in `HealthInfo`:
+
+```text
+Health check [MODEL]: responsive (ICMP 1.5ms, TCP 1.8ms, HTTP GET 4.3ms, 4820 bytes)
+```
+
+When the HTTP probe is skipped, the log shows the skip reason
+instead (no TCP probe runs):
 
 ```text
 Health check [MODEL]: responsive (ICMP 1.5ms, HTTP skipped (collection active))
