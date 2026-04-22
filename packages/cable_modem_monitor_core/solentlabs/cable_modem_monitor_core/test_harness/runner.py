@@ -40,7 +40,7 @@ from ..loaders.hnap import HNAPLoader
 from ..loaders.http import HTTPResourceLoader
 from ..orchestration.factory import create_orchestrator
 from ..orchestration.signals import ConnectionStatus
-from ..parsers.coordinator import ModemParserCoordinator, filter_restart_window
+from ..parsers.coordinator import ModemParserCoordinator
 from .discovery import ModemTestCase
 from .golden_file import ComparisonResult, compare_golden_file
 from .server import HARMockServer
@@ -383,13 +383,6 @@ def _run_pipeline(
         # Parse
         coordinator = ModemParserCoordinator(parser_config, post_processor)
         data = coordinator.parse(resources)
-
-        # Post-parse: filter zero-power channels during restart window
-        if modem_config.behaviors and modem_config.behaviors.zero_power_reported and modem_config.behaviors.restart:
-            data = filter_restart_window(
-                data,
-                modem_config.behaviors.restart.window_seconds,
-            )
 
         return data
 

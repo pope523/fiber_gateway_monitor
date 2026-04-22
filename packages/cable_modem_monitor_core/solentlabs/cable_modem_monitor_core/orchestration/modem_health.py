@@ -163,6 +163,18 @@ class HealthMonitor:
         """
         return self._latest
 
+    @property
+    def latest_probe_at(self) -> float | None:
+        """Monotonic timestamp (``time.monotonic()``) of the last probe,
+        or None if ``ping()`` has never been called.
+
+        Consumers use this to judge freshness of ``latest`` — e.g.,
+        the orchestrator's health-recovery-clears-backoff shortcut
+        ignores a cached RESPONSIVE reading if the probe happened
+        before the last observed connectivity failure.
+        """
+        return self._last_ping_time
+
     # ------------------------------------------------------------------
     # Internal — collection evidence
     # ------------------------------------------------------------------

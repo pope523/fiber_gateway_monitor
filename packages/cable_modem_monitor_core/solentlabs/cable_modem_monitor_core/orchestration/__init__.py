@@ -1,9 +1,11 @@
 """Orchestration layer — runtime poll cycle management.
 
 ModemDataCollector executes a single data collection. Orchestrator
-composes the collector with policy logic. HealthMonitor runs lightweight
-probes for reachability. RestartMonitor handles two-phase restart
-recovery.
+composes the collector with policy logic. HealthMonitor runs
+lightweight probes for reachability. Recovery owns the polling-cadence
+window triggered by a restart command, observed outage, or a
+reboot-signal vote. ``run_restart`` dispatches the reboot command as
+a one-shot operation.
 
 See ORCHESTRATION_SPEC.md for interface contracts and
 RUNTIME_POLLING_SPEC.md for behavioral rules.
@@ -12,7 +14,6 @@ RUNTIME_POLLING_SPEC.md for behavioral rules.
 from __future__ import annotations
 
 from .actions import ActionResult, execute_action, execute_hnap_action, execute_http_action
-from .channel_stability import ChannelStabilityMonitor
 from .collector import LoginLockoutError, ModemDataCollector
 from .factory import apply_credential_encoding, create_collector, create_orchestrator
 from .models import (
@@ -24,25 +25,21 @@ from .models import (
     RestartResult,
 )
 from .modem_health import HealthMonitor
-from .orchestrator import Orchestrator, RestartNotSupportedError
+from .orchestrator import Orchestrator
 from .policy import SignalPolicy
-from .response_monitor import ResponseMonitor
-from .restart import RestartMonitor
+from .recovery import Recovery
+from .restart import RestartNotSupportedError, run_restart
 from .signals import (
     CollectorSignal,
     ConnectionStatus,
     DocsisStatus,
     HealthStatus,
-    RestartPhase,
 )
 from .status import derive_connection_status, enrich_docsis_status
 
 __all__ = [
-    "ChannelStabilityMonitor",
+    "ActionResult",
     "CollectorSignal",
-    "apply_credential_encoding",
-    "create_collector",
-    "create_orchestrator",
     "ConnectionStatus",
     "DocsisStatus",
     "HealthInfo",
@@ -54,17 +51,18 @@ __all__ = [
     "ModemSnapshot",
     "Orchestrator",
     "OrchestratorDiagnostics",
+    "Recovery",
     "ResourceFetch",
-    "ResponseMonitor",
-    "RestartMonitor",
     "RestartNotSupportedError",
-    "RestartPhase",
     "RestartResult",
     "SignalPolicy",
+    "apply_credential_encoding",
+    "create_collector",
+    "create_orchestrator",
     "derive_connection_status",
     "enrich_docsis_status",
-    "ActionResult",
     "execute_action",
     "execute_hnap_action",
     "execute_http_action",
+    "run_restart",
 ]

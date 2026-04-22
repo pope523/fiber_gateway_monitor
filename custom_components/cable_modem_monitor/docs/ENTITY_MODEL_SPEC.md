@@ -174,16 +174,28 @@ Restart Modem is only created when modem.yaml declares
 
 The Update Modem Data button and the `request_refresh` service share
 the same logic (`async_request_modem_refresh`): reset connectivity
-backoff, refresh health probes, then trigger a data poll. The
-`request_health_check` service triggers only the health probe. Both
-services accept a device target for multi-modem setups. See
-HA_ADAPTER_SPEC.md § Services for details and automation examples.
+backoff, refresh health probes, then trigger a data poll. Both
+short-circuit when a destructive operation holds the
+`active_operation` mutex — the adapter runs its own post-operation
+refresh, so a user-initiated refresh during that window is
+unnecessary (see HA_ADAPTER_SPEC § Operation Mutex).
+
+The Restart Modem and Reset Entities buttons acquire the mutex for
+the duration of their work and refuse if the other is already
+running. The `request_health_check` service triggers only the
+health probe. All services accept a device target for multi-modem
+setups. See HA_ADAPTER_SPEC.md § Services for details and automation
+examples.
 
 ### Status Sensor
 
-The Status sensor composes three inputs into a single display state
-via a priority cascade. The sensor contains no business logic — it is
-a pure lookup over values derived upstream.
+The Status sensor composes three inputs from the latest snapshot
+into a single display state via a priority cascade. The sensor
+contains no business logic — it is a pure lookup over values
+derived upstream. It does **not** read recovery state; the snapshot
+already tells the truth about what the modem is reporting, and
+recovery windows only change polling cadence, not the snapshot's
+meaning.
 
 **Inputs** (pass-through as attributes):
 
@@ -208,6 +220,20 @@ a pure lookup over values derived upstream.
 | 8 | `docsis_status == partial_lock` | Partial Lock |
 | 9 | `health_status == icmp_blocked` | ICMP Blocked |
 | 10 | default | Operational |
+
+There is no synthetic "Restarting…" label. During a recovery
+window — whether triggered by a commanded restart, an observed
+outage, or a reboot-signal match — the Status sensor reflects
+whatever the modem is actually reporting: Unreachable while the
+modem is down, Not Locked / Partial Lock while it's ranging,
+Operational once it returns. The recovery window's effect is on
+*polling cadence* (HA polls faster during the window; see
+HA_ADAPTER_SPEC § Recovery Adapter), not on the sensor's value.
+
+**Re-rendering:** the Status sensor re-renders on every coordinator
+update — faster during recovery cadence, normal cadence otherwise.
+It doesn't need to subscribe to any recovery signal; the
+coordinator already drives the updates.
 
 See [RUNTIME_POLLING_SPEC.md](../../../packages/cable_modem_monitor_core/docs/RUNTIME_POLLING_SPEC.md#status-derivation)
 for the derivation rules that produce the three input values.

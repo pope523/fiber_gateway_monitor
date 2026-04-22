@@ -19,10 +19,6 @@ actions:
     type: cbn
     fun: 16
 
-behaviors:
-  restart:
-    window_seconds: 300
-
 hardware:
   docsis_version: "3.1"
   release_date: "2023"

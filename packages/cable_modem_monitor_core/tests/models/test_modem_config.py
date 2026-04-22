@@ -167,13 +167,6 @@ class TestRelationships:
         config = _load("with_optional_identity.json")
         assert config.sources["auth_config"] == "#42"
 
-    def test_behaviors_restart_window(self):
-        """Behaviors restart window is accessible."""
-        config = _load("auth_hnap.json")
-        assert config.behaviors is not None
-        assert config.behaviors.restart is not None
-        assert config.behaviors.restart.window_seconds == 300
-
     def test_unsupported_omits_auth_and_hardware(self):
         """Unsupported status allows omitting auth and hardware."""
         config = _load("status_unsupported.json")

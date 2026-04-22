@@ -8,7 +8,6 @@ from solentlabs.cable_modem_monitor_core.orchestration.signals import (
     ConnectionStatus,
     DocsisStatus,
     HealthStatus,
-    RestartPhase,
 )
 
 
@@ -58,15 +57,6 @@ class TestHealthStatus:
         assert actual == expected
 
 
-class TestRestartPhase:
-    """RestartPhase enum values."""
-
-    def test_all_phases_present(self) -> None:
-        expected = {"command_sent", "waiting", "channel_sync", "complete", "timeout"}
-        actual = {p.value for p in RestartPhase}
-        assert actual == expected
-
-
 # ┌──────────────────┬─────────────┬──────────────────────────────┐
 # │ Enum             │ Count       │ Purpose                      │
 # ├──────────────────┼─────────────┼──────────────────────────────┤
@@ -74,7 +64,6 @@ class TestRestartPhase:
 # │ ConnectionStatus │ 5 members   │ Derived from poll outcome    │
 # │ DocsisStatus     │ 4 members   │ Derived from lock_status     │
 # │ HealthStatus     │ 5 members   │ Derived from probes          │
-# │ RestartPhase     │ 5 members   │ Recovery phases              │
 # └──────────────────┴─────────────┴──────────────────────────────┘
 #
 # fmt: off
@@ -83,7 +72,6 @@ ENUM_MEMBER_COUNTS = [
     (ConnectionStatus, 5, "poll outcome statuses"),
     (DocsisStatus,     4, "DOCSIS lock statuses"),
     (HealthStatus,     5, "health probe statuses"),
-    (RestartPhase,     5, "recovery phases"),
 ]
 # fmt: on
 

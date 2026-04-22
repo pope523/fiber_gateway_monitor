@@ -82,7 +82,6 @@ def _make_config(
     else:
         config.actions = None
 
-    config.behaviors = None
     return config
 
 
@@ -104,7 +103,6 @@ class TestSessionHeaders:
         config.session.max_concurrent = 0
         config.session.headers = {"X-Custom": "value"}
         config.actions = None
-        config.behaviors = None
 
         collector = ModemDataCollector(config, None, None, "http://localhost", "", "")
         # The headers should have been applied during __init__

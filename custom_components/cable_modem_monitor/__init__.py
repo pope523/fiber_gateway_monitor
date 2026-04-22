@@ -74,6 +74,7 @@ from .core.log_buffer import setup_log_buffer
 from .lib.utils import get_device_name
 from .mapping_manager import ChannelMap, build_channel_map
 from .migrations import async_run_migrations
+from .recovery_adapter import attach_recovery_cadence_listener
 from .services import async_register_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -143,7 +144,7 @@ def _attach_health_recovery_listener(
     data_coordinator: DataUpdateCoordinator[ModemSnapshot],
     model: str,
 ) -> None:
-    """Register a listener that triggers an immediate poll on health recovery.
+    """Trigger an immediate data poll on health recovery.
 
     When health transitions from UNRESPONSIVE/UNKNOWN to RESPONSIVE,
     schedules an immediate data poll so recovery latency is bounded by
@@ -241,6 +242,13 @@ async def async_setup_entry(
         config_entry=entry,
     )
 
+    # Step 6a: Install the recovery cadence listener — switches the
+    # data coordinator's interval to 30s while a recovery window is
+    # open, and back to the configured interval when the window
+    # closes. Single point of HA-side contact for Core's recovery
+    # observer; other modules don't subscribe.
+    attach_recovery_cadence_listener(hass, entry, orchestrator, data_coordinator)
+
     # Step 7: Create health DataUpdateCoordinator (conditional)
     health_coordinator: DataUpdateCoordinator[HealthInfo] | None = None
     if health_monitor is not None:
@@ -293,7 +301,6 @@ async def async_setup_entry(
         health_coordinator=health_coordinator,
         orchestrator=orchestrator,
         health_monitor=health_monitor,
-        cancel_event=None,
         modem_identity=modem_identity,
         channel_map=initial_channel_map,
     )
@@ -358,14 +365,11 @@ async def async_unload_entry(
 ) -> bool:
     """Unload a config entry.
 
-    Cancels any in-progress restart (cooperative via cancel_event),
-    then unloads platforms.  ``runtime_data`` is auto-cleaned by HA.
+    Unloads platforms; ``runtime_data`` is auto-cleaned by HA. There
+    is no long-running work to cancel — ``orchestrator.restart()`` is
+    one-shot and returns in a few seconds.
     """
     model = entry.data.get("model", "unknown")
-
-    # Cancel restart if in progress
-    if entry.runtime_data.cancel_event is not None:
-        entry.runtime_data.cancel_event.set()
 
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

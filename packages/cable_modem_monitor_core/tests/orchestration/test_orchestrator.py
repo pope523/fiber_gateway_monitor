@@ -1,8 +1,9 @@
 """Tests for Orchestrator policy engine.
 
 Covers signal→policy mapping, circuit breaker, backoff, status
-derivation, transition detection, restart guards, reset_auth,
-and diagnostics. Tests mock the collector — no HTTP traffic.
+derivation, transition detection, restart dispatch, Recovery
+wiring, reset_auth, and diagnostics. Tests mock the collector — no
+HTTP traffic.
 
 Use case coverage (orchestrator level):
 - UC-01: First poll — fresh login
@@ -29,10 +30,13 @@ Use case coverage (orchestrator level):
 - UC-34: Status transition — unreachable → online
 - UC-35: All-or-nothing page loading
 - UC-36: Health recovery clears connectivity backoff
-- UC-42: Restart during restart — rejected
-- UC-43: Poll during restart — short-circuit
+- UC-40: Restart dispatches and opens a recovery window
+- UC-43: Polls during a recovery window are unaffected
 - UC-44: Restart not supported
+- UC-45: Restart bypasses circuit breaker
+- UC-49: Connectivity outage engages the recovery window
 - UC-60: Diagnostics snapshot
+- UC-88: Reboot-signal vote opens a recovery window
 """
 
 from __future__ import annotations
@@ -53,7 +57,6 @@ from solentlabs.cable_modem_monitor_core.orchestration.signals import (
     CollectorSignal,
     ConnectionStatus,
     DocsisStatus,
-    RestartPhase,
 )
 
 # ------------------------------------------------------------------
@@ -898,7 +901,14 @@ class TestStatusTransition:
 
 
 class TestRestart:
-    """Restart guards and basic behavior."""
+    """Orchestrator.restart() delegates to run_restart and returns quickly.
+
+    Detailed run_restart behavior is covered in
+    ``tests/orchestration/test_restart.py``. These tests confirm the
+    orchestrator wires the collector, config, and Recovery instance
+    through correctly and that button-gated behaviors (circuit
+    breaker bypass, streak isolation) still hold.
+    """
 
     def test_restart_not_supported(self) -> None:
         """UC-44: No actions.restart → RestartNotSupportedError."""
@@ -907,64 +917,42 @@ class TestRestart:
         with pytest.raises(RestartNotSupportedError):
             orch.restart()
 
-    def test_restart_during_restart_rejected(self) -> None:
-        """UC-42: Second restart returns error."""
+    def test_restart_opens_recovery_window(self) -> None:
+        """UC-40: Successful restart dispatch opens a recovery window."""
         config = _mock_config(has_restart=True)
         orch = _make_orchestrator(config=config)
 
-        # Simulate restart in progress
-        orch._is_restarting = True
+        assert orch._recovery.active is False
+
         result = orch.restart()
 
-        assert result.success is False
-        assert "already in progress" in result.error
-
-    def test_poll_during_restart(self) -> None:
-        """UC-43: get_modem_data() during restart returns UNREACHABLE."""
-        collector = _mock_collector()
-        orch = _make_orchestrator(collector=collector)
-
-        orch._is_restarting = True
-        snapshot = orch.get_modem_data()
-
-        assert snapshot.connection_status == ConnectionStatus.UNREACHABLE
-        collector.execute.assert_not_called()
-
-    def test_restart_clears_is_restarting_on_success(self) -> None:
-        """is_restarting is False after successful restart and recovery."""
-        config = _mock_config(has_restart=True)
-        orch = _make_orchestrator(config=config)
-
-        result = orch.restart(channel_stabilization_timeout=0)
-
         assert result.success is True
-        assert result.phase_reached == RestartPhase.COMPLETE
-        assert orch.is_restarting is False
+        assert result.error == ""
+        assert orch._recovery.active is True
 
-    def test_restart_clears_is_restarting_on_failure(self) -> None:
-        """is_restarting is False even if action fails."""
+    def test_restart_clears_session(self) -> None:
+        """Session is cleared exactly once after a successful command."""
         config = _mock_config(has_restart=True)
         collector = _mock_collector()
-        # Make the session.request raise to simulate action failure
+        orch = _make_orchestrator(collector=collector, config=config)
+
+        orch.restart()
+
+        assert collector.clear_session.call_count == 1
+
+    def test_restart_command_failed_on_action_exception(self) -> None:
+        """Action executor raising yields error=command_failed."""
+        config = _mock_config(has_restart=True)
+        collector = _mock_collector()
         collector._session.request.side_effect = RuntimeError("action failed")
         orch = _make_orchestrator(collector=collector, config=config)
 
         result = orch.restart()
 
         assert result.success is False
-        assert "action failed" in result.error
-        assert orch.is_restarting is False
-
-    def test_restart_clears_session(self) -> None:
-        """Session is cleared after restart command and at recovery start."""
-        config = _mock_config(has_restart=True)
-        collector = _mock_collector()
-        orch = _make_orchestrator(collector=collector, config=config)
-
-        orch.restart(channel_stabilization_timeout=0)
-
-        # Called by orchestrator (after command) + RestartMonitor (recovery start)
-        assert collector.clear_session.call_count == 2
+        assert result.error == "command_failed"
+        # Recovery window is NOT entered when the command failed.
+        assert orch._recovery.active is False
 
     def test_restart_bypasses_circuit_breaker(self) -> None:
         """UC-45: Restart executes even when circuit breaker is open."""
@@ -978,18 +966,14 @@ class TestRestart:
 
         assert orch.diagnostics().circuit_breaker_open is True
 
-        # Verify polling is blocked
+        # Polling is blocked
         snap = orch.get_modem_data()
         assert snap.connection_status == ConnectionStatus.AUTH_FAILED
 
-        # Reset collector so recovery probes succeed
-        collector.execute.return_value = _ok_result()
-
-        # Restart should still work — circuit breaker is not consulted
-        result = orch.restart(channel_stabilization_timeout=0)
+        # Restart still dispatches — circuit breaker is not consulted.
+        result = orch.restart()
 
         assert result.success is True
-        assert result.phase_reached == RestartPhase.COMPLETE
 
     def test_restart_auth_failure_does_not_increment_streak(self) -> None:
         """UC-45: Auth failure during restart does not affect polling streak."""
@@ -1003,11 +987,11 @@ class TestRestart:
         streak_before = orch.diagnostics().auth_failure_streak
         assert streak_before == 1
 
-        # Restart action fails
+        # Restart action fails — run_restart catches and returns command_failed
         collector._session.request.side_effect = RuntimeError("auth error")
-        orch.restart(channel_stabilization_timeout=0)
+        orch.restart()
 
-        # Streak should NOT have changed — restart failures are separate
+        # Streak is unchanged — restart dispatch failures are not polling failures.
         assert orch.diagnostics().auth_failure_streak == streak_before
 
 
@@ -1082,6 +1066,150 @@ class TestUnplannedRestart:
         collector.execute.return_value = _ok_result()
         snap = orch.get_modem_data()
         assert snap.connection_status == ConnectionStatus.ONLINE
+
+
+# ==================================================================
+# Recovery wiring — UC-40, UC-43, UC-49, UC-88
+# ==================================================================
+
+
+class TestRecoveryWiring:
+    """Orchestrator wires Recovery's tick / evaluate_* / observer.
+
+    Detailed Recovery behavior lives in ``test_recovery.py``; these
+    tests confirm the orchestrator calls into Recovery at the right
+    points in the collection flow and exposes the expected public
+    surface.
+    """
+
+    def test_recovery_active_delegates_to_recovery_module(self) -> None:
+        """``recovery_active`` reads through to the Recovery instance."""
+        orch = _make_orchestrator()
+
+        assert orch.recovery_active is False
+
+        # Simulate an open window by calling into the real Recovery.
+        orch._recovery.begin("restart_command")
+
+        assert orch.recovery_active is True
+
+    def test_set_recovery_observer_registers_callback(self) -> None:
+        """Observer installed via orchestrator fires on Recovery transitions."""
+        orch = _make_orchestrator()
+        calls: list[None] = []
+
+        orch.set_recovery_observer(lambda: calls.append(None))
+
+        orch._recovery.begin("restart_command")
+
+        assert len(calls) == 1
+
+    def test_set_recovery_observer_none_clears_callback(self) -> None:
+        """Passing None removes a previously-registered observer."""
+        orch = _make_orchestrator()
+        calls: list[None] = []
+        orch.set_recovery_observer(lambda: calls.append(None))
+
+        # Fire once to prove it's wired.
+        orch._recovery.begin("restart_command")
+        assert len(calls) == 1
+
+        orch.set_recovery_observer(None)
+
+        # Re-entry — observer cleared, so no additional calls.
+        orch._recovery.begin("restart_command")
+        assert len(calls) == 1
+
+    def test_connectivity_failure_opens_recovery_window(self) -> None:
+        """UC-49: A CONNECTIVITY failure engages Recovery via evaluate_failure."""
+        collector = _mock_collector(_fail_result(CollectorSignal.CONNECTIVITY, "refused"))
+        orch = _make_orchestrator(collector=collector)
+
+        assert orch.recovery_active is False
+
+        orch.get_modem_data()
+
+        assert orch.recovery_active is True
+
+    def test_non_connectivity_failure_does_not_open_window(self) -> None:
+        """AUTH_FAILED / PARSE_ERROR / LOAD_* do not trigger a recovery window."""
+        collector = _mock_collector(_fail_result(CollectorSignal.AUTH_FAILED, "bad"))
+        orch = _make_orchestrator(collector=collector)
+
+        orch.get_modem_data()
+
+        assert orch.recovery_active is False
+
+    def test_success_updates_recovery_history(self) -> None:
+        """UC-88 setup: successful polls feed Recovery's reboot-signal baselines."""
+        data = _make_modem_data(
+            system_info={
+                "total_corrected": 100,
+                "total_uncorrected": 5,
+                "system_uptime": "1000",
+            }
+        )
+        collector = _mock_collector(_ok_result(data))
+        orch = _make_orchestrator(collector=collector)
+
+        assert orch._recovery._prev_counters is None
+        assert orch._recovery._prev_uptime is None
+
+        orch.get_modem_data()
+
+        # evaluate_snapshot refreshed the baselines.
+        assert orch._recovery._prev_counters == (100, 5)
+        assert orch._recovery._prev_uptime == 1000
+
+    def test_reboot_signal_vote_opens_window_on_second_poll(self) -> None:
+        """UC-88: 2-of-3 signals across two successful polls → window open."""
+        # Baseline poll — high counters, high uptime, Operational.
+        data1 = _make_modem_data(
+            system_info={
+                "total_corrected": 500,
+                "total_uncorrected": 20,
+                "system_uptime": "5000",
+                "docsis_status": "Operational",
+            }
+        )
+        # Post-reboot poll — counters reset + uptime drop (2 signals).
+        data2 = _make_modem_data(
+            system_info={
+                "total_corrected": 0,
+                "total_uncorrected": 0,
+                "system_uptime": "30",
+                "docsis_status": "Operational",
+            }
+        )
+        collector = _mock_collector([_ok_result(data1), _ok_result(data2)])
+        orch = _make_orchestrator(collector=collector)
+
+        orch.get_modem_data()  # establishes baseline
+        assert orch.recovery_active is False
+
+        orch.get_modem_data()  # post-reboot — vote fires
+
+        assert orch.recovery_active is True
+
+    def test_tick_closes_window_on_subsequent_poll(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Recovery.tick() runs at the top of every poll, closing expired windows."""
+        from solentlabs.cable_modem_monitor_core.orchestration import recovery as rec_module
+
+        # Drive monotonic time from a controlled clock.
+        clock = {"now": 1000.0}
+        monkeypatch.setattr(rec_module.time, "monotonic", lambda: clock["now"])
+
+        orch = _make_orchestrator()
+        orch._recovery.begin("restart_command")
+        assert orch.recovery_active is True
+
+        # Advance past the window deadline; the next poll should
+        # observe the close via tick().
+        clock["now"] = 1000.0 + orch._recovery.WINDOW_SECONDS + 1
+
+        orch.get_modem_data()
+
+        assert orch.recovery_active is False
 
 
 # ==================================================================
@@ -1353,6 +1481,11 @@ class TestCounterResetDetection:
 def _make_health_monitor(status_value: str) -> MagicMock:
     """Build a mock HealthMonitor with the given health status.
 
+    ``latest_probe_at`` defaults to ``float("inf")`` so the
+    orchestrator's freshness check in the health-recovery-clears-
+    backoff shortcut always treats the mock reading as recent.
+    Stale-probe tests override this explicitly.
+
     Args:
         status_value: HealthStatus enum value string (e.g., "responsive").
     """
@@ -1362,6 +1495,7 @@ def _make_health_monitor(status_value: str) -> MagicMock:
     health_status = HealthStatus(status_value)
     monitor = MagicMock()
     monitor.latest = HealthInfo(health_status=health_status)
+    monitor.latest_probe_at = float("inf")
     return monitor
 
 
@@ -1520,3 +1654,164 @@ class TestHealthRecoveryClearsBackoff:
         assert snapshot.connection_status == ConnectionStatus.ONLINE
         assert orch.diagnostics().connectivity_streak == 0
         assert orch.diagnostics().connectivity_backoff_remaining == 0
+
+    def test_stale_responsive_probe_does_not_clear_backoff(self) -> None:
+        """Cached RESPONSIVE from before the outage must NOT clear backoff.
+
+        Regression guard for the MB7621 hardware observation at
+        10:38:53 — the health coordinator runs on a slower cadence
+        than the data coordinator during a recovery window, so
+        ``health_monitor.latest`` can report pre-outage RESPONSIVE
+        while the modem is actually down. The orchestrator's
+        freshness check must ignore a probe whose timestamp pre-
+        dates the last observed CONNECTIVITY failure.
+        """
+        from solentlabs.cable_modem_monitor_core.orchestration.models import HealthInfo
+        from solentlabs.cable_modem_monitor_core.orchestration.signals import HealthStatus
+
+        # Probe ran at t=100 with RESPONSIVE. Any connectivity
+        # failure observed after that is "newer" than the probe.
+        health_monitor = MagicMock()
+        health_monitor.latest = HealthInfo(health_status=HealthStatus.RESPONSIVE)
+        health_monitor.latest_probe_at = 100.0
+
+        collector = _mock_collector()
+        collector.execute.return_value = _fail_result(CollectorSignal.CONNECTIVITY)
+        orch = _make_orchestrator(collector=collector, health_monitor=health_monitor)
+
+        # First poll observes the connectivity failure. Monkey-patch
+        # time.monotonic so the recorded failure timestamp is well
+        # after the probe's 100.0.
+        import solentlabs.cable_modem_monitor_core.orchestration.orchestrator as orch_module
+
+        orig_monotonic = orch_module.time.monotonic
+        orch_module.time.monotonic = lambda: 200.0  # type: ignore[assignment]
+        try:
+            orch.get_modem_data()
+        finally:
+            orch_module.time.monotonic = orig_monotonic
+
+        # Backoff is now 1. Second poll would normally check the
+        # shortcut. The cached RESPONSIVE reading is stale (probe
+        # at t=100 < failure at t=200), so the shortcut must NOT
+        # fire — backoff decrements normally and the poll is
+        # skipped (backoff was 1, check decrements to 0 and allows
+        # the poll, then fails again).
+        assert orch.diagnostics().connectivity_backoff_remaining == 1
+
+        # Drive a second failure so backoff grows to 2.
+        orch.get_modem_data()
+
+        assert orch.diagnostics().connectivity_backoff_remaining == 2
+
+        # Now a third poll. backoff > 0, health is cached RESPONSIVE,
+        # but latest_probe_at (100.0) is older than the most recent
+        # connectivity failure. The shortcut must stay closed —
+        # backoff decrements to 1 and the poll is skipped (reports
+        # UNREACHABLE without invoking the collector).
+        call_count_before = collector.execute.call_count
+        snapshot = orch.get_modem_data()
+
+        assert snapshot.connection_status == ConnectionStatus.UNREACHABLE
+        assert collector.execute.call_count == call_count_before
+        # Backoff ticked down normally (2 → 1), not cleared.
+        assert orch.diagnostics().connectivity_backoff_remaining == 1
+
+    def test_fresh_responsive_probe_still_clears_backoff(self) -> None:
+        """A probe that ran AFTER the last failure correctly clears backoff.
+
+        Complement to the stale-probe test: confirms the freshness
+        gate doesn't accidentally break the legitimate case.
+        """
+        from solentlabs.cable_modem_monitor_core.orchestration.models import HealthInfo
+        from solentlabs.cable_modem_monitor_core.orchestration.signals import HealthStatus
+
+        health_monitor = MagicMock()
+        # Initial reading — stale (pre-outage).
+        health_monitor.latest = HealthInfo(health_status=HealthStatus.UNRESPONSIVE)
+        health_monitor.latest_probe_at = 100.0
+
+        collector = _mock_collector()
+        collector.execute.return_value = _fail_result(CollectorSignal.CONNECTIVITY)
+        orch = _make_orchestrator(collector=collector, health_monitor=health_monitor)
+
+        # Two failures to build backoff.
+        import solentlabs.cable_modem_monitor_core.orchestration.orchestrator as orch_module
+
+        orig_monotonic = orch_module.time.monotonic
+        orch_module.time.monotonic = lambda: 200.0  # type: ignore[assignment]
+        try:
+            orch.get_modem_data()
+            orch.get_modem_data()
+        finally:
+            orch_module.time.monotonic = orig_monotonic
+
+        assert orch.diagnostics().connectivity_backoff_remaining == 2
+
+        # A FRESH probe runs (t=300, after the failures at t=200)
+        # and reports RESPONSIVE. Next poll should clear backoff.
+        health_monitor.latest = HealthInfo(health_status=HealthStatus.RESPONSIVE)
+        health_monitor.latest_probe_at = 300.0
+        collector.execute.return_value = _ok_result()
+
+        snapshot = orch.get_modem_data()
+
+        assert snapshot.connection_status == ConnectionStatus.ONLINE
+        assert orch.diagnostics().connectivity_streak == 0
+        assert orch.diagnostics().connectivity_backoff_remaining == 0
+
+
+# fmt: off
+# (failure_at, has_monitor, probe_at, expected, desc)
+HEALTH_PROBE_FRESHNESS_CASES: list[tuple[float | None, bool, float | None, bool, str]] = [
+    (None,  True,  100.0, True,  "no_failure_yet_with_probe"),
+    (None,  False, None,  True,  "no_failure_yet_no_monitor"),
+    (200.0, False, None,  False, "failure_but_no_monitor"),
+    (200.0, True,  None,  False, "failure_but_no_probe_yet"),
+    (200.0, True,  100.0, False, "probe_older_than_failure"),
+    (200.0, True,  200.0, False, "probe_equal_to_failure"),
+    (200.0, True,  300.0, True,  "probe_newer_than_failure"),
+]
+# fmt: on
+
+
+class TestHealthProbeFreshness:
+    """Pure-unit coverage for ``Orchestrator._is_health_probe_fresh``.
+
+    The freshness gate protects the "health recovery clears backoff"
+    shortcut from a stale cached RESPONSIVE probe. The logic has a
+    small branch matrix driven by three inputs:
+
+    - ``_last_connectivity_failure_at`` (None → nothing to gate against)
+    - ``_health_monitor`` (None → cannot verify freshness)
+    - ``health_monitor.latest_probe_at`` (None → no probe yet)
+
+    Integration coverage via :class:`TestHealthRecoveryClearsBackoff`
+    exercises the orchestrator-level behaviour; this table pins the
+    helper's branch outcomes directly.
+    """
+
+    @pytest.mark.parametrize(
+        "failure_at, has_monitor, probe_at, expected, desc",
+        HEALTH_PROBE_FRESHNESS_CASES,
+        ids=[c[4] for c in HEALTH_PROBE_FRESHNESS_CASES],
+    )
+    def test_freshness_branches(
+        self,
+        failure_at: float | None,
+        has_monitor: bool,
+        probe_at: float | None,
+        expected: bool,
+        desc: str,
+    ) -> None:
+        """Each row in the matrix returns the documented outcome."""
+        if has_monitor:
+            health_monitor: Any = MagicMock()
+            health_monitor.latest_probe_at = probe_at
+        else:
+            health_monitor = None
+
+        orch = _make_orchestrator(health_monitor=health_monitor)
+        orch._last_connectivity_failure_at = failure_at
+
+        assert orch._is_health_probe_fresh() is expected

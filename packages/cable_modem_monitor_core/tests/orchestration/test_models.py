@@ -16,7 +16,6 @@ from solentlabs.cable_modem_monitor_core.orchestration.signals import (
     ConnectionStatus,
     DocsisStatus,
     HealthStatus,
-    RestartPhase,
 )
 
 
@@ -258,22 +257,21 @@ class TestOrchestratorDiagnostics:
 
 
 class TestRestartResult:
-    """RestartResult recovery status."""
+    """RestartResult dispatch outcome."""
 
     def test_success(self) -> None:
         result = RestartResult(
             success=True,
-            phase_reached=RestartPhase.COMPLETE,
-            elapsed_seconds=150.0,
+            elapsed_seconds=3.5,
         )
+        assert result.success is True
         assert result.error == ""
 
-    def test_timeout(self) -> None:
+    def test_command_failed(self) -> None:
         result = RestartResult(
             success=False,
-            phase_reached=RestartPhase.TIMEOUT,
-            elapsed_seconds=420.0,
-            error="Recovery timed out",
+            elapsed_seconds=2.1,
+            error="command_failed",
         )
         assert not result.success
-        assert result.phase_reached == RestartPhase.TIMEOUT
+        assert result.error == "command_failed"

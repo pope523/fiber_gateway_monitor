@@ -12,7 +12,6 @@ import pytest
 from solentlabs.cable_modem_monitor_core.orchestration.models import (
     RestartResult,
 )
-from solentlabs.cable_modem_monitor_core.orchestration.signals import RestartPhase
 
 from custom_components.cable_modem_monitor.button import (
     ResetEntitiesButton,
@@ -159,8 +158,7 @@ async def test_restart_button_press_success(
     button.hass.async_add_executor_job = AsyncMock(
         return_value=RestartResult(
             success=True,
-            phase_reached=RestartPhase.COMPLETE,
-            elapsed_seconds=90.0,
+            elapsed_seconds=3.5,
         )
     )
     button.hass.services.async_call = AsyncMock()
@@ -171,13 +169,10 @@ async def test_restart_button_press_success(
     # Notification sent
     button.hass.services.async_call.assert_awaited()
     call_args = button.hass.services.async_call.call_args
-    assert "Complete" in call_args[0][2]["title"]
+    assert "Sent" in call_args[0][2]["title"]
 
     # Data refreshed
     mock_data_coordinator.async_request_refresh.assert_awaited_once()
-
-    # Cancel event cleared
-    assert mock_runtime_data.cancel_event is None
 
 
 async def test_restart_button_press_failure(
@@ -192,9 +187,8 @@ async def test_restart_button_press_failure(
     button.hass.async_add_executor_job = AsyncMock(
         return_value=RestartResult(
             success=False,
-            phase_reached=RestartPhase.COMMAND_SENT,
-            elapsed_seconds=5.0,
-            error="Command rejected",
+            elapsed_seconds=2.0,
+            error="command_failed",
         )
     )
     button.hass.services.async_call = AsyncMock()
@@ -206,27 +200,11 @@ async def test_restart_button_press_failure(
     assert "Failed" in call_args[0][2]["title"]
 
 
-async def test_restart_button_skips_if_already_restarting(
-    mock_orchestrator: MagicMock,
-    mock_runtime_data: CableModemRuntimeData,
-):
-    """Restart button press ignored when restart already in progress."""
-    mock_orchestrator.is_restarting = True
-    entry = _make_entry(mock_runtime_data)
-    button = RestartModemButton(entry)
-    button.hass = MagicMock()
-    button.hass.async_add_executor_job = AsyncMock()
-
-    await button.async_press()
-
-    button.hass.async_add_executor_job.assert_not_awaited()
-
-
-async def test_restart_button_unavailable_during_restart(
+async def test_restart_button_unavailable_during_dispatch(
     mock_data_coordinator: MagicMock,
     mock_runtime_data: CableModemRuntimeData,
 ):
-    """Button shows unavailable in HA during restart, available after."""
+    """Button shows unavailable in HA during command dispatch, available after."""
     entry = _make_entry(mock_runtime_data)
     button = RestartModemButton(entry)
     button.hass = MagicMock()
@@ -241,17 +219,16 @@ async def test_restart_button_unavailable_during_restart(
         available_during_restart.append(button._attr_available)
         return RestartResult(
             success=True,
-            phase_reached=RestartPhase.COMPLETE,
-            elapsed_seconds=60.0,
+            elapsed_seconds=2.5,
         )
 
     button.hass.async_add_executor_job = AsyncMock(side_effect=_capture_state)
 
     await button.async_press()
 
-    # During restart: unavailable
+    # During dispatch: unavailable
     assert available_during_restart == [False]
-    # After restart: available again
+    # After dispatch: available again
     assert button._attr_available is True
     # State pushed to HA twice (before + after)
     assert button.async_write_ha_state.call_count == 2
@@ -278,6 +255,92 @@ async def test_restart_button_available_restored_on_exception(
     # finally block restores availability
     assert button._attr_available is True
     assert button.async_write_ha_state.call_count == 2
+
+
+async def test_restart_button_sets_and_clears_active_operation(
+    mock_data_coordinator: MagicMock,
+    mock_runtime_data: CableModemRuntimeData,
+):
+    """Successful press sets active_operation="restart" and clears in finally."""
+    entry = _make_entry(mock_runtime_data)
+    button = RestartModemButton(entry)
+    button.hass = MagicMock()
+    button.async_write_ha_state = MagicMock()
+    button.hass.services.async_call = AsyncMock()
+    mock_data_coordinator.async_request_refresh = AsyncMock()
+
+    observed_during_press: list[str | None] = []
+
+    async def _capture(*args, **kwargs):
+        observed_during_press.append(mock_runtime_data.active_operation)
+        return RestartResult(success=True, elapsed_seconds=2.0)
+
+    button.hass.async_add_executor_job = AsyncMock(side_effect=_capture)
+
+    assert mock_runtime_data.active_operation is None
+
+    await button.async_press()
+
+    # Mutex was held during the executor call...
+    assert observed_during_press == ["restart"]
+    # ...and cleared on exit.
+    assert mock_runtime_data.active_operation is None
+
+
+async def test_restart_button_clears_active_operation_on_exception(
+    mock_data_coordinator: MagicMock,
+    mock_runtime_data: CableModemRuntimeData,
+):
+    """active_operation is cleared even when the handler raises."""
+    entry = _make_entry(mock_runtime_data)
+    button = RestartModemButton(entry)
+    button.hass = MagicMock()
+    button.async_write_ha_state = MagicMock()
+    button.hass.services.async_call = AsyncMock()
+    mock_data_coordinator.async_request_refresh = AsyncMock()
+    button.hass.async_add_executor_job = AsyncMock(side_effect=ConnectionError("boom"))
+
+    with pytest.raises(ConnectionError):
+        await button.async_press()
+
+    assert mock_runtime_data.active_operation is None
+
+
+async def test_restart_button_refuses_when_operation_in_progress(
+    mock_orchestrator: MagicMock,
+    mock_runtime_data: CableModemRuntimeData,
+):
+    """A second restart press while one is running is refused."""
+    mock_runtime_data.active_operation = "restart"
+    entry = _make_entry(mock_runtime_data)
+    button = RestartModemButton(entry)
+    button.hass = MagicMock()
+    button.hass.async_add_executor_job = AsyncMock()
+
+    await button.async_press()
+
+    # Handler returned early — orchestrator never called.
+    button.hass.async_add_executor_job.assert_not_awaited()
+    mock_orchestrator.restart.assert_not_called()
+    # Mutex value is unchanged.
+    assert mock_runtime_data.active_operation == "restart"
+
+
+async def test_restart_button_refuses_when_reset_in_progress(
+    mock_orchestrator: MagicMock,
+    mock_runtime_data: CableModemRuntimeData,
+):
+    """A restart press during a reset operation is refused."""
+    mock_runtime_data.active_operation = "reset"
+    entry = _make_entry(mock_runtime_data)
+    button = RestartModemButton(entry)
+    button.hass = MagicMock()
+    button.hass.async_add_executor_job = AsyncMock()
+
+    await button.async_press()
+
+    button.hass.async_add_executor_job.assert_not_awaited()
+    assert mock_runtime_data.active_operation == "reset"
 
 
 # -----------------------------------------------------------------------

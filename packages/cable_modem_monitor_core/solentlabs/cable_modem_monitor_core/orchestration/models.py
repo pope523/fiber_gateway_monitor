@@ -16,7 +16,6 @@ from .signals import (
     CollectorSignal,
     ConnectionStatus,
     HealthStatus,
-    RestartPhase,
 )
 
 
@@ -215,16 +214,25 @@ class OrchestratorDiagnostics:
 
 @dataclass
 class RestartResult:
-    """Result of a modem restart and recovery sequence.
+    """Result of dispatching a modem restart command.
+
+    Reflects only whether the command itself was delivered. Does NOT
+    report whether the modem actually rebooted or came back — that
+    would require observation after the fact, which ``run_restart``
+    deliberately doesn't do. Consumers watch the ``ModemSnapshot``
+    stream through normal polling to see what actually happened.
 
     Attributes:
-        success: Whether the modem recovered within the timeout.
-        phase_reached: Which recovery phase completed.
-        elapsed_seconds: Total time from restart command to result.
-        error: Human-readable error if recovery failed or timed out.
+        success: True iff authentication succeeded, the action
+            executor ran, and the session was cleared without
+            raising.
+        elapsed_seconds: Wall time of the ``run_restart`` call.
+            Typically a few seconds (auth + POST + session clear).
+        error: Structured error token. Empty on success.
+            ``"command_failed"`` on any dispatch failure — no other
+            tokens are emitted.
     """
 
     success: bool
-    phase_reached: RestartPhase
     elapsed_seconds: float
     error: str = ""

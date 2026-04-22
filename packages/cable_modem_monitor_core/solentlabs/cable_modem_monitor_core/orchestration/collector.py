@@ -25,7 +25,7 @@ from ..loaders.http import (
     ResourceLoadError,
 )
 from ..models.modem_config.auth import BasicAuth, NoneAuth
-from ..parsers.coordinator import ModemParserCoordinator, filter_restart_window
+from ..parsers.coordinator import ModemParserCoordinator
 from .actions import execute_action
 from .models import ModemResult, ResourceFetch
 from .signals import CollectorSignal
@@ -116,8 +116,7 @@ class ModemDataCollector:
         1. Auth Manager: validate session -> reuse or authenticate
         2. Resource Loader: fetch all resources (all-or-nothing)
         3. Parser: extract channels + system_info -> ModemData
-        4. Post-parse filter: apply restart-window filter if configured
-        5. Logout: execute actions.logout if single-session modem
+        4. Logout: execute actions.logout if single-session modem
 
         Returns:
             ModemResult with modem data or failure signal.
@@ -199,10 +198,7 @@ class ModemDataCollector:
                 error=str(exc),
             )
 
-        # Phase 4: Post-parse filter
-        data = self._apply_restart_window_filter(data)
-
-        # Phase 5: Logout (best-effort, after successful collection)
+        # Phase 4: Logout (best-effort, after successful collection)
         self._execute_logout_if_needed()
 
         self._last_resource_fetches = fetches
@@ -481,13 +477,6 @@ class ModemDataCollector:
         if self._coordinator is None:
             raise RuntimeError("No parser coordinator configured")
         return self._coordinator.parse(resources)
-
-    def _apply_restart_window_filter(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Filter zero-power channels during restart window if configured."""
-        behaviors = self._modem_config.behaviors
-        if behaviors and behaviors.zero_power_reported and behaviors.restart:
-            return filter_restart_window(data, behaviors.restart.window_seconds)
-        return data
 
     def _execute_logout_if_needed(self) -> None:
         """Execute logout action for single-session modems.

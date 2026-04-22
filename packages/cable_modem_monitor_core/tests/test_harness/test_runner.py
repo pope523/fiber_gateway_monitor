@@ -34,7 +34,6 @@ _MODEM_YAML = (_PIPELINE_FIXTURES / "modem.yaml").read_text()
 _MODEM_FORM_AUTH_YAML = (_PIPELINE_FIXTURES / "modem_form_auth.yaml").read_text()
 _MODEM_SESSION_HEADERS_YAML = (_PIPELINE_FIXTURES / "modem_session_headers.yaml").read_text()
 _MODEM_URL_TOKEN_YAML = (_PIPELINE_FIXTURES / "modem_url_token.yaml").read_text()
-_MODEM_RESTART_YAML = (_PIPELINE_FIXTURES / "modem_restart.yaml").read_text()
 _MODEM_HNAP_YAML = (_PIPELINE_FIXTURES / "modem_hnap.yaml").read_text()
 _PARSER_YAML = (_PIPELINE_FIXTURES / "parser.yaml").read_text()
 _PARSER_HNAP_YAML = (_PIPELINE_FIXTURES / "parser_hnap.yaml").read_text()
@@ -353,7 +352,7 @@ class TestAuthFailure:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline configuration paths — session and behaviors
+# Pipeline configuration paths — session wiring
 # ---------------------------------------------------------------------------
 
 
@@ -381,19 +380,6 @@ class TestUrlToken:
 
         # Pipeline should succeed — no token cookie present means
         # empty url_token, which is valid (no token appended to URLs)
-        assert result.passed is True
-        assert result.error == ""
-
-
-class TestRestartWindowFilter:
-    """Modem config with restart window behavior."""
-
-    def test_restart_window_filter(self, tmp_path: Path) -> None:
-        """Pipeline runs filter_restart_window when behaviors configured."""
-        case = _build_test_dir(tmp_path, modem_yaml=_MODEM_RESTART_YAML)
-
-        result = run_modem_test(case)
-
         assert result.passed is True
         assert result.error == ""
 

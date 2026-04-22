@@ -66,7 +66,7 @@ class ModemDataCollector:
 
         Args:
             modem_config: Parsed modem.yaml config. Includes timeout,
-                auth strategy, session config, and behaviors.
+                auth strategy, session config, and action definitions.
             parser_config: Parsed parser.yaml config. None if parser.py
                 handles all extraction.
             post_processor: Optional PostProcessor from parser.py.
@@ -326,11 +326,13 @@ def create_orchestrator(
 
 ## Orchestrator
 
-Policy engine. Coordinates ModemDataCollector, HealthMonitor, and
-RestartMonitor. Owns all backoff and error recovery decisions.
-Interprets collection results using session state and modem context.
-Exposes a synchronous API — consumers wrap it for their platform's
-scheduling model (HA's DataUpdateCoordinator, a CLI loop, etc.).
+Policy engine. Coordinates ModemDataCollector and HealthMonitor.
+Exposes the restart action (see § Restart Action) and surfaces
+recovery state (see § Recovery). Owns all backoff and policy
+decisions. Interprets collection results using session state and
+modem context. Exposes a synchronous API — consumers wrap it for
+their platform's scheduling model (HA's DataUpdateCoordinator, a CLI
+loop, etc.).
 
 The orchestrator does not own scheduling or threads. Consumers call
 `get_modem_data()` when they want data and `ping()` on the health
@@ -353,7 +355,9 @@ Both can also be triggered manually from the UI:
 
 The API methods are identical for scheduled and manual calls — the
 orchestrator doesn't know or care why it was called. Backoff and
-circuit breaker protection apply equally to both.
+circuit breaker protection apply equally to both. `restart()` is a
+one-shot command; the post-reboot window is handled generically by
+the recovery module (§ Recovery).
 
 **Interval limits:**
 
@@ -382,57 +386,64 @@ class Orchestrator:
             collector: ModemDataCollector instance (reused across polls).
             health_monitor: Optional health probe monitor. None if the
                 modem doesn't support ICMP or HTTP HEAD probes.
-            modem_config: Parsed modem.yaml config. Used for behaviors
-                (restart window) and actions (logout, restart).
+            modem_config: Parsed modem.yaml config. Used for
+                identity (model) and actions (logout, restart).
         """
 
     def get_modem_data(self) -> ModemSnapshot:
         """Execute a data collection cycle.
 
         Sequence:
-        1. If is_restarting, return UNREACHABLE immediately (no HTTP
-           traffic to a rebooting modem)
-        2. Check circuit breaker — if open, return AUTH_FAILED
-        3. Health recovery check — if connectivity backoff is active
+        1. Check circuit breaker — if open, return AUTH_FAILED
+        2. Health recovery check — if connectivity backoff is active
            and HealthMonitor reports RESPONSIVE, clear the backoff
            (modem is proven reachable, no reason to keep skipping)
-        4. Check connectivity backoff — decrement counter. If still > 0
+        3. Check connectivity backoff — decrement counter. If still > 0
            after decrement, return UNREACHABLE. If counter reached 0,
            backoff is cleared and collection proceeds.
-        5. Signal HealthMonitor: record_collection_start()
-        7. Run ModemDataCollector
-        8. Signal HealthMonitor: record_collection_end(success)
-        9. If collection failed, apply signal → policy mapping
-        10. On success, derive connection_status from data
-        11. Enrich system_info.docsis_status if absent (from lock_status)
-        12. Read latest HealthInfo from HealthMonitor (if present)
-        13. Detect state transitions (unreachable → online)
-        14. Return combined result
+        4. Signal HealthMonitor: record_collection_start()
+        5. Run ModemDataCollector
+        6. Signal HealthMonitor: record_collection_end(success)
+        7. If collection failed, apply signal → policy mapping
+           (connectivity failures may trigger a recovery window)
+        8. On success, derive connection_status from data
+        9. Enrich system_info.docsis_status if absent (from lock_status)
+        10. Hand the snapshot to the recovery module
+            (runs the reboot-signal check, may enter or exit a window)
+        11. Read latest HealthInfo from HealthMonitor (if present)
+        12. Detect state transitions (unreachable → online)
+        13. Return combined result
 
-        Steps 6 and 8 notify the HealthMonitor of collection activity
+        Polls always run the full cycle and return whatever the modem
+        reports. There is no short-circuit for in-flight restarts —
+        restart is a one-shot command, not a stateful procedure. If a
+        scheduled poll happens to land while the modem is rebooting,
+        it surfaces UNREACHABLE honestly and the recovery module
+        accelerates subsequent polls until the modem answers again.
+
+        Steps 4 and 6 notify the HealthMonitor of collection activity
         so it can skip the HTTP probe when a collection is active or
         recently succeeded (see HealthMonitor § Collection Evidence).
         The end signal is in a finally block — it always runs.
 
         The HealthMonitor runs on its own cadence. The orchestrator
-        reads the latest health result for the snapshot (step 12) and
-        for backoff decisions (step 3), but does not trigger a new
+        reads the latest health result for the snapshot (step 11) and
+        for backoff decisions (step 2), but does not trigger a new
         probe.
 
         The caller decides when to poll (schedule, service call,
         automation). The orchestrator applies the same backoff and
-        lockout protection regardless.
+        lockout protection regardless. The recovery module may
+        switch the consumer's poll cadence via the recovery signal
+        (see § Recovery).
 
         Returns:
             ModemSnapshot with modem data, health info, and derived
             status fields.
         """
 
-    def restart(
-        self,
-        cancel_event: threading.Event | None = None,
-    ) -> RestartResult:
-        """Initiate a modem restart and monitor recovery.
+    def restart(self) -> RestartResult:
+        """Send the restart command. One-shot; does not wait.
 
         Restart is a user-initiated action — it bypasses the auth
         circuit breaker. If the circuit is open due to bad credentials,
@@ -440,34 +451,39 @@ class Orchestrator:
         restart does NOT increment the orchestrator's auth failure
         streak.
 
-        If a restart is already in progress, returns immediately with
-        an error result (no second restart command sent to the modem).
+        Procedure (see § Restart Action for the full contract):
 
-        Sequence:
-        1. Check is_restarting — if True, return error
-        2. Set is_restarting = True
-        3. Authenticate (fresh session for the restart command)
-        4. Execute restart action (HNAP SOAP / HTTP form POST)
-        5. Clear session (old session is dead)
-        6. Hand off to RestartMonitor for two-phase recovery
-        7. Set is_restarting = False
-        8. Return result
+        1. Authenticate against the modem.
+        2. Execute the ``actions.restart`` executor.
+        3. Clear the collector session (forces fresh auth on the
+           next poll — some firmware invalidates sessions after a
+           reboot command).
+        4. Trigger the recovery module so subsequent polls run at
+           recovery cadence (see § Recovery).
+        5. Return.
 
-        The optional cancel_event enables cooperative cancellation.
-        When set, the RestartMonitor's probe loop exits promptly
-        (within one probe_interval). Consumers use this for clean
-        shutdown — e.g., HA sets the event during async_unload_entry().
-        Without cancel_event, restart blocks until recovery completes
-        or times out (up to response_timeout + channel_stabilization_timeout).
+        The call returns as soon as the command has been dispatched
+        — typically in a few seconds. It does NOT observe the reboot
+        itself, does NOT poll until the modem comes back, and does
+        NOT report whether the modem actually restarted. The dashboard
+        reflects reality through normal polling at recovery cadence:
+        UNREACHABLE while the modem is down, transitional docsis
+        states while it ranges, Operational once it's back.
 
-        Only available if modem.yaml declares actions.restart.
+        Callable at any time. If the modem is already in a recovery
+        window or is still rebooting from a prior restart, the call
+        proceeds normally — authentication may fail (returning
+        ``error="command_failed"``), or the command may dispatch and
+        re-trigger the modem's reboot sequence. That's the caller's
+        intent; Core does not arbitrate. Consumers serialize
+        concurrent presses via their own button mutex (see
+        HA_ADAPTER_SPEC § Operation Mutex).
 
-        Args:
-            cancel_event: Optional threading.Event for cooperative
-                cancellation. When set, recovery exits promptly.
+        Only available if modem.yaml declares ``actions.restart``.
 
         Returns:
-            RestartResult with recovery status and timing.
+            RestartResult with success flag (True iff the command
+            dispatched cleanly) and an error token.
 
         Raises:
             RestartNotSupportedError: If modem has no restart action.
@@ -523,16 +539,47 @@ class Orchestrator:
         """
 
     @property
-    def is_restarting(self) -> bool:
-        """Whether a restart is currently in progress.
+    def recovery_active(self) -> bool:
+        """Whether a recovery window is currently open.
 
-        Consumers use this to:
-        - Guard restart buttons (disable while True)
-        - Understand why get_modem_data() returns UNREACHABLE
-        - Decide whether to show "Restarting..." in the UI
+        True while the recovery module is running an aggressive-poll
+        window. Set by any of:
 
-        Thread-safe: set/read is a Python bool assignment (atomic
-        under the GIL).
+        - ``restart()`` after the command dispatches,
+        - connectivity backoff engaging on observed poll failures,
+        - the reboot-signal check matching a successful poll (see
+          § Reboot-Signal Trigger).
+
+        Consumers use this to switch the data poll cadence to the
+        recovery interval (HA uses the ``recovery_state_signal``
+        dispatcher to react promptly — see HA_ADAPTER_SPEC
+        § Recovery Adapter).
+
+        Thread-safe: boolean read is atomic under the GIL.
+        """
+
+    def set_recovery_observer(
+        self, observer: Callable[[], None] | None
+    ) -> None:
+        """Register a callback fired when ``recovery_active`` flips.
+
+        Invoked from the poll thread on both the False→True and
+        True→False transitions. The callback must be thread-safe —
+        HA implementations typically hop to the event loop via
+        ``dispatcher_send`` (which internally calls
+        ``call_soon_threadsafe``).
+
+        Core doesn't know or care what the observer does; it just
+        invokes the callable. This keeps the Core→HA coupling one-
+        directional (Core signals state, HA decides UX response).
+        """
+
+    @property
+    def supports_restart(self) -> bool:
+        """Whether modem.yaml declares ``actions.restart``.
+
+        False means ``restart()`` will raise
+        ``RestartNotSupportedError``.
         """
 ```
 
@@ -730,7 +777,17 @@ class OrchestratorDiagnostics:
 
 
 class ConnectionStatus(Enum):
-    """Modem connection status derived from poll outcome."""
+    """Modem connection status derived from poll outcome.
+
+    Every value is a direct observation from the poll — either data
+    was received (ONLINE, NO_SIGNAL), or the modem rejected us
+    (AUTH_FAILED), or the poll failed (UNREACHABLE), or parsing
+    failed (PARSER_ISSUE). There is no speculative "Restarting"
+    status; during a restart or other outage the snapshot honestly
+    reports whatever the modem is reporting (typically UNREACHABLE
+    during the reboot, then transitional docsis states as it ranges,
+    then ONLINE).
+    """
 
     ONLINE = "online"
     AUTH_FAILED = "auth_failed"
@@ -757,29 +814,34 @@ class DocsisStatus(StrEnum):
 
 @dataclass
 class RestartResult:
-    """Result of a modem restart and recovery sequence.
+    """Result of dispatching a modem restart command.
+
+    Reflects only whether the command itself was delivered to the
+    modem. Does NOT report whether the modem actually rebooted or
+    came back — that would require observation after the fact, which
+    ``restart()`` deliberately doesn't do. Consumers watch the
+    ``ModemSnapshot`` stream through normal polling to see what
+    actually happened.
 
     Attributes:
-        success: Whether the modem recovered within the timeout.
-        phase_reached: Which recovery phase completed.
-        elapsed_seconds: Total time from restart command to result.
-        error: Human-readable error if recovery failed or timed out.
+        success: True iff authentication succeeded, the action
+            executor ran, and the session was cleared without raising.
+            False on any failure during the command dispatch itself.
+        elapsed_seconds: Wall time of the ``restart()`` call. Typically
+            a few seconds (auth + POST + session clear).
+        error: Structured error token. Empty on success. On failure:
+
+            * ``"command_failed"`` — authentication raised, the action
+              executor raised, or the session clear raised.
+
+            No other error tokens are emitted. ``restart()`` does not
+            time out, cannot be cancelled, and does not observe the
+            reboot.
     """
 
     success: bool
-    phase_reached: RestartPhase
     elapsed_seconds: float
     error: str = ""
-
-
-class RestartPhase(Enum):
-    """Recovery phases during a modem restart."""
-
-    COMMAND_SENT = "command_sent"      # Restart action executed
-    WAITING_RESPONSE = "waiting"       # Waiting for modem to respond
-    CHANNEL_SYNC = "channel_sync"      # Waiting for channel counts to stabilize
-    COMPLETE = "complete"              # Recovery finished successfully
-    TIMEOUT = "timeout"                # Recovery timed out
 ```
 
 ### Collection Flow
@@ -790,10 +852,6 @@ derivation — no retry logic.
 
 ```python
 def get_modem_data(self) -> ModemSnapshot:
-    # Restart guard — don't hit a rebooting modem
-    if self._is_restarting:
-        return ModemSnapshot(connection_status=ConnectionStatus.UNREACHABLE, ...)
-
     if self._circuit_open:
         return ModemSnapshot(connection_status=ConnectionStatus.AUTH_FAILED, ...)
 
@@ -813,6 +871,9 @@ def get_modem_data(self) -> ModemSnapshot:
 
     if not result.success:
         status = self._apply_signal_policy(result)
+        # Policy may ask the recovery module to enter a window
+        # (e.g., connectivity backoff engaged).
+        self._recovery.evaluate_failure(result)
         return ModemSnapshot(connection_status=status, ...)
 
     # Success — reset auth failure streak
@@ -821,6 +882,15 @@ def get_modem_data(self) -> ModemSnapshot:
     status = self._derive_connection_status(result.modem_data)
     self._enrich_docsis_status(result.modem_data)  # fills system_info if absent
     docsis_status = (result.modem_data or {}).get("system_info", {}).get("docsis_status", "unknown")
+
+    # Hand the snapshot to the recovery module. It runs the reboot-
+    # signal check (possibly entering a window), and — if a window is
+    # already open — decides whether this snapshot indicates the
+    # modem is back (it never exits the window early; the module
+    # runs the window to completion and then restores normal
+    # cadence).
+    self._recovery.evaluate_snapshot(result.modem_data)
+
     health_info = self._health_monitor.latest if self._health_monitor else None
     # ... transition detection ...
     return ModemSnapshot(connection_status=status, docsis_status=docsis_status, health_info=health_info, ...)
@@ -915,7 +985,7 @@ def _apply_signal_policy(self, result: ModemResult) -> ConnectionStatus:
             # Data page returned 401/403. Auth didn't grant data
             # access — wrong strategy, stale session, or firmware
             # quirk. Clear session so the next poll starts fresh.
-            # No retry: reboots are handled by RestartMonitor,
+            # No retry: HA-triggered reboots are handled by restart(),
             # config issues need user intervention.
             self._auth_failure_streak += 1
             self._collector.clear_session()
@@ -1015,7 +1085,7 @@ grows and the circuit trips — same as wrong credentials.
 | Circuit open flag | Stops collection when streak reaches threshold | Set when tripped, cleared by reset_auth() |
 | Connectivity streak | Tracks consecutive CONNECTIVITY failures | Reset on success, non-connectivity failure, or reset_connectivity() |
 | Connectivity backoff | Exponential backoff for unreachable modem: min(2^(streak-1), 6) | Decremented each get_modem_data(), cleared by reset_connectivity() |
-| Is restarting flag | Guards get_modem_data() and restart() | Set/cleared by restart() |
+| Recovery window state | Aggressive poll cadence, session preservation during the window | Owned by the recovery module; see § Recovery |
 | Last connection status | Transition detection (unreachable → online) | Updated each get_modem_data() |
 | Last poll timestamp | Metrics (poll duration, cadence tracking) | Updated each get_modem_data() |
 | ModemDataCollector instance | Reuse session across polls | Orchestrator lifetime |
@@ -1082,10 +1152,12 @@ to DEBUG after the first successful poll to avoid flooding logs.
 
 - INFO: `"Status transition [MODEL]: unreachable → online"`
 
-**Restart:**
+**Restart and Recovery:**
 
-- INFO: `"Restart command sent [MODEL] — session cleared (1.2s)"`
-- ERROR: `"Restart failed [MODEL]: ..."`
+See § Restart Action and § Recovery for log lines. The restart
+action logs the command dispatch only (one INFO line on success,
+one ERROR on failure). The recovery module logs window
+entry/exit and cadence transitions.
 
 State transitions and policy decisions are the orchestrator's unique
 contribution — these are the logs that tell the story of what happened
@@ -1309,7 +1381,7 @@ class HealthMonitor:
         HTTP probe.
         """
 
-    def ping(self) -> HealthInfo:
+    def ping(self, *, force_fresh: bool = False) -> HealthInfo:
         """Run health probes and return results.
 
         Runs enabled probes and returns a combined result:
@@ -1323,6 +1395,12 @@ class HealthMonitor:
         for the HTTP probe in status derivation but http_latency_ms
         stays None (not measured, not fabricated). See Collection
         Evidence below.
+
+        ``force_fresh=True`` bypasses the collection-evidence skip
+        and always runs the HTTP probe. Used by restart recovery
+        (``_probe_for_response``) where a cached pre-reboot HTTP
+        success would falsely report the modem as responsive while
+        it is still in the middle of a reboot.
 
         Returns:
             HealthInfo with probe results and derived status.
@@ -1516,175 +1594,336 @@ default log levels.
 
 ---
 
-## RestartMonitor
+## Restart Action
 
-Recovery monitor for modem restarts. Takes over from the orchestrator
-after a restart command is sent (planned restart) or after the
-orchestrator detects a connectivity return (unplanned restart). Returns
-when the modem is fully recovered or the timeout is reached.
+`Orchestrator.restart()` is a one-shot command. It sends the reboot
+instruction to the modem and returns. It does **not** wait for the
+modem to come back, probe for liveness, or watch DOCSIS ranging.
+Post-reboot polling cadence is handled generically by the recovery
+module (§ Recovery).
 
-RestartMonitor is not a background task — it runs synchronously,
-probing the modem at a configurable cadence until recovery completes
-or times out. The orchestrator blocks while RestartMonitor runs, which
-is correct — no other operations should run during restart recovery.
+The implementation lives in `orchestration/restart.py` as a thin
+module-level function `run_restart(collector, modem_config,
+recovery)`, called by `Orchestrator.restart()`.
 
-### Probe Strategy
+Procedure:
 
-Response detection uses the lightest available probe:
+1. Raise `RestartNotSupportedError` if `actions.restart` is None.
+2. Authenticate against the modem.
+3. Execute the `actions.restart` executor (`HTTP` or `HNAP` — see
+   § Action Executors).
+4. Clear the collector session (forces fresh auth on the next poll;
+   avoids the MB7621-class stale-cookie failure mode).
+5. Call `recovery.begin(reason="restart_command")` so subsequent
+   polls run at recovery cadence. The call returns immediately; the
+   recovery module owns what happens next.
+6. Return a `RestartResult` — success iff steps 2–5 completed
+   without raising.
 
-1. **HealthMonitor** (preferred) — ICMP ping or HTTP HEAD. Fast,
-   lightweight, no auth or session consumption.
-2. **ModemDataCollector** (fallback) — full auth → load → parse cycle.
-   Used when the modem blocks both ICMP and HEAD.
+Typical call duration: 2–5 seconds (auth + POST + session clear).
+The caller does not block on the reboot itself.
 
-Channel stabilization always uses the ModemDataCollector because it
-needs channel counts from a full parse.
+`restart()` does not refuse based on recovery state. A user who
+sees a flakey modem after a restart may want to try again; Core
+lets them. The command either dispatches (possibly re-rebooting
+an already-rebooting modem, which is the caller's intent) or
+fails cleanly with `error="command_failed"` if the modem isn't
+reachable. Serialization of rapid button presses is the consumer's
+responsibility — HA uses a short-lived mutex (see § Operation
+Mutex in HA_ADAPTER_SPEC).
+
+**Why the session clear:** some firmware (observed on MB7621)
+invalidates the session during the reboot itself, but from our side
+the session object still looks valid. The next poll would reuse a
+dead cookie, get served a login page, and trip LOAD_AUTH. Clearing
+here forces the post-restart poll to authenticate fresh. Small cost
+(one extra auth), guaranteed-clean handoff.
+
+**Bypasses the auth circuit breaker.** The user is asking for a
+restart; blocking that because credentials were recently wrong
+doesn't help them.
+
+**UX gating is the consumer's responsibility.** Core provides no
+gate. HA disables the restart button via its own `active_operation`
+mutex for the duration of each press (seconds). It does NOT gate
+on `recovery_active` — a user watching a flakey modem after a
+restart is allowed to try again. See HA_ADAPTER_SPEC § Operation
+Mutex.
+
+### Logging Contract
+
+Every line includes `[MODEL]`. Two lines total — the command is
+one-shot.
+
+- INFO: `"Restart command sent [MODEL] — session cleared (0.4s)"`
+- ERROR: `"Restart command failed [MODEL]: <exc>"`
+
+---
+
+## Recovery
+
+The modem is in **recovery** when it isn't operating normally and
+we believe it may return. Recovery is purely a *polling-cadence
+concern* — it adjusts how the consumer's poll cadence behaves for a
+bounded window. It does **not** produce UX state, does **not**
+short-circuit polls, and does **not** compete with the collector.
+
+The `ModemSnapshot` always reflects what the modem actually reported
+on the last poll (Unreachable, transitional docsis, Operational).
+Consumers render snapshot truth, not a synthetic "Recovering" label.
+
+Recovery lives in `orchestration/recovery.py` as a small module
+wired into the orchestrator at construction. The orchestrator
+delegates to it on every poll and on command dispatch; other modules
+(collector, parser, signals, HA adapter) don't know it exists.
+
+### Triggers
+
+Three ways to enter a recovery window:
+
+1. **Command dispatched** — `restart()` calls `recovery.begin(reason="restart_command")`
+   after the command lands.
+2. **Observed outage** — the orchestrator's connectivity policy
+   engages (N consecutive poll failures, see § Signal → Policy). On
+   engage, it calls `recovery.begin(reason="connectivity_outage")`.
+3. **Reboot-signal check** — `recovery.evaluate_snapshot(modem_data)`
+   runs on every successful poll and consults the 2-of-3 signal
+   rule (see § Reboot-Signal Trigger). If the rule fires, it enters
+   a window with `reason="reboot_signals:<matched>"`.
+
+All three reach the same code path. The reason string is diagnostic
+only; it affects log lines, not policy.
+
+### Behavior during a window
+
+While `recovery.active` is True:
+
+- The recovery module fires its observer on the False→True
+  transition so consumers can switch to the recovery cadence
+  immediately (HA drops `coordinator.update_interval` to its
+  recovery-adapter cadence; see HA_ADAPTER_SPEC § Recovery Adapter).
+- Polls run normally — no short-circuit, no special guard. The
+  orchestrator doesn't know it's in a recovery window when it
+  returns a snapshot.
+- The collector preserves its session across polls (implemented via
+  `skip_logout=True` on `collector.execute()`). Rapid polling
+  without logout + re-auth avoids hammering firmware anti-brute-force
+  thresholds.
+- If the session dies mid-window (LOAD_AUTH observed), the normal
+  signal policy kicks in — session is cleared, next poll
+  re-authenticates fresh. The window continues.
+
+### Exit
+
+The window runs to completion — it always lasts
+`_RECOVERY_WINDOW_SECONDS`. Early exit was considered and rejected:
+it would re-introduce inference ("this snapshot looks operational,
+clear the window") and add no measurable benefit — a few extra fast
+polls at the tail of a window cost nothing.
+
+On expiry:
+
+- Recovery fires its observer on the True→False transition so
+  consumers can restore normal cadence.
+- `recovery.active` returns False.
+- The next poll runs at normal cadence.
+
+The snapshot at that point is whatever the modem is currently
+reporting — Operational, Unreachable, Denied, whatever. Consumers
+render it honestly.
+
+**Re-entry during a window** depends on the trigger path:
+
+- **Explicit `begin()` call** (from `restart()`) — the window is
+  re-started. The elapsed clock resets, the reason is updated, the
+  observer fires again (False→True is a no-op on the
+  already-True flag, but HA's listener is idempotent — it sets
+  the cadence to the fast value either way). Rationale: a user
+  who re-pressed restart wants a fresh observation window.
+- **`evaluate_snapshot()` / `evaluate_failure()`** (internal
+  triggers from the reboot-signal check and connectivity) — no-op while
+  `active` is True. The running window's reason and timer are
+  preserved. Rationale: automated signals shouldn't keep extending
+  a window indefinitely.
+
+### Timing
+
+Recovery timing is **generic, not per-modem**. Bench-tuning per
+modem was tried and removed; DOCSIS ranging variance is already
+handled adaptively by polling through the window at a short
+cadence.
+
+| Constant | Default | Purpose |
+|----------|---------|---------|
+| `Recovery.WINDOW_SECONDS` | `180` | Duration of an aggressive-polling window. Covers the longest observed DOCSIS 3.1 ranging time with headroom. |
+
+The constant is a class attribute on `Recovery` — matching the
+`AUTH_FAILURE_THRESHOLD` pattern on `Orchestrator` and `SignalPolicy`
+— so tests and future tuning have a named public handle without
+reaching across a module-private boundary.
+
+The inter-poll interval during a window is **not** a Core concern —
+Core doesn't own scheduling. HA sets its coordinator's
+`update_interval` to a fast cadence when the recovery observer
+fires (see HA_ADAPTER_SPEC § Recovery Adapter); Core just exposes
+`recovery_active` and fires the observer.
+
+Future versions may expose the window duration as a user-configurable
+option. For v3.14, it's a class constant.
+
+### Reboot-Signal Trigger
+
+A simple 2-of-3 vote on signals from a successful poll. Implemented
+as a private method `_check_reboot_signals(modem_data)` on the
+`Recovery` class — not a separate module. The state it needs
+(previous counter totals, previous uptime reading, previous docsis
+status) lives on `Recovery` alongside the window state.
+
+Signals:
+
+- **Counter reset** — current `total_corrected` or `total_uncorrected`
+  dropped below the previous poll's value.
+- **Uptime drop** — modem-reported `system_uptime` decreased from
+  the previous poll. Only evaluated when the modem exposes the
+  field.
+- **Transitional docsis** — `docsis_status` just *entered* a
+  ranging-like state (Denied, not_locked, partial_lock) from a
+  stable state (Operational, or the initial "unknown"). This signal
+  is **edge-triggered**, not level-triggered: a modem chronically
+  stuck in partial_lock fires the signal once on first observation
+  and then stays quiet on subsequent polls. Level triggering was
+  tried and rejected — it false-positived on chronically-unlocked
+  modems when paired with a benign event like a user clearing error
+  counters via the modem's web UI. Edge triggering aligns the
+  signal with what actually accompanies a reboot (entry to a
+  transitional state from stable), at the cost of missing reboots
+  of modems that were already stuck and stay stuck through the
+  reboot — an edge-of-edge case covered by the other two signals
+  and by the commanded-restart and connectivity-outage paths.
+
+Rule: if **two or more** signals are True, `evaluate_snapshot`
+opens a recovery window with reason
+`"reboot_signals:<matched_signals>"` (e.g.
+`"reboot_signals:counter_reset+transitional_docsis"`). A single
+signal does NOT trigger — false positives are easy from firmware
+stats-clear commands, clock drift, signal issues, etc.
+
+This is a threshold vote, not inference. No weights, no
+probabilities, no judgment. Even if all three match and the modem
+didn't actually reboot, the only consequence is polling faster for
+`_RECOVERY_WINDOW_SECONDS`. No UX fiction, no misleading labels,
+no coordinator timeouts.
+
+Modems that don't expose the relevant fields simply don't trigger
+via this path. That's fine — commanded restarts and observed
+outages still enter recovery through their own paths.
+
+**Future:** per-modem or user-level opt-out for the reboot-signal
+trigger. Not wired for v3.14.
 
 ### Public API
 
 ```python
-class RestartMonitor:
+class Recovery:
     def __init__(
         self,
         collector: ModemDataCollector,
-        health_monitor: HealthMonitor | None,
-        response_timeout: int = 120,
-        channel_stabilization_timeout: int = 300,
-        probe_interval: int = 10,
+        modem_config: ModemConfig,
+        *,
+        on_state_change: Callable[[], None] | None = None,
     ) -> None:
-        """Initialize restart monitor.
-
-        The collector carries the modem's per-request HTTP timeout
-        (modem_config.timeout) — each recovery probe inherits it.
-        The parameters below control recovery behavior and are set
-        by the client (user config), not modem.yaml, because
-        tolerance varies by user and firmware version even for the
-        same modem model.
+        """Initialize the recovery module.
 
         Args:
-            collector: ModemDataCollector for channel stabilization
-                polling and as fallback for response detection when
-                health probes are unavailable. Session is cleared
-                before monitoring starts.
-            health_monitor: HealthMonitor for lightweight response
-                detection (ICMP or HTTP HEAD). None if the modem
-                doesn't support either probe — falls back to the
-                collector for response detection.
-            response_timeout: How long to wait for the modem to come
-                back online after a restart, in seconds. During this
-                window the monitor probes the modem repeatedly — each
-                probe will fail (connection refused, timeout) until the
-                modem's web server is back up. Any successful probe
-                ends this window. Default 120s. Increase for modems
-                with slow boot sequences (some DOCSIS 3.1 modems take
-                90+ seconds).
-            channel_stabilization_timeout: After the modem responds,
-                how long to wait for downstream and upstream channel
-                counts to stop changing, in seconds. When a modem
-                reboots, it often comes back with partial channels
-                (e.g., 8 DS) that increase over 30-60 seconds as
-                DOCSIS ranging and registration complete (e.g., 24 DS).
-                Reporting "online" too early gives the user incomplete
-                data. Set to 0 to skip this entirely and resume normal
-                polling as soon as the modem responds — useful for
-                fragile modems where continued probing during recovery
-                risks another crash. Default 300s.
-            probe_interval: How often to probe the modem during
-                recovery, in seconds. Applies to both response
-                detection and channel stabilization. Lower values
-                detect recovery faster but put more load on the modem.
-                Default 10s. Increase for modems that are sensitive to
-                frequent requests (e.g., S33v2 firmware that crashes
-                under repeated HNAP traffic).
+            collector: Used to pass ``skip_logout=True`` during window
+                polls (the orchestrator controls the actual call; the
+                recovery module only sets a flag the orchestrator
+                reads).
+            modem_config: Read for model name (logging) and for any
+                future per-modem recovery opt-out.
+            on_state_change: Callback fired on False→True and True→False
+                transitions. Runs on the poll thread; callbacks must
+                be thread-safe. None disables notification.
         """
 
-    def monitor_recovery(
-        self,
-        cancel_event: threading.Event | None = None,
-    ) -> RestartResult:
-        """Run restart recovery.
+    @property
+    def active(self) -> bool:
+        """True while a recovery window is open."""
 
-        Wait for response:
-            Probe the modem until it responds. Uses HealthMonitor
-            (ICMP/HEAD) if available, otherwise falls back to the
-            collector. Any successful response — even a login page
-            or zero channels — means the modem is back. Timeout if
-            no response within response_timeout.
+    def begin(self, reason: str) -> None:
+        """Open a recovery window, or re-open an existing one.
 
-        Wait for channel stabilization (if enabled):
-            Poll via the collector until downstream and upstream
-            channel counts are stable. A modem often comes back with
-            partial channels that increase as DOCSIS registration
-            completes. After channel counts are stable for 3
-            consecutive polls, a 30-second grace period runs to catch
-            late-arriving channels. Skipped entirely if
-            channel_stabilization_timeout is 0.
+        Always (re)starts the window — elapsed clock resets, reason
+        is updated. Called directly by ``restart()`` (the user
+        pressed restart, they want fresh fast-poll coverage).
+        Internal triggers (`evaluate_snapshot`, `evaluate_failure`)
+        must NOT call this while ``active`` is True — they have
+        their own no-op-when-active logic.
 
-        The collector's session is cleared at the start — the old
-        session from before the restart is dead.
-
-        The optional cancel_event enables cooperative cancellation.
-        The probe loop uses cancel_event.wait(probe_interval) instead
-        of time.sleep(), so setting the event causes the loop to exit
-        within one probe_interval. If cancel_event is None (default),
-        the monitor blocks until recovery completes or times out.
+        Fires the state-change observer — on a False→True transition,
+        and again on re-entry so HA's cadence listener can refresh
+        the ``async_request_refresh()`` kick.
 
         Args:
-            cancel_event: Optional threading.Event for cooperative
-                cancellation. Passed through from Orchestrator.restart().
+            reason: Diagnostic tag (``"restart_command"``,
+                ``"connectivity_outage"``, ``"reboot_signals:<matched>"``).
+                Used in log lines only.
+        """
 
-        Returns:
-            RestartResult with recovery status, phase reached, and timing.
+    def evaluate_snapshot(self, modem_data: ModemData) -> None:
+        """Run the reboot-signal check on a successful poll.
+
+        Called by the orchestrator after every successful poll.
+        Calls the private ``_check_reboot_signals`` (see § Reboot-
+        Signal Trigger) against the snapshot and the accumulated
+        history. Enters a window if the check returns a non-None
+        reason and no window is already active.
+
+        Always updates the history (previous counters, last uptime)
+        regardless of trigger outcome so the next call has current
+        baselines.
+        """
+
+    def evaluate_failure(self, result: ModemResult) -> None:
+        """React to a failed poll.
+
+        Called by the orchestrator on poll failures. Enters a window
+        when the connectivity policy has just engaged (the orchestrator
+        informs recovery; recovery does not read policy state
+        directly). No-op on non-connectivity failures.
+        """
+
+    def tick(self) -> None:
+        """Advance the window clock.
+
+        Called by the orchestrator on every poll (before or after
+        the poll itself — timing isn't load-bearing). Checks whether
+        the window's deadline has passed; if so, clears state and
+        fires the observer on the True→False transition.
         """
 ```
-
-### Recovery Flow
-
-```text
-monitor_recovery(cancel_event) called
- ├─ Clear collector session
- ├─ Wait for modem to respond
- │   ├─ Loop:
- │   │   ├─ Check cancel_event (if set → return early)
- │   │   ├─ Probe: health_monitor.ping() if available, else collector.execute()
- │   │   └─ cancel_event.wait(probe_interval) or time.sleep(probe_interval)
- │   ├─ Success: any response from the modem
- │   ├─ Timeout: response_timeout exceeded → RestartResult(timeout, WAITING_RESPONSE)
- │   └─ On success → continue to channel stabilization (if enabled)
- ├─ Wait for channel stabilization (skipped if channel_stabilization_timeout == 0)
- │   ├─ Loop:
- │   │   ├─ Check cancel_event (if set → return early)
- │   │   ├─ collector.execute() → track DS/US channel counts
- │   │   └─ cancel_event.wait(probe_interval) or time.sleep(probe_interval)
- │   ├─ After 3 consecutive stable counts → enter 30s grace period
- │   ├─ Grace period: continue polling, reset if counts change
- │   ├─ Grace period complete → RestartResult(success, COMPLETE)
- │   ├─ Timeout: channel_stabilization_timeout exceeded → RestartResult(timeout, CHANNEL_SYNC)
- │   └─ On stability + grace → RestartResult(success, COMPLETE)
- └─ Return RestartResult with elapsed_seconds
-```
-
-### State Ownership
-
-RestartMonitor is transient — created for one restart, discarded after.
-It holds no state across restarts. Channel count tracking and grace
-period state are internal to `monitor_recovery()`.
-
-| State | Purpose | Lifetime |
-|-------|---------|----------|
-| Recent channel counts | Stability detection (3 consecutive same counts) | Single `monitor_recovery()` call |
-| Grace period flag | 30s confirmation window after initial stability | Single `monitor_recovery()` call |
-| Timestamps | Timeout enforcement | Single `monitor_recovery()` call |
 
 ### Logging Contract
 
-- INFO: `"Restart recovery: waiting for modem to respond"`
-- INFO: `"Restart recovery: modem responding (12s), waiting for channel stabilization"`
-- DEBUG: `"Restart recovery: probe 3 — 18 DS, 4 US (stable: 2/3)"`
-- INFO: `"Restart recovery: channels stable (24 DS, 4 US), entering grace period"`
-- DEBUG: `"Restart recovery: probe 4 — 24 DS, 4 US (grace: 10s/30s)"`
-- INFO: `"Restart recovery: grace period complete, recovered in 45s"`
-- WARNING: `"Restart recovery: channel stabilization timeout after 300s (counts still changing)"`
+Every line includes `[MODEL]`. One line per state change; no
+per-poll noise.
+
+- INFO: `"Recovery window open [MODEL] — reason: restart_command"`
+- INFO: `"Recovery window open [MODEL] — reason: reboot_signals:counter_reset+transitional_docsis"`
+- INFO: `"Recovery window closed [MODEL] — elapsed: 182s, last snapshot docsis: Operational"` (the docsis value is the last one captured on a successful poll; during an outage that spanned the window, no successful polls means this value can be stale relative to window-close time)
+
+### Scope Guardrails (UC sources)
+
+| UC | Covers |
+|----|--------|
+| UC-40 | Restart button: command dispatches, returns quickly, recovery window opens |
+| UC-42 | (retired) — Core no longer refuses based on recovery state; HA mutex serializes rapid button presses |
+| UC-43 | `get_modem_data()` during a recovery window behaves normally — no short-circuit |
+| UC-44 | Raises `RestartNotSupportedError` when `actions.restart` is absent |
+| UC-45 | Restart bypasses circuit breaker |
+| UC-46 | (retired; no response-timeout phase in the new model) |
+| UC-78 | Data sensors go Unavailable only when the snapshot's ``modem_data`` is None |
+| UC-88 | Reboot-signal check matches on a scheduled poll → recovery window opens |
 
 ---
 

@@ -13,7 +13,6 @@ wiring logic only. Catalog validity is tested in the catalog test suite.
 from __future__ import annotations
 
 import logging
-from threading import Event
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -134,7 +133,6 @@ async def test_unload_entry_basic():
     hass.config_entries.async_entries.return_value = [MagicMock()]  # not last
 
     entry = MagicMock()
-    entry.runtime_data.cancel_event = None
 
     with patch("custom_components.cable_modem_monitor.async_unregister_services") as mock_unreg:
         result = await async_unload_entry(hass, entry)
@@ -144,22 +142,6 @@ async def test_unload_entry_basic():
     mock_unreg.assert_not_called()
 
 
-async def test_unload_entry_cancels_restart():
-    """Unload sets cancel_event when restart is in progress."""
-    hass = MagicMock()
-    hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
-    hass.config_entries.async_entries.return_value = [MagicMock()]
-
-    cancel_event = Event()
-    entry = MagicMock()
-    entry.runtime_data.cancel_event = cancel_event
-
-    with patch("custom_components.cable_modem_monitor.async_unregister_services"):
-        await async_unload_entry(hass, entry)
-
-    assert cancel_event.is_set()
-
-
 async def test_unload_entry_unregisters_services_on_last():
     """Last entry removal unregisters services."""
     hass = MagicMock()
@@ -167,7 +149,6 @@ async def test_unload_entry_unregisters_services_on_last():
     hass.config_entries.async_entries.return_value = []  # no entries left
 
     entry = MagicMock()
-    entry.runtime_data.cancel_event = None
 
     with patch("custom_components.cable_modem_monitor.async_unregister_services") as mock_unreg:
         await async_unload_entry(hass, entry)
@@ -477,6 +458,7 @@ async def test_setup_entry_happy_path():
         ),
         patch("custom_components.cable_modem_monitor._update_device_registry"),
         patch("custom_components.cable_modem_monitor.async_register_services"),
+        patch("custom_components.cable_modem_monitor.attach_recovery_cadence_listener") as mock_attach,
     ):
         result = await async_setup_entry(hass, entry)
 
@@ -488,6 +470,8 @@ async def test_setup_entry_happy_path():
     mock_data_coord.async_config_entry_first_refresh.assert_awaited_once()
     mock_health_coord.async_config_entry_first_refresh.assert_awaited_once()
     hass.config_entries.async_forward_entry_setups.assert_awaited_once()
+    # Recovery cadence listener is attached exactly once.
+    mock_attach.assert_called_once_with(hass, entry, mock_orch, mock_data_coord)
 
 
 # -----------------------------------------------------------------------

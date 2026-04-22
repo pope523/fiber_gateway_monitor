@@ -75,11 +75,11 @@ dev = ["solentlabs-cable-modem-monitor-core[mcp]"]
 
 The complete engine. Given a path to modem files and user credentials, Core
 does everything: loads config, authenticates, fetches data, parses responses,
-coordinates the poll cycle, and recovers from errors. The orchestrator is a
-scheduler and policy engine that delegates to specialized components
-(ModemDataCollector, HealthMonitor, RestartMonitor) — each independently testable
-with a clear input→output contract. Platform-agnostic — no `homeassistant.*`
-imports, no catalog imports.
+and signals policy decisions (including recovery). The orchestrator is a
+policy engine that delegates to specialized components (ModemDataCollector,
+HealthMonitor, Recovery) — each independently testable with a clear
+input→output contract. Platform-agnostic — no `homeassistant.*` imports,
+no catalog imports.
 
 Core is bounded by interfaces and abstract base classes. Concrete
 implementations live here too (auth strategies, resource loaders, actions),
@@ -99,7 +99,8 @@ but modem-specific behavior comes from config, not from Core code.
 | Orchestrator | Policy engine: signal→policy dispatch, circuit breaker, status derivation |
 | ModemDataCollector | Single collection cycle: auth → load → parse → `ModemData` or signal |
 | HealthMonitor | Health probes on independent cadence → `HealthInfo` |
-| RestartMonitor | Two-phase restart recovery: wait for response → wait for channel sync |
+| Restart action | `Orchestrator.restart()` — one-shot: authenticate, dispatch reboot command, clear session, trigger recovery, return |
+| Recovery | Cadence controller: opens a bounded aggressive-polling window on any trigger — commanded restart, observed outage, or a 2-of-3 reboot-signal check on a successful poll (counter reset, uptime drop, transitional docsis). Exposes `recovery_active` + observer. |
 | Auth Manager | Strategy dispatch, session reuse, backoff |
 | Modem loader | `load_modem_config(path, mfr, model, variant)` — knows the directory convention |
 | Catalog Manager | `list_modems(catalog_path)` → `list[ModemSummary]` — walks catalog, returns identity fields for config flow display and filtering |
@@ -828,16 +829,6 @@ If a `parser.py` post-processor exists, its `PostProcessor.process()`
 method runs after the config-driven extraction, allowing custom logic
 that parser.yaml can't express.
 
-### Stage 4: Post-Parse Filtering
-
-**Input:** `ModemData` dict, modem.yaml behaviors config
-**Output:** filtered `ModemData` dict
-**Component:** `filter_restart_window()`
-
-Optional. If modem.yaml declares `behaviors.zero_power_reported` and
-`behaviors.restart.window_seconds`, channels with zero power during
-the restart window are filtered out.
-
 ### Test Harness: Same Pipeline, HAR Replay
 
 The test harness (`test_harness/`) exercises this exact pipeline by
@@ -917,14 +908,15 @@ correctness must be established.
 
 After setup, the integration polls the modem on a user-configured cadence
 (default 10 minutes). The orchestrator is a policy engine that delegates
-execution to three specialized components. Consumers own scheduling —
+execution to specialized components. Consumers own scheduling —
 HA uses DataUpdateCoordinator, CLI tools use a loop.
 
 ```text
 Orchestrator (policy + composition)
- ├─ ModemDataCollector — one collection cycle → ModemData | signal
- ├─ HealthMonitor      — probe cycle → HealthInfo
- └─ RestartMonitor     — recovery cycle → complete | timeout
+ ├─ ModemDataCollector  — one collection cycle → ModemData | signal
+ ├─ HealthMonitor       — probe cycle → HealthInfo
+ ├─ Recovery            — bounded aggressive-poll window; cadence signal
+ └─ restart()           — one-shot: auth → action → clear session → trigger recovery
 ```
 
 **Orchestrator** — decides *what to do* with results. Owns all policy:
@@ -941,12 +933,24 @@ per invocation — the auth manager handles session reuse across calls.
 on its own cadence, independent of data polling. Returns `HealthInfo`.
 Lightweight — never triggers full auth or parsing.
 
-**RestartMonitor** — manages two-phase restart recovery after a planned
-restart (user button press) or unplanned restart (ISP/power). Phase 1:
-wait for modem to respond. Phase 2: wait for channel counts to stabilize.
-Used by both planned restarts (orchestrator dispatches restart action,
-then hands off to RestartMonitor) and unplanned restarts (orchestrator
-detects `unreachable → online` transition, hands off for phase 2).
+**Recovery** — manages a bounded "aggressive polling" window. Any of
+three triggers opens a window: commanded restart, observed
+connectivity outage, or a reboot-signal check on a successful
+poll. Core signals `recovery_active` via an observer callback so
+the consumer can switch its poll cadence. The window runs to a
+fixed duration and closes; Core never waits.
+
+The reboot-signal check (`_check_reboot_signals` on the Recovery
+class) is a simple 2-of-3 vote over observables: counter reset,
+uptime drop, transitional docsis. No weights, no probabilities. If
+two or more match on a successful poll, a window opens. A bug in
+the signal check cannot affect commanded-restart behavior, which
+enters recovery through a direct call.
+
+**`restart()`** — one-shot command: authenticate, dispatch the reboot
+action, clear the session, trigger a recovery window, return. It
+does not observe the reboot; the subsequent polls (at recovery
+cadence) report real modem state as the modem comes back.
 
 Protocol layers signal conditions (exceptions, return values); the
 orchestrator owns all policy (retry, backoff, error reporting). This

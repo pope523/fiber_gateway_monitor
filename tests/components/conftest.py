@@ -27,7 +27,6 @@ from solentlabs.cable_modem_monitor_core.orchestration.signals import (
     ConnectionStatus,
     DocsisStatus,
     HealthStatus,
-    RestartPhase,
 )
 
 from custom_components.cable_modem_monitor.const import (
@@ -278,12 +277,10 @@ def mock_orchestrator(
     orch = MagicMock()
     orch.get_modem_data.return_value = mock_modem_snapshot
     orch.supports_restart = True
-    orch.is_restarting = False
     orch.diagnostics.return_value = mock_orchestrator_diagnostics
     orch.restart.return_value = RestartResult(
         success=True,
-        phase_reached=RestartPhase.COMPLETE,
-        elapsed_seconds=120.0,
+        elapsed_seconds=3.5,
     )
     orch.reset_connectivity.return_value = None
     return orch
@@ -342,6 +339,5 @@ def mock_runtime_data(
         health_coordinator=mock_health_coordinator,
         orchestrator=mock_orchestrator,
         health_monitor=mock_health_monitor,
-        cancel_event=None,
         modem_identity=mock_modem_identity,
     )

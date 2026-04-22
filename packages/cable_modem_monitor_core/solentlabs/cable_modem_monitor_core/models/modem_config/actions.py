@@ -61,18 +61,3 @@ class ActionsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     restart: ActionConfig | None = None
     logout: ActionConfig | None = None
-
-
-class BehaviorsRestartConfig(BaseModel):
-    """Restart behavior config."""
-
-    model_config = ConfigDict(extra="forbid")
-    window_seconds: int = 300
-
-
-class BehaviorsConfig(BaseModel):
-    """Action behaviors."""
-
-    model_config = ConfigDict(extra="forbid")
-    restart: BehaviorsRestartConfig | None = None
-    zero_power_reported: bool = False

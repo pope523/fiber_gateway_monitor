@@ -308,7 +308,7 @@ If LOAD_AUTH persists (6 consecutive):
 - Collector.execute() was NOT called
 - No HTTP traffic to the modem
 - ERROR log: "Circuit breaker is OPEN — polling stopped..."
-- `is_restarting == False` (circuit breaker is different from restart)
+- `recovery_active == False` (circuit breaker is a separate concern from recovery)
 
 ---
 
@@ -645,91 +645,91 @@ Modem has come back online.
 
 ## Restart
 
-### UC-40: Planned restart — full two-phase recovery
+### UC-40: Restart — one-shot command
 
-**Preconditions:** modem.yaml declares `actions.restart`. Modem is online.
+**Preconditions:** modem.yaml declares `actions.restart`. Modem is
+online. Recovery is not currently active.
 
-| Step | Action | State change | Observable |
-|------|--------|-------------|------------|
-| 1 | Consumer calls `restart()` | is_restarting=True | |
-| 2 | Orchestrator: authenticate (fresh session) | | |
-| 3 | Orchestrator: execute restart action | | |
-| 4 | Connection drop during request = success | | |
-| 5 | Orchestrator: clear_session() | session cleared | |
-| 6 | Create RestartMonitor, call monitor_recovery() | | |
-| 7 | Phase 1: probe every 10s until modem responds | | |
-| 8 | Modem responds at ~90s | | |
-| 9 | Phase 2: poll for channel stabilization | | |
-| 10 | 3 consecutive stable counts + 30s grace | | |
-| 11 | Return `RestartResult(success=True, COMPLETE, 150s)` | is_restarting=False | |
+| Step | Action | Observable |
+|------|--------|------------|
+| 1 | Consumer calls `orchestrator.restart()`. | |
+| 2 | Orchestrator authenticates (fresh session), executes `actions.restart`, clears session. Connection drop during the request counts as success. | INFO log: `"Restart command sent [MODEL] — session cleared (<elapsed>s)"` |
+| 3 | Orchestrator calls `recovery.begin(reason="restart_command")`. The recovery window opens. | INFO log: `"Recovery window open [MODEL] — reason: restart_command"`; observer fires; HA switches coordinator cadence to the recovery interval. |
+| 4 | `restart()` returns. Total elapsed typically 2–5 s. | No further log from `restart()`; window runs on its own. |
+| 5 | Coordinator polls at recovery cadence. Snapshots reflect reality (UNREACHABLE while the modem is down, Denied/Not-Locked while ranging, Operational once back). | Status sensor displays whatever the modem reports at each poll. |
+| 6 | Recovery window expires after `Recovery.WINDOW_SECONDS`. Observer fires; HA restores normal cadence. | INFO log: `"Recovery window closed [MODEL] — elapsed: <N>s, last snapshot docsis: <value>"` |
 
 **Assertions:**
 
 - `result.success == True`
-- `result.phase_reached == COMPLETE`
-- `result.elapsed_seconds > 0`
-- `orchestrator.is_restarting == False` after return
-- Session was cleared (old pre-restart session is dead)
+- `result.error == ""`
+- `result.elapsed_seconds > 0` (typically < 5 s)
+- `orchestrator.recovery_active == True` when `restart()` returns
+- The pre-restart session was cleared (next poll authenticates fresh)
+- `restart()` does NOT poll the modem after sending the command
 
 ---
 
-### UC-41: Restart cancel — clean shutdown
+### UC-41: (retired)
 
-**Preconditions:** Restart in progress (phase 1). Consumer needs to stop.
+Restart has no cancel path under the new model — the call is
+one-shot and returns in a few seconds. There is nothing long-running
+to cancel. If HA unloads mid-call, the in-flight `execute_action`
+completes (or raises); either way `restart()` returns promptly.
 
-| Step | Action | State change | Observable |
-|------|--------|-------------|------------|
-| 1 | Consumer calls `restart(cancel_event)` | is_restarting=True | |
-| 2 | Phase 1: probing for response | | |
-| 3 | Consumer sets `cancel_event` (e.g., HA unloading) | | |
-| 4 | RM: cancel_event.wait(probe_interval) returns immediately | | |
-| 5 | RM: cancel_event.is_set() → exit loop | | |
-| 6 | Return `RestartResult(success=False, WAITING_RESPONSE, 45s)` | is_restarting=False | |
+The recovery window, which runs after `restart()` returns, is
+driven by the consumer's normal polling schedule. HA's coordinator
+unload stops scheduled polls, which stops the window's observed
+behavior — no explicit cancel primitive required.
+
+---
+
+### UC-42: Restart during recovery — allowed
+
+**Preconditions:** A recovery window is open (`recovery_active == True`),
+from any trigger (commanded restart, observed outage, reboot-signal check).
+User observes a flakey modem and wants to try restarting again.
+
+| Step | Action | Observable |
+|------|--------|------------|
+| 1 | Consumer calls `restart()` while recovery is active. | |
+| 2 | Orchestrator proceeds normally — authenticates, executes the action, clears session, calls `recovery.begin()`. | If modem is reachable and accepts the command: reboot re-triggers, recovery window restarts. If modem is unreachable: `error="command_failed"` returned. |
 
 **Assertions:**
 
-- `result.success == False`
-- `result.phase_reached == WAITING_RESPONSE` (or wherever cancel was detected)
-- Return happens within one probe_interval of cancel being set
-- `is_restarting == False` after return (cleanup happens regardless)
+- Core does not raise based on `recovery_active`.
+- The command either dispatches or fails honestly; the caller sees
+  the outcome via `RestartResult`.
+- `recovery.begin()` is called on success regardless of prior window
+  state — an already-open window is re-started (fresh elapsed clock,
+  updated reason). Rationale: the user's re-press expresses intent
+  to give the modem fresh fast-poll coverage.
+- Consumer-layer serialization (HA mutex) prevents concurrent
+  `restart()` calls from the same button, but deliberate re-presses
+  after the mutex clears are allowed.
 
 ---
 
-### UC-42: Restart during restart — rejected
+### UC-43: Poll during recovery — no short-circuit
 
-**Preconditions:** Restart already in progress.
-
-| Step | Action | State change | Observable |
-|------|--------|-------------|------------|
-| 1 | Consumer calls `restart()` | | |
-| 2 | Orchestrator: is_restarting=True → reject | No state change | |
-| 3 | Return `RestartResult(success=False, error="...")` | | |
-
-**Assertions:**
-
-- No second restart command sent to modem
-- `result.success == False`
-- `result.error` indicates restart already in progress
-- Original restart continues unaffected
-
----
-
-### UC-43: Poll during restart — short-circuit
-
-**Preconditions:** Restart in progress.
+**Preconditions:** Recovery window is open (`recovery_active == True`).
 
 | Step | Action | State change | Observable |
 |------|--------|-------------|------------|
 | 1 | Consumer calls `get_modem_data()` | | |
-| 2 | Orchestrator: is_restarting=True → return early | No collection | |
-| 3 | Return `ModemSnapshot(UNREACHABLE)` | | |
+| 2 | Orchestrator runs the normal poll sequence. No special guard. | Collector executes; result reflects reality. | |
+| 3 | On success: snapshot carries whatever status the modem reported (ONLINE, NO_SIGNAL, etc.). On failure: UNREACHABLE or AUTH_FAILED as normal. | | |
+| 4 | Orchestrator calls `recovery.evaluate_snapshot()` or `recovery.evaluate_failure()` as usual; the already-open window is not re-entered. | | |
 
 **Assertions:**
 
-- Collector.execute() NOT called (no HTTP traffic to rebooting modem)
-- Auth failure streak NOT incremented
-- No backoff applied
-- `snapshot.connection_status == UNREACHABLE` (accurate — modem is rebooting)
+- `collector.execute()` IS called (the point of recovery cadence is to
+  poll more often, not to stop polling)
+- Snapshot reflects actual modem state — no synthetic `RESTARTING`
+  status
+- Recovery module does not alter the snapshot in any way
+- Auth failures during recovery are handled by the normal signal
+  policy (no special bypass)
 
 ---
 
@@ -745,23 +745,24 @@ Modem has come back online.
 **Assertions:**
 
 - `RestartNotSupportedError` raised
-- `is_restarting` never set to True
-- Platform adapter should prevent this by checking config before exposing restart
+- No side effects (no recovery window, no modem traffic)
+- Platform adapter should prevent this by checking
+  `supports_restart` before exposing the button
 
 ---
 
 ### UC-45: Restart bypasses circuit breaker
 
 **Preconditions:** Circuit breaker is open (persistent auth failures).
-User presses restart button.
+User presses restart button. Recovery is not active.
 
 | Step | Action | State change | Observable |
 |------|--------|-------------|------------|
 | 1 | Consumer calls `restart()` | | |
 | 2 | Orchestrator: does NOT check circuit breaker | | |
 | 3 | Orchestrator: authenticates with fresh session | | |
-| 4 | If auth succeeds: restart proceeds normally | | |
-| 5 | If auth fails: restart fails with clear error | | |
+| 4 | If auth succeeds: command dispatches, recovery window opens. | | |
+| 5 | If auth fails: `restart()` returns `error="command_failed"`. No recovery window opens. | | |
 
 **Assertions:**
 
@@ -772,94 +773,48 @@ User presses restart button.
 
 ---
 
-### UC-46: Restart — phase 1 timeout
+### UC-46: (retired)
 
-**Preconditions:** Restart command sent. Modem never comes back
-(hardware failure, power still out).
-
-| Step | Action | State change | Observable |
-|------|--------|-------------|------------|
-| 1 | Phase 1: probe every 10s for response_timeout (120s default) | | |
-| 2 | All probes fail (connection refused / timeout) | | |
-| 3 | response_timeout exceeded | | |
-| 4 | Return `RestartResult(success=False, WAITING_RESPONSE, 120s)` | is_restarting=False | |
-
-**Assertions:**
-
-- `result.success == False`
-- `result.phase_reached == WAITING_RESPONSE`
-- Total time ~= response_timeout
-- WARNING log: "Restart recovery: response timeout..."
+Restart has no probe loop and no response timeout under the new
+model. The command either dispatches (success) or raises
+(`error="command_failed"`). If the modem never comes back after the
+command, that shows up through normal polling during the recovery
+window (UNREACHABLE snapshots until/unless the modem returns, or
+until the window elapses and the coordinator falls back to normal
+cadence).
 
 ---
 
-### UC-47: Restart — phase 2 timeout
+### UC-49: Unplanned restart detection via normal polling
 
-**Preconditions:** Modem responded (phase 1 passed). Channels never
-stabilize (keep changing, DOCSIS registration never completes).
-
-| Step | Action | State change | Observable |
-|------|--------|-------------|------------|
-| 1 | Phase 2: poll every 10s for channel_stabilization_timeout (300s) | | |
-| 2 | Channel counts keep changing (8 DS → 16 DS → 20 DS → 18 DS...) | | |
-| 3 | Never get 3 consecutive stable counts | | |
-| 4 | channel_stabilization_timeout exceeded | | |
-| 5 | Return `RestartResult(success=False, CHANNEL_SYNC, 420s)` | is_restarting=False | |
-
-**Assertions:**
-
-- `result.phase_reached == CHANNEL_SYNC` (not WAITING_RESPONSE)
-- Total time ~= response_timeout + channel_stabilization_timeout
-- WARNING log: "Channel stabilization timeout..."
-
----
-
-### UC-48: Restart — skip phase 2
-
-**Preconditions:** Fragile modem (e.g., S33v2). Consumer configured
-`channel_stabilization_timeout=0` to minimize post-restart probing.
-
-| Step | Action | State change | Observable |
-|------|--------|-------------|------------|
-| 1 | Phase 1: modem responds at 90s | | |
-| 2 | Phase 2: skipped (timeout=0) | | |
-| 3 | Return `RestartResult(success=True, COMPLETE, 90s)` | | |
-
-**Assertions:**
-
-- No channel stabilization polling occurs
-- Result is COMPLETE immediately after response detection
-- Total time ~= time until first response
-
----
-
-### UC-49: Unplanned restart detection
-
-**Preconditions:** Modem was restarted externally (ISP, power outage).
-No restart command sent. Normal polling discovers the outage.
+**Preconditions:** Modem was restarted externally (ISP, power
+outage, firmware push). No restart command sent. The reboot-signal
+check does not fire (signals don't match, or the check is disabled).
+Normal polling discovers the outage through the connectivity policy.
 
 | Poll | What happens | Status |
 |------|-------------|--------|
 | N | Normal poll → ONLINE | ONLINE |
-| N+1 | ConnectionError → CONNECTIVITY (streak=1, backoff=1) | UNREACHABLE |
-| N+2 | Connectivity backoff skip | UNREACHABLE |
-| N+3 | Backoff cleared, modem back → LOAD_AUTH → clear session | AUTH_FAILED |
-| N+4 | Fresh login → success | ONLINE |
+| N+1 | ConnectionError → CONNECTIVITY (streak=1, backoff=1). Orchestrator calls `recovery.evaluate_failure()`; recovery opens a window on connectivity-outage threshold. | UNREACHABLE |
+| N+2..k | Coordinator polls at recovery cadence. All polls UNREACHABLE while the modem is down. | UNREACHABLE |
+| N+k+1 | Modem back, LOAD_AUTH on stale session → clear session | AUTH_FAILED |
+| N+k+2 | Fresh login → success | ONLINE |
+| After window expires | Coordinator returns to normal cadence regardless of current state. | whatever modem reports |
 
 **Assertions:**
 
-- No RestartMonitor involved — normal polling handles recovery
-- UNREACHABLE → ONLINE transition logged
+- No `restart()` call involved — normal polling handles it
+- Recovery window opens from the connectivity trigger, accelerates
+  polling so the return is seen quickly
 - Stale session self-corrects via LOAD_AUTH → clear → fresh login
-- Connectivity backoff reduces wasted timeouts during outage
-- LOAD_AUTH resets connectivity state (modem responded)
+- UNREACHABLE → ONLINE transition logged
 - Health checks (if running) detect the outage faster than data polls
 
 **Alternative path (IP-based session):**
 
 | Poll | What happens | Status |
 |------|-------------|--------|
-| N+3 | Modem back, accepts stale cookies (or IP-based) → success | ONLINE |
+| N+k+1 | Modem back, accepts stale cookies → success | ONLINE |
 
 No LOAD_AUTH step needed. Both paths are valid.
 
@@ -1026,15 +981,16 @@ yet known to be blocked).
 **Assertions:**
 
 - Health checks continue independently during restart
-- Health thread and RestartMonitor may both call ping() — this is fine
+- Health thread and `restart()` may both call ping() — this is fine
   (stateless probes, atomic `_latest` update under GIL)
 - Health sensors update in real-time during restart recovery
-- No coordination needed between health timer and restart monitor
-- The consumer's health recovery listener (UC-84 step 6a) will fire when
-  health transitions to RESPONSIVE during restart — the resulting immediate
-  poll is harmlessly swallowed by the `_is_restarting` guard (UC-43).
-  The consumer's explicit post-restart refresh (after `restart()` returns)
-  is the actual recovery poll, not the health-triggered one.
+- No coordination needed between health timer and restart procedure
+- The consumer's health recovery listener (UC-84 step 6a) may fire
+  during a recovery window if the modem answers health probes
+  before the window elapses. The resulting immediate poll is just
+  another poll — it runs normally and updates the snapshot. No
+  special coordination with `restart()` is needed because
+  `restart()` is already done; recovery is purely a cadence concern.
 
 ---
 
@@ -1158,7 +1114,7 @@ sequenceDiagram
 
     alt restart in progress
         C->>C: cancel_event.set()
-        Note over O: restart() returns within one probe_interval
+        Note over O: restart() returns within one probe cycle
     end
 
     C->>C: Cancel health polling
@@ -1183,29 +1139,33 @@ sequenceDiagram
     participant O as Orchestrator
 
     U->>C: Trigger restart action
-    C->>C: Check orchestrator.is_restarting
+    C->>C: Acquire active_operation = "restart" (HA mutex)
 
-    alt already restarting
-        C->>U: "Restart already in progress"
+    alt active_operation already held
+        C->>U: "Operation in progress — try again"
     else
-        C->>C: Disable restart action in UI
-        C->>C: Store cancel_event for teardown
-        C->>O: restart(cancel_event) in thread
-        Note over O: Blocks for up to 420s
+        C->>O: restart() in thread
+        Note over O: Returns in 2–5s
         O-->>C: RestartResult
-        C->>C: Re-enable restart action
-        C->>C: Notify user (success/warning/timeout)
-        C->>C: Trigger immediate data refresh
+        C->>U: Persistent notification — "Restart command sent"
+        C->>C: active_operation cleared; button re-enabled
+        Note over O: recovery_active is True; observer fired
+        Note over C: Adapter switches coordinator to recovery cadence
     end
 ```
 
 **Assertions:**
 
-- Restart action disabled while running (prevents double-trigger)
-- `restart()` runs in a thread (doesn't block consumer's event loop)
-- cancel_event stored so teardown can interrupt if needed
-- User notified of result
-- Immediate data refresh after restart for fresh readings
+- Restart button is disabled only while `active_operation` is held
+  (~2–5 s). It is NOT gated on `recovery_active` — the user may
+  retry after observing the dashboard.
+- `restart()` runs in a thread (keeps HA's event loop free) but
+  returns quickly
+- User notified that the command was sent — not that it succeeded
+- No "immediate data refresh after restart" — the recovery window
+  handles that by polling at a faster cadence
+- The dashboard reflects real modem state throughout (Unreachable,
+  transitional, Operational) — no synthetic label
 
 ---
 
@@ -1334,9 +1294,10 @@ health: 30s).
 
 ---
 
-### UC-78: Data availability during restart
+### UC-78: Data availability during a recovery window
 
-**Preconditions:** Normal operation. Restart initiated.
+**Preconditions:** A recovery window is active (`recovery_active == True`),
+from any trigger (commanded restart, observed outage, reboot-signal check).
 
 ```mermaid
 sequenceDiagram
@@ -1345,38 +1306,45 @@ sequenceDiagram
     participant O as Orchestrator
 
     U->>C: Trigger restart
-    C->>O: restart(cancel_event)
-    Note over O: is_restarting=True
+    C->>O: restart()
+    O-->>C: RestartResult(success=True)  -- ~2–5s
+    Note over O: recovery_active flips True; observer fires
+    C->>C: Switch coordinator to recovery cadence
 
-    loop During restart
-        O-->>C: ModemSnapshot(UNREACHABLE, modem_data=None)
-        C->>C: Status: "Unreachable"
-        C->>C: Health: UNRESPONSIVE
-        C->>C: Channel data: unavailable
+    loop Recovery cadence (fast)
+        C->>O: get_modem_data()
+        O-->>C: ModemSnapshot(<actual state>, modem_data=<actual or None>)
+        C->>C: Status renders actual state (Unreachable / Denied / Operational)
+        C->>C: Data sensors Unavailable only when modem_data is None
+        C->>C: Health: independent probe cadence
     end
 
-    O-->>C: Modem recovers
-    O-->>C: ModemSnapshot(ONLINE, modem_data=populated)
-    C->>C: All data available
+    Note over O: Window expires; recovery_active flips False; observer fires
+    C->>C: Restore normal cadence
 ```
 
-| Step | Action | State change | Observable |
-|------|--------|-------------|------------|
-| 1 | User triggers restart | is_restarting=True | |
-| 2 | get_modem_data() returns ModemSnapshot(UNREACHABLE, modem_data=None) | | |
-| 3 | Status: always derivable, shows "Unreachable" | | Shows restart state |
-| 4 | Health: always available (independent probes) | | Shows UNRESPONSIVE during reboot |
-| 5 | Channel data: unavailable (modem_data is None) | | No channel readings |
-| 6 | Modem recovers, first successful poll | modem_data populated | |
-| 7 | Channel data: available again | | Fresh readings |
+| Step | Action | Observable |
+|------|--------|------------|
+| 1 | Recovery window opens (from any trigger). `recovery_active` flips True; observer fires. | Consumer switches to recovery cadence |
+| 2 | Coordinator polls at recovery cadence. Each poll runs normally. | Snapshot reflects real modem state (Unreachable / transitional / Operational) |
+| 3 | Data sensors read Unavailable when `modem_data is None` (poll failed). Otherwise they render the snapshot's values as usual. | Data sensors honest to reality |
+| 4 | Health sensors keep running on their independent coordinator. | Report whatever probes observe |
+| 5 | Window expires. `recovery_active` flips False; observer fires. | Consumer restores normal cadence |
 
 **Assertions:**
 
-- Status is always derivable — reports accurate state throughout restart
-- Health probes run independently — report probe results throughout
-- Channel data unavailable when modem_data is None (gap in time series)
-- Consumer decides how to surface unavailability (e.g., HA uses entity availability, CLI might show dashes)
-- Restart/refresh actions remain available throughout
+- Status sensor renders whatever the snapshot reports — Unreachable,
+  Denied, Operational — not a synthetic "Restarting…" label.
+- Data sensors flip to **Unavailable** only when `modem_data is None`
+  (poll failed, which is the same rule as during any unreachable
+  period — no recovery-specific special case).
+- Health probes run on their own coordinator and are unaffected by
+  recovery state.
+- Core does not push extra updates during recovery. The coordinator
+  just polls faster; each poll drives its own update.
+- Restart button is disabled only for the duration of the
+  `active_operation` mutex (~2–5 s per press). A user who observes
+  a flakey modem mid-window may re-press restart; see UC-42.
 
 ---
 
@@ -1746,3 +1714,57 @@ rejecting the login itself.
 > UC-87 is the target. Implementation requires lowering the circuit
 > breaker threshold for AUTH_FAILED signals specifically, while
 > preserving tolerance for LOAD_AUTH self-correction.
+
+### UC-88: Reboot-signal trigger
+
+**Preconditions:** Integration polling normally. The ISP pushes new
+firmware, the user power-cycles the modem, or the modem reboots
+itself from watchdog. No HA-layer restart was issued. The modem
+returns to answering polls before the user's next scheduled poll
+(otherwise the connectivity trigger would catch it instead — see
+UC-49).
+
+| Poll | What happens | `recovery_active` | Coordinator interval |
+|------|-------------|-------------------|---------------------|
+| N    | Normal poll — counters = (500, 50), docsis = Operational | False | user-configured (e.g., 15 min) |
+| N+1  | Successful poll: counters = (0, 0), docsis = Denied. Reboot-signal check matches (counter reset + transitional docsis = 2 of 3); recovery opens a window with reason `reboot_signals:counter_reset+transitional_docsis`. Observer fires. | **True** | Switches to recovery cadence (e.g., 30 s) |
+| N+2..k | Polls run at recovery cadence. Snapshots reflect actual modem state (ranging → operational). Window is NOT closed by operational snapshot — it runs its full duration. | True | recovery cadence |
+| N+k+1 | `_RECOVERY_WINDOW_SECONDS` elapsed; window closes. Observer fires. | False | Restored to user-configured |
+
+**Core behavior:** The reboot-signal check runs inside
+`Recovery.evaluate_snapshot()` on every successful poll. It's a
+2-of-3 vote over counter reset, uptime drop, transitional docsis
+and returns a trigger reason or None. Recovery opens a window when
+the reason is non-None and no window is already active. See
+ORCHESTRATION_SPEC § Reboot-Signal Trigger for the signal set.
+
+**HA behavior:** The observer fires the `recovery_state_changed`
+dispatcher signal. Listeners respond:
+
+1. The data coordinator's `update_interval` switches to the
+   recovery cadence on entry, restores on exit. On entry, HA calls
+   `async_request_refresh()` so the first fast-cadence poll happens
+   immediately.
+2. The restart button's enabled state re-evaluates.
+
+**Status sensor is not special-cased.** It renders the snapshot's
+actual status throughout — Operational / Denied / Not Locked /
+Unreachable / whatever. No synthetic "Restarting…" label fires
+from recovery state.
+
+**False positives are bounded-harm.** If the reboot-signal check
+misfires on a firmware stats-clear or signal anomaly, the only
+consequence is polling faster for `_RECOVERY_WINDOW_SECONDS`.
+Dashboard state is unaffected (it always reflects truth). No stalls,
+no timeouts, no misleading UX.
+
+**Modems without the relevant fields** simply don't trigger from
+the reboot-signal check. Their reboots surface through normal
+polling via UC-49 instead. That's fine — the signal check is an
+enhancement, not a requirement.
+
+**Interaction with commanded restart:** if a restart command is
+issued and recovery is already open from a signal-check trigger, the
+command is refused (UC-42). If the command is issued first, any
+subsequent reboot-signal match during the command's window is a no-op
+(window is already open; re-entry does nothing).

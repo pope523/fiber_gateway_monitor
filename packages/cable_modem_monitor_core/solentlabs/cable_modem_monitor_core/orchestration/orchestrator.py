@@ -1,8 +1,8 @@
 """Orchestrator — policy engine for modem data collection.
 
-Coordinates ModemDataCollector, HealthMonitor, and RestartMonitor.
+Coordinates ModemDataCollector, HealthMonitor, and Recovery.
 Delegates signal policy to SignalPolicy, status derivation to pure
-functions, and restart actions to the actions module.
+functions, and restart dispatch to :func:`run_restart`.
 
 Consumers call get_modem_data() when they want data. The orchestrator
 applies backoff and lockout protection regardless of why it was called.
@@ -19,21 +19,20 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from .actions import execute_action
 from .models import ModemSnapshot, OrchestratorDiagnostics, RestartResult
 from .policy import SignalPolicy
-from .restart import RestartMonitor
+from .recovery import Recovery
+from .restart import RestartNotSupportedError, run_restart
 from .signals import (
     CollectorSignal,
     ConnectionStatus,
     DocsisStatus,
     HealthStatus,
-    RestartPhase,
 )
 from .status import derive_connection_status, enrich_docsis_status
 
 if TYPE_CHECKING:
-    import threading
+    from collections.abc import Callable
 
     from ..models.modem_config.config import ModemConfig
     from .collector import ModemDataCollector
@@ -42,9 +41,8 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-
-class RestartNotSupportedError(Exception):
-    """Modem does not declare actions.restart in modem.yaml."""
+# Re-export so existing imports (tests, HA) keep working.
+__all__ = ["Orchestrator", "RestartNotSupportedError"]
 
 
 class Orchestrator:
@@ -58,8 +56,8 @@ class Orchestrator:
         collector: ModemDataCollector instance (reused across polls).
         health_monitor: Optional health probe monitor. None if the
             modem doesn't support ICMP or HTTP HEAD probes.
-        modem_config: Parsed modem.yaml config. Used for behaviors
-            and actions.
+        modem_config: Parsed modem.yaml config. Used for identity
+            (model) and actions (restart, logout).
     """
 
     AUTH_FAILURE_THRESHOLD: int = 6
@@ -74,9 +72,19 @@ class Orchestrator:
         self._health_monitor = health_monitor
         self._modem_config = modem_config
 
-        # Policy
+        # Policy — signal→policy mapping, auth circuit breaker, and
+        # connectivity backoff all live in SignalPolicy.
         self._policy = SignalPolicy(collector, self.AUTH_FAILURE_THRESHOLD, model=modem_config.model)
-        self._is_restarting: bool = False
+
+        # Recovery — owns the polling-cadence window triggered by
+        # restart, connectivity outage, or the reboot-signal vote.
+        # 2C wires tick/evaluate_snapshot/evaluate_failure into the
+        # collection flow; here we only construct it so run_restart
+        # has a destination for recovery.begin().
+        self._recovery = Recovery(collector=collector, modem_config=modem_config)
+
+        # Last connection status — used to detect UNREACHABLE→ONLINE
+        # transitions and emit a single INFO log line.
         self._last_status: ConnectionStatus | None = None
 
         # First-poll verbose logging — INFO on first poll and after
@@ -92,18 +100,26 @@ class Orchestrator:
         self._last_poll_duration: float | None = None
         self._last_poll_timestamp: float | None = None
 
+        # Monotonic timestamp of the last CONNECTIVITY failure. Used
+        # by the "health recovery clears connectivity backoff"
+        # shortcut in _execute_poll() to avoid trusting a cached
+        # RESPONSIVE reading that pre-dates the outage. The health
+        # coordinator runs on its own (slower) cadence, so between
+        # a modem going down and the next health probe, latest
+        # would otherwise report stale RESPONSIVE.
+        self._last_connectivity_failure_at: float | None = None
+
     def get_modem_data(self) -> ModemSnapshot:
         """Execute a data collection cycle.
 
         Sequence:
-        1. If is_restarting, return UNREACHABLE immediately
-        2. Check circuit breaker — if open, return AUTH_FAILED
-        3. Check backoff — if active, decrement and return AUTH_FAILED
-        4. Run ModemDataCollector
-        5. If collection failed, apply signal policy
-        6. On success: reset streak, derive statuses
-        7. Detect state transitions
-        8. Return ModemSnapshot
+        1. Check circuit breaker — if open, return AUTH_FAILED
+        2. Check backoff — if active, decrement and return AUTH_FAILED
+        3. Run ModemDataCollector
+        4. If collection failed, apply signal policy
+        5. On success: reset streak, derive statuses
+        6. Detect state transitions
+        7. Return ModemSnapshot
 
         Returns:
             ModemSnapshot with modem data, health info, and derived
@@ -119,93 +135,27 @@ class Orchestrator:
 
         return snapshot
 
-    def restart(
-        self,
-        cancel_event: threading.Event | None = None,
-        response_timeout: int = 120,
-        channel_stabilization_timeout: int = 300,
-        probe_interval: int = 10,
-    ) -> RestartResult:
-        """Initiate a modem restart and monitor recovery.
+    def restart(self) -> RestartResult:
+        """Send the restart command. One-shot; does not wait.
 
-        Sequence:
-        1. Check is_restarting — if True, return error
-        2. Set is_restarting = True
-        3. Authenticate (session may have been cleared by logout)
-        4. Execute restart action
-        5. Clear session (old session is dead)
-        5. Hand off to RestartMonitor for two-phase recovery
-        6. Set is_restarting = False
-        7. Return result
+        Bypasses the auth circuit breaker — the user pressed the
+        button, so a recent auth failure should not block the
+        restart. Returns quickly (2–5 s): authenticate, dispatch the
+        reboot command, clear the session, trigger a recovery window,
+        return.
 
-        Connection drop during the restart command is expected (the
-        modem is rebooting) and already handled by the action layer.
-
-        Args:
-            cancel_event: Optional threading.Event for cooperative
-                cancellation. Setting it causes the monitor to exit
-                within one probe_interval.
-            response_timeout: Max seconds to wait for modem to respond
-                after restart.
-            channel_stabilization_timeout: Max seconds to wait for
-                stable channel counts after response. 0 to skip.
-            probe_interval: Seconds between probes during recovery.
+        Does NOT observe the reboot. The snapshot stream surfaces
+        real modem state (UNREACHABLE → ranging → ONLINE) as normal
+        polling runs at recovery cadence.
 
         Returns:
-            RestartResult with recovery outcome.
+            RestartResult — ``success`` is True iff the command
+            dispatched cleanly; ``error="command_failed"`` otherwise.
 
         Raises:
             RestartNotSupportedError: If modem has no restart action.
         """
-        actions = self._modem_config.actions
-        if actions is None or actions.restart is None:
-            raise RestartNotSupportedError("Modem does not declare actions.restart")
-
-        if self._is_restarting:
-            return RestartResult(
-                success=False,
-                phase_reached=RestartPhase.COMMAND_SENT,
-                elapsed_seconds=0.0,
-                error="Restart already in progress",
-            )
-
-        start = time.monotonic()
-        self._is_restarting = True
-        try:
-            # Authenticate — session may have been cleared by logout
-            self._collector.authenticate()
-
-            # Send restart command
-            execute_action(self._collector, self._modem_config, actions.restart)
-            self._collector.clear_session()
-            _logger.info(
-                "Restart command sent [%s] — session cleared (%.1fs)",
-                self._modem_config.model,
-                time.monotonic() - start,
-            )
-
-            # Two-phase recovery
-            monitor = RestartMonitor(
-                collector=self._collector,
-                health_monitor=self._health_monitor,
-                response_timeout=response_timeout,
-                channel_stabilization_timeout=channel_stabilization_timeout,
-                probe_interval=probe_interval,
-                model=self._modem_config.model,
-            )
-            return monitor.monitor_recovery(cancel_event)
-
-        except Exception as exc:
-            elapsed = time.monotonic() - start
-            _logger.error("Restart failed [%s]: %s", self._modem_config.model, exc)
-            return RestartResult(
-                success=False,
-                phase_reached=RestartPhase.COMMAND_SENT,
-                elapsed_seconds=elapsed,
-                error=str(exc),
-            )
-        finally:
-            self._is_restarting = False
+        return run_restart(self._collector, self._modem_config, self._recovery)
 
     def reset_auth(self) -> None:
         """Reset auth state after credential reconfiguration.
@@ -260,15 +210,47 @@ class Orchestrator:
         return self._last_status
 
     @property
-    def is_restarting(self) -> bool:
-        """Whether a restart is currently in progress."""
-        return self._is_restarting
-
-    @property
     def supports_restart(self) -> bool:
         """Whether the modem declares a restart action in modem.yaml."""
         actions = self._modem_config.actions
         return actions is not None and actions.restart is not None
+
+    @property
+    def recovery_active(self) -> bool:
+        """Whether a recovery window is currently open.
+
+        True while the :class:`Recovery` module is running an
+        aggressive-polling window — triggered by ``restart()``, a
+        connectivity outage, or the reboot-signal vote.
+
+        Consumers read this to decide whether to poll at recovery
+        cadence. HA subscribes to the observer (see
+        :meth:`set_recovery_observer`) for immediate notification
+        rather than polling this flag.
+
+        Thread-safe: a boolean read is atomic under the GIL.
+        """
+        return self._recovery.active
+
+    def set_recovery_observer(self, observer: Callable[[], None] | None) -> None:
+        """Register a callback fired on ``recovery_active`` transitions.
+
+        Invoked from the poll thread on both False→True and
+        True→False transitions (plus on :meth:`Recovery.begin`
+        re-entry while already active — useful for kicking HA's
+        ``async_request_refresh`` timing).
+
+        The callback must be thread-safe. HA implementations
+        typically hop to the event loop via ``dispatcher_send``
+        (which internally uses ``call_soon_threadsafe``).
+
+        Pass ``None`` to clear a previously registered observer.
+        """
+        # The Recovery instance owns observer dispatch — here we
+        # just install the callable. Exceptions raised by the
+        # observer are swallowed inside Recovery so they can't
+        # break orchestration on the poll thread.
+        self._recovery._on_state_change = observer
 
     # ------------------------------------------------------------------
     # Internal — poll execution
@@ -276,12 +258,12 @@ class Orchestrator:
 
     def _execute_poll(self) -> ModemSnapshot:
         """Run the collection pipeline with policy checks."""
-        # Restart guard
-        if self._is_restarting:
-            return self._make_snapshot(
-                ConnectionStatus.UNREACHABLE,
-                DocsisStatus.UNKNOWN,
-            )
+        # Recovery tick — advance the window clock and fire the
+        # True→False observer if the deadline just passed. Runs
+        # before any short-circuit so the window always closes
+        # promptly even when polling is blocked (circuit open,
+        # backoff active). Cheap — constant-time no-op when idle.
+        self._recovery.tick()
 
         # Circuit breaker
         if self._policy.circuit_open:
@@ -295,11 +277,17 @@ class Orchestrator:
                 error="Circuit breaker open — reconfigure credentials",
             )
 
-        # Health recovery — clear connectivity backoff if modem is proven reachable
+        # Health recovery — clear connectivity backoff if the modem
+        # is proven reachable. The freshness gate matters: the health
+        # coordinator is on a slower cadence than the data coordinator
+        # during a recovery window, so ``latest`` may still hold a
+        # pre-outage RESPONSIVE reading. Only trust it if the probe
+        # ran AFTER our last observed connectivity failure.
         if (
             self._health_monitor is not None
             and self._policy.connectivity_backoff_remaining > 0
             and self._health_monitor.latest.health_status == HealthStatus.RESPONSIVE
+            and self._is_health_probe_fresh()
         ):
             _logger.info(
                 "Health recovery detected [%s] — clearing connectivity backoff",
@@ -341,6 +329,21 @@ class Orchestrator:
     def _handle_failure(self, result: ModemResult) -> ModemSnapshot:
         """Apply signal policy for a failed collection."""
         status = self._policy.apply(result)
+
+        # Freshness watermark — remember when we last saw
+        # connectivity actually fail so the health-recovery
+        # shortcut in _execute_poll() can distinguish a genuine
+        # health-recovery probe from a stale pre-outage reading.
+        if result.signal is CollectorSignal.CONNECTIVITY:
+            self._last_connectivity_failure_at = time.monotonic()
+
+        # Recovery hook — on CONNECTIVITY failures, Recovery opens a
+        # window so HA drops to the faster cadence. Other failure
+        # signals (AUTH_FAILED, PARSE_ERROR, LOAD_*) are no-ops
+        # inside evaluate_failure — those aren't "modem is
+        # rebooting" signals.
+        self._recovery.evaluate_failure(result)
+
         self._detect_transition(status)
         return self._make_snapshot(
             status,
@@ -361,8 +364,18 @@ class Orchestrator:
         enrich_docsis_status(modem_data)
         docsis_status = modem_data.get("system_info", {}).get("docsis_status", DocsisStatus.UNKNOWN)
 
-        # Counter-reset detection
+        # Counter-reset detection — proxy for "last boot time" when
+        # the modem doesn't report native uptime (see #110). This
+        # updates orchestrator state only; it does NOT feed the
+        # reboot-signal vote (that's Recovery's own history).
         self._check_counter_reset(modem_data)
+
+        # Recovery hook — runs the reboot-signal vote (may open a
+        # window) and always refreshes Recovery's own baselines.
+        # When a window is already open, evaluate_snapshot only
+        # updates history; the window ticks to completion via
+        # tick() at the top of the next poll.
+        self._recovery.evaluate_snapshot(modem_data)
 
         # Read latest health info
         health_info: HealthInfo | None = None
@@ -379,6 +392,31 @@ class Orchestrator:
             collector_signal=CollectorSignal.OK,
             stats_last_reset=self._stats_last_reset,
         )
+
+    # ------------------------------------------------------------------
+    # Internal — health freshness
+    # ------------------------------------------------------------------
+
+    def _is_health_probe_fresh(self) -> bool:
+        """Whether the latest health probe happened after the last
+        observed CONNECTIVITY failure.
+
+        Used to gate the "health recovery clears connectivity backoff"
+        shortcut so we don't trust a cached RESPONSIVE reading from
+        before a modem outage. Returns True when either:
+
+        - No connectivity failure has been observed yet (nothing to
+          invalidate against), or
+        - A health probe has run since the last failure.
+        """
+        if self._last_connectivity_failure_at is None:
+            return True
+        if self._health_monitor is None:
+            return False
+        probe_at = self._health_monitor.latest_probe_at
+        if probe_at is None:
+            return False
+        return probe_at > self._last_connectivity_failure_at
 
     # ------------------------------------------------------------------
     # Internal — transition detection
@@ -409,12 +447,7 @@ class Orchestrator:
         strategy = type(auth).__name__ if auth is not None else "none"
         has_creds = bool(self._collector._username or self._collector._password)
 
-        if self._collector.session_is_valid:
-            session = "active"
-        elif self._first_poll_complete:
-            session = "none"
-        else:
-            session = "none"
+        session = "active" if self._collector.session_is_valid else "none"
 
         log(
             "Poll [%s] — auth: %s, url: %s, credentials: %s, session: %s",

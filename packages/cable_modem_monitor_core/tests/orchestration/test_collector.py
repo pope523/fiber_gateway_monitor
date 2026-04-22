@@ -115,9 +115,6 @@ def _make_config(
     else:
         config.actions = None
 
-    # Behaviors
-    config.behaviors = None
-
     return config
 
 

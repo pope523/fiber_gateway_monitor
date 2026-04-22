@@ -981,18 +981,6 @@ actions:
     endpoint: "/api/v1/session/logout"
 ```
 
-### Behaviors
-
-```yaml
-behaviors:
-  restart:
-    window_seconds: 300
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `restart.window_seconds` | int | Seconds to wait after restart before resuming polling |
-
 ---
 
 ## Hardware
@@ -1360,10 +1348,6 @@ actions:
     response_key: "SetArrisConfigurationInfoResponse"
     result_key: "SetArrisConfigurationInfoResult"
     success_value: "OK"
-
-behaviors:
-  restart:
-    window_seconds: 300
 
 hardware:
   docsis_version: "3.1"

@@ -33,8 +33,19 @@ def _load_fixture(path: Path) -> dict[str, Any]:
 def _build_resources(
     xml_str: str | None,
     resource_key: str,
+    resource_value: Any = None,
 ) -> dict[str, Any]:
-    """Build a resource dict with parsed XML Element."""
+    """Build a resource dict with parsed XML Element.
+
+    Fixture contract:
+    - ``_xml: "<...>"`` → parses to an ``Element`` under ``_resource``.
+    - ``_xml: null`` with no ``_resource_value`` → empty dict (the
+      parser's "resource missing" branch).
+    - ``_xml: null`` with ``_resource_value: <x>`` → ``{_resource: x}``
+      for testing the parser's non-Element type-check branch.
+    """
+    if resource_value is not None:
+        return {resource_key: resource_value}
     if xml_str is None:
         return {}
     return {resource_key: DefusedET.fromstring(xml_str)}
@@ -49,7 +60,11 @@ def test_extraction(fixture_path: Path) -> None:
     """Parse XML system_info and verify extracted fields match expected."""
     data = _load_fixture(fixture_path)
     config = XMLSystemInfoSource.model_validate(data["_config"])
-    resources = _build_resources(data["_xml"], data["_resource"])
+    resources = _build_resources(
+        data["_xml"],
+        data["_resource"],
+        data.get("_resource_value"),
+    )
     expected = data["_expected"]
 
     parser = XMLSystemInfoParser(config)

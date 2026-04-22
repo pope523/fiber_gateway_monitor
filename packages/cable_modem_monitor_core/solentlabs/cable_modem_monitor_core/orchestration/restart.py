@@ -1,12 +1,11 @@
-"""RestartMonitor — modem restart recovery.
+"""Restart action — one-shot command dispatch.
 
-Orchestrates modem recovery after a restart command: first waits for
-the modem to respond (via ResponseMonitor), then waits for DOCSIS
-channel counts to stabilize (via ChannelStabilityMonitor). Transient —
-created per restart, discarded after.
+``run_restart`` sends the reboot instruction, clears the collector
+session, and triggers a recovery window. It does not wait for the
+modem to come back, probe for liveness, or observe the reboot —
+post-reboot polling cadence belongs to the recovery module.
 
-See ORCHESTRATION_SPEC.md § RestartMonitor and ORCHESTRATION_USE_CASES.md
-UC-40 through UC-48.
+See ORCHESTRATION_SPEC.md § Restart Action for the full contract.
 """
 
 from __future__ import annotations
@@ -15,190 +14,110 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from .channel_stability import ChannelStabilityMonitor
+from .actions import execute_action
 from .models import RestartResult
-from .response_monitor import ResponseMonitor
-from .signals import RestartPhase
 
 if TYPE_CHECKING:
-    import threading
-
+    from ..models.modem_config.config import ModemConfig
     from .collector import ModemDataCollector
-    from .modem_health import HealthMonitor
+    from .recovery import Recovery
 
 _logger = logging.getLogger(__name__)
 
 
-class RestartMonitor:
-    """Modem restart recovery monitor.
+class RestartNotSupportedError(Exception):
+    """Modem does not declare actions.restart in modem.yaml."""
 
-    Composes ResponseMonitor (phase 1: wait for modem to respond) and
-    ChannelStabilityMonitor (phase 2: wait for stable channel counts).
 
-    Transient — created for one restart, discarded after.
+def run_restart(
+    collector: ModemDataCollector,
+    modem_config: ModemConfig,
+    recovery: Recovery,
+) -> RestartResult:
+    """Send the reboot command and trigger a recovery window.
 
-    Args:
-        collector: ModemDataCollector for channel data and fallback
-            response detection.
-        health_monitor: Optional HealthMonitor for lightweight response
-            detection. None falls back to collector.
-        response_timeout: Max seconds to wait for modem to respond.
-        channel_stabilization_timeout: Max seconds to wait for stable
-            channel counts after response. 0 to skip.
-        probe_interval: Seconds between probes during recovery.
+    Procedure:
+
+    1. Raise ``RestartNotSupportedError`` if ``actions.restart`` is
+       None.
+    2. Authenticate against the modem.
+    3. Execute the restart action.
+    4. Clear the collector session (forces fresh auth on the next
+       poll — some firmware invalidates sessions after a reboot).
+    5. Call ``recovery.begin("restart_command")`` so subsequent polls
+       run at recovery cadence.
+    6. Return a ``RestartResult``.
+
+    Typical duration: 2–5 seconds. The caller does not block on the
+    reboot itself. Any exception between steps 2 and 4 yields
+    ``RestartResult(success=False, error="command_failed")`` — the
+    only error token this function emits.
     """
+    # Step 1 — capability guard. Buttons that can't exist as HA
+    # entities still reach here via service calls and tests.
+    actions = modem_config.actions
+    if actions is None or actions.restart is None:
+        raise RestartNotSupportedError("Modem does not declare actions.restart")
 
-    def __init__(
-        self,
-        collector: ModemDataCollector,
-        health_monitor: HealthMonitor | None,
-        response_timeout: int = 120,
-        channel_stabilization_timeout: int = 300,
-        probe_interval: int = 10,
-        model: str = "",
-    ) -> None:
-        self._response_monitor = ResponseMonitor(
-            collector=collector,
-            health_monitor=health_monitor,
-            response_timeout=response_timeout,
-            probe_interval=probe_interval,
-        )
-        self._channel_monitor = ChannelStabilityMonitor(
-            collector=collector,
-            channel_stabilization_timeout=channel_stabilization_timeout,
-            probe_interval=probe_interval,
-            model=model,
-        )
-        self._collector = collector
-        self._health_monitor = health_monitor
-        self._model = model
+    start = time.monotonic()
+    model = modem_config.model
 
-    def monitor_recovery(
-        self,
-        cancel_event: threading.Event | None = None,
-    ) -> RestartResult:
-        """Run restart recovery sequence.
-
-        1. Clear collector session
-        2. Wait for modem to respond (phase 1)
-        3. Wait for channel stabilization (phase 2, if enabled)
-
-        Args:
-            cancel_event: Optional threading.Event for cooperative
-                cancellation. Setting it causes exit within one
-                probe_interval.
-
-        Returns:
-            RestartResult with recovery outcome.
-        """
-        start = time.monotonic()
-
-        # Clear stale state
-        self._collector.clear_session()
-
-        _logger.info("Restart recovery [%s]: waiting for modem to respond", self._model)
-
-        # Phase 1: Response detection
-        result = self._wait_for_response(start, cancel_event)
-        if result is not None:
-            return result
-
-        response_time = time.monotonic() - start
-        _logger.info(
-            "Restart recovery [%s]: modem responding (%.0fs), " "waiting for channel stabilization",
-            self._model,
-            response_time,
-        )
-
-        # Phase 2: Channel stabilization
-        return self._wait_for_channel_stability(start, cancel_event)
-
-    def _wait_for_response(
-        self,
-        start: float,
-        cancel_event: threading.Event | None,
-    ) -> RestartResult | None:
-        """Run phase 1. Returns a RestartResult on failure, None on success."""
-        modem_responded = self._response_monitor.wait_for_response(start, cancel_event)
-        if modem_responded:
-            return None
-
-        elapsed = time.monotonic() - start
-        if cancel_event is not None and cancel_event.is_set():
-            _logger.info("Restart recovery [%s]: cancelled during response wait", self._model)
+    # Steps 2–4 are wrapped in one try/except. Any raise inside maps
+    # to the single ``command_failed`` token; the reboot didn't
+    # dispatch cleanly and the caller should see it as a failed
+    # command, not as a nuanced taxonomy of why.
+    try:
+        # Step 2 — authenticate. Bypass the circuit breaker: the user
+        # asked for a restart, so a recent bad-credentials streak
+        # shouldn't block the command.
+        auth_result = collector.authenticate()
+        if not auth_result.success:
+            elapsed = time.monotonic() - start
+            _logger.error(
+                "Restart command failed [%s]: auth failed — %s",
+                model,
+                auth_result.error,
+            )
             return RestartResult(
                 success=False,
-                phase_reached=RestartPhase.WAITING_RESPONSE,
                 elapsed_seconds=elapsed,
-                error="Cancelled",
+                error="command_failed",
             )
 
-        timeout = self._response_monitor.response_timeout
-        _logger.warning(
-            "Restart recovery [%s]: response timeout after %ds",
-            self._model,
-            timeout,
-        )
+        # Step 3 — execute the reboot action. Connection errors /
+        # timeouts inside the HTTP executor are already swallowed
+        # there (the modem IS rebooting during the POST); anything
+        # that surfaces here is a genuine dispatch failure.
+        execute_action(collector, modem_config, actions.restart)
+
+        # Step 4 — clear the session locally. MB7621-class firmware
+        # invalidates sessions server-side during the reboot while
+        # our cookie still looks valid; clearing now forces the next
+        # poll to re-auth fresh instead of tripping LOAD_AUTH.
+        collector.clear_session()
+    except Exception as exc:  # noqa: BLE001
+        elapsed = time.monotonic() - start
+        _logger.error("Restart command failed [%s]: %s", model, exc)
         return RestartResult(
             success=False,
-            phase_reached=RestartPhase.WAITING_RESPONSE,
             elapsed_seconds=elapsed,
-            error=f"Response timeout after {timeout}s",
+            error="command_failed",
         )
 
-    def _wait_for_channel_stability(
-        self,
-        start: float,
-        cancel_event: threading.Event | None,
-    ) -> RestartResult:
-        """Run phase 2. Always returns a RestartResult."""
-        timeout = self._channel_monitor.channel_stabilization_timeout
+    elapsed = time.monotonic() - start
+    _logger.info(
+        "Restart command sent [%s] — session cleared (%.1fs)",
+        model,
+        elapsed,
+    )
 
-        # Skip if timeout is 0
-        if timeout == 0:
-            elapsed = time.monotonic() - start
-            _logger.info(
-                "Restart recovery [%s]: channel stabilization skipped (timeout=0), " "recovered in %.0fs",
-                self._model,
-                elapsed,
-            )
-            return RestartResult(
-                success=True,
-                phase_reached=RestartPhase.COMPLETE,
-                elapsed_seconds=elapsed,
-            )
+    # Step 5 — hand off to Recovery. begin() fires the observer so
+    # HA's cadence listener drops the data-coordinator interval;
+    # from here on, post-reboot observation is polling's job.
+    recovery.begin("restart_command")
 
-        channels_stable = self._channel_monitor.wait_for_stability(cancel_event)
-        elapsed = time.monotonic() - start
-
-        if not channels_stable:
-            if cancel_event is not None and cancel_event.is_set():
-                _logger.info("Restart recovery [%s]: cancelled during channel sync", self._model)
-                return RestartResult(
-                    success=False,
-                    phase_reached=RestartPhase.CHANNEL_SYNC,
-                    elapsed_seconds=elapsed,
-                    error="Cancelled",
-                )
-            _logger.warning(
-                "Restart recovery [%s]: channel stabilization timeout after %ds " "(counts still changing)",
-                self._model,
-                timeout,
-            )
-            return RestartResult(
-                success=False,
-                phase_reached=RestartPhase.CHANNEL_SYNC,
-                elapsed_seconds=elapsed,
-                error=f"Channel stabilization timeout after {timeout}s",
-            )
-
-        _logger.info(
-            "Restart recovery [%s]: grace period complete, recovered in %.0fs",
-            self._model,
-            elapsed,
-        )
-        return RestartResult(
-            success=True,
-            phase_reached=RestartPhase.COMPLETE,
-            elapsed_seconds=elapsed,
-        )
+    # Step 6 — report. success=True iff steps 2–4 all completed.
+    return RestartResult(
+        success=True,
+        elapsed_seconds=elapsed,
+    )

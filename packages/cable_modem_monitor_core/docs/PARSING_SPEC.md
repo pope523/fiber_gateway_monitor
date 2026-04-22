@@ -896,7 +896,7 @@ for error totals, not a general aggregation engine.
 context — it knows channel types, field names, and section structure.
 Aggregate declarations depend on that context (e.g., scoping by
 `downstream.qam` requires knowing that `channel_type` mapping exists).
-modem.yaml stays focused on auth, session, behaviors, and actions.
+modem.yaml stays focused on auth, session, and actions.
 
 **Precedence rule:** If parser.yaml maps a `system_info` field with
 the same name as an `aggregate` entry (e.g., both produce

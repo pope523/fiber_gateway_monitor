@@ -18,9 +18,10 @@ testable with a clear input→output contract.
 
 ```text
 Orchestrator (scheduler + policy)
- ├─ ModemDataCollector — one poll cycle → ModemData | signal
- ├─ HealthMonitor — probe cycle → HealthInfo
- └─ RestartMonitor — recovery cycle → complete | timeout
+ ├─ ModemDataCollector  — one poll cycle → ModemData | signal
+ ├─ HealthMonitor       — probe cycle → HealthInfo
+ ├─ Recovery            — aggressive-poll window; cadence signal to consumer
+ └─ restart()           — one-shot: auth → action → clear session → trigger recovery
 ```
 
 **ModemDataCollector** executes a single poll cycle — the auth → load →
@@ -77,7 +78,11 @@ loader behavior per transport, and URL construction details.
 
 - Invokes `ModemDataCollector` for each poll cycle
 - Applies backoff on lockout, circuit breaker on persistent auth failure
-- Coordinates `HealthMonitor` and `RestartMonitor` independently
+- Coordinates `HealthMonitor` alongside collection
+- Hands each snapshot to `Recovery` for heuristic evaluation and
+  window management (see ORCHESTRATION_SPEC § Recovery)
+- Exposes `restart()` as a one-shot command that triggers a recovery
+  window (see ORCHESTRATION_SPEC § Restart Action)
 - Returns status codes: `online`, `auth_failed`, `parser_issue`,
   `unreachable`, `no_signal`
 

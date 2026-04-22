@@ -32,7 +32,10 @@ Core, it should.
 | [Data Coordinator](#data-coordinator) | DataUpdateCoordinator wrapping `get_modem_data()` and deferred entity creation |
 | [Health Coordinator](#health-coordinator) | Second coordinator wrapping `health_monitor.ping()` |
 | [Polling Modes](#polling-modes) | Scheduled, disabled, manual trigger |
-| [Restart Lifecycle](#restart-lifecycle) | Button → executor → cancel_event → cleanup |
+| [Restart Lifecycle](#restart-lifecycle) | Button → executor → one-shot command → return |
+| [Recovery Adapter](#recovery-adapter) | Observer + cadence listener that reacts to Core's `recovery_active` flag |
+| [Operation Mutex](#operation-mutex) | `active_operation` field — mutex between destructive buttons (restart, reset) |
+| [Reset Entities Concurrency Guard](#reset-entities-concurrency-guard) | `active_operation` guard, `_attr_available` toggle, null-safety |
 | [Reauth Flow](#reauth-flow) | Circuit breaker → `async_step_reauth` |
 | [Diagnostics Platform](#diagnostics-platform) | Core diagnostics + HA-side data |
 | [Services](#services) | `generate_dashboard`, `request_refresh`, `request_health_check` |
@@ -61,12 +64,34 @@ class CableModemRuntimeData:
     health_coordinator: DataUpdateCoordinator | None
     orchestrator: Orchestrator
     health_monitor: HealthMonitor | None
-    cancel_event: threading.Event | None
     modem_identity: ModemIdentity
+    active_operation: Literal["restart", "reset"] | None = None
 
 
 type CableModemConfigEntry = ConfigEntry[CableModemRuntimeData]
 ```
+
+**`active_operation`** is the mutex for destructive buttons —
+Restart and Reset Entities. Set to `"restart"` or `"reset"` while
+the corresponding button handler runs, cleared in a context
+manager's `finally`. A second destructive press while one is
+running is refused. See § Operation Mutex and § Reset Entities
+Concurrency Guard.
+
+It is adapter-layer state, separate from Core's `recovery_active`
+flag. The two answer different questions:
+
+- `active_operation` — is a destructive *button handler* currently
+  running? (True for ~2–5 s during a restart button press, or for
+  seconds-to-minutes during a reset.)
+- `orchestrator.recovery_active` — is the *modem* currently in a
+  recovery window? (True for the duration of
+  `_RECOVERY_WINDOW_SECONDS` after any recovery trigger.)
+
+The button is disabled when *either* is set. During a button-press
+restart both are True briefly; after `restart()` returns,
+`active_operation` clears while `recovery_active` continues for
+the rest of the window.
 
 **Access pattern:**
 
@@ -117,6 +142,12 @@ async_setup_entry(hass, entry)
  │     update_method wraps orchestrator.get_modem_data()
  │     update_interval from config (or None if disabled)
  │
+ ├─ 4a. Attach the recovery cadence listener (see § Recovery Adapter)
+ │      attach_recovery_cadence_listener(hass, entry, orchestrator,
+ │                                        data_coordinator)
+ │      Registers the observer on Core, installs the cadence listener,
+ │      and registers an unsubscribe callback for entry unload.
+ │
  ├─ 5. Create health DataUpdateCoordinator (if health_monitor)
  │     update_method wraps health_monitor.ping()
  │     update_interval from config (or None if disabled)
@@ -153,28 +184,34 @@ scheduled polls after setup, not "never poll."
 
 ## Unload
 
-`async_unload_entry` cancels all activity and cleans up.
+`async_unload_entry` stops scheduled activity and cleans up.
 
 ```text
 async_unload_entry(hass, entry)
  │
- ├─ 1. Cancel restart if in progress
- │     if entry.runtime_data.cancel_event:
- │         cancel_event.set()
- │     (RestartMonitor exits within one probe_interval)
- │
- ├─ 2. Unload platforms (sensor, button)
+ ├─ 1. Unload platforms (sensor, button)
  │     hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+ │     (stops the data + health coordinators' scheduled polls)
  │
- ├─ 3. Unregister services if last entry
+ ├─ 2. Unregister services if last entry
  │
- └─ 4. runtime_data auto-cleaned by HA
+ └─ 3. runtime_data auto-cleaned by HA
 ```
 
+**No restart cancellation primitive.** `orchestrator.restart()` is
+one-shot and returns in a few seconds, so there's nothing long-
+running to cancel. An in-flight `restart()` executor call (if any)
+completes naturally — the worst case is a single ~5 s delay during
+unload.
+
 **No threads to join.** Core doesn't spawn threads — HA manages all
-scheduling via coordinators and `async_add_executor_job`. When the
-executor task completes (or restart is cancelled), the thread returns
-to the pool.
+scheduling via coordinators and `async_add_executor_job`. Executor
+tasks return to the pool when they complete.
+
+**Recovery state survives unload.** `orchestrator.recovery_active`
+is memory on the orchestrator instance; when the entry unloads, the
+instance is garbage-collected and the state goes with it. Fresh
+`async_setup_entry` always starts with `recovery_active == False`.
 
 ---
 
@@ -187,15 +224,17 @@ HA must go through `hass.async_add_executor_job()`.
 |-----------|------------|-----------------|
 | Data coordinator poll | `orchestrator.get_modem_data()` | 2-10s |
 | Health coordinator poll | `health_monitor.ping()` | 1-5s |
-| Restart button | `orchestrator.restart(cancel_event)` | Up to 420s |
+| Restart button | `orchestrator.restart()` | 2-5s (one-shot) |
 | Config flow validation | `list_modems()`, config loading, validation poll | <5s |
 | Diagnostics | `orchestrator.diagnostics()` | <1ms (reads memory state) |
 
-**The restart call is the only long-running one.** It blocks an
-executor thread for up to `response_timeout + channel_stabilization_timeout`
-(default 120s + 300s = 420s). The `cancel_event` provides cooperative
-cancellation — setting it causes the RestartMonitor to exit within one
-`probe_interval` (10s).
+**All Core calls are bounded.** `restart()` is one-shot (auth +
+POST + session clear); `get_modem_data()` is one poll; `ping()` is
+one probe. None of them block the executor thread beyond their own
+direct work. Recovery observation — the "keep polling until the
+modem is back" behavior — lives on HA's side as a coordinator-
+cadence switch (see § Recovery Adapter). Core never waits on
+recovery.
 
 ---
 
@@ -348,49 +387,314 @@ Configurable via the options flow. Setting to 0 or "Disabled" sets
 
 ## Restart Lifecycle
 
-The restart button runs `orchestrator.restart()` on an executor thread
-with cooperative cancellation.
+The restart button runs `orchestrator.restart()` on an executor
+thread. The Core call is one-shot — authenticate, dispatch the
+command, clear the session, trigger the recovery module, return.
+Typical duration: 2–5 seconds. Post-reboot polling is handled by
+the recovery adapter's cadence switch (see § Recovery Adapter);
+the button itself does not observe the reboot.
 
 ```text
 User presses "Restart Modem"
  │
- ├─ 1. Check orchestrator.is_restarting → reject if True
+ ├─ 1. Acquire active_operation = "restart" via context manager
+ │     (refuses if another destructive operation is already running).
+ │     No gate on recovery_active — a user who sees a flakey modem
+ │     after a restart is allowed to try again.
  │
- ├─ 2. Create threading.Event, store on RuntimeData
- │     entry.runtime_data.cancel_event = cancel_event
+ ├─ 2. Run in executor:
+ │     orchestrator.restart()
+ │     (returns in 2–5 s; triggers a recovery window internally)
  │
- ├─ 3. Run in executor:
- │     orchestrator.restart(cancel_event)
- │     (blocks for up to 420s)
+ ├─ 3. Send persistent notification:
+ │     success → "Restart command sent"
+ │     failure → "Restart command failed: <error>"
  │
- ├─ 4. On return: clear cancel_event
- │     entry.runtime_data.cancel_event = None
- │
- ├─ 5. Send persistent notification (success/warning/timeout)
- │
- └─ 6. Trigger immediate data refresh
-       data_coordinator.async_request_refresh()
+ └─ 4. Context manager exits → active_operation cleared. Button is
+       immediately available again; the user may press it once more
+       if the dashboard shows a flakey state they want to retry.
 ```
 
-**During restart:**
+The restart button returns its "busy" state after step 4. Scheduled
+data polls run at recovery cadence (driven by § Recovery Adapter)
+and surface actual modem state — UNREACHABLE while the modem is
+down, transitional docsis states while it ranges, ONLINE once it
+returns. The dashboard reflects truth throughout; no synthetic
+label.
 
-- `orchestrator.is_restarting == True`
-- Data polls return `ModemSnapshot(UNREACHABLE, modem_data=None)`
-- Status sensor shows "Unreachable" (always available)
-- Health sensors show probe results (always available, independent)
-- Channel sensors show "Unavailable" (modem_data is None)
-- Buttons remain available (except Restart, which checks is_restarting)
+### Sensor Behavior During a Recovery Window
 
-**Unload during restart:** `async_unload_entry` sets `cancel_event`,
-RestartMonitor exits within one `probe_interval` (10s), `restart()`
-returns `RestartResult(success=False)`, cleanup proceeds normally.
+A recovery window is open whenever `orchestrator.recovery_active`
+is True, regardless of what triggered it (commanded restart,
+observed outage, heuristic).
 
-**HA restart during restart:** Executor thread dies with the process.
-All state is memory-only. Fresh orchestrator on next startup starts
-clean with `is_restarting=False`.
+| Entity category | Behavior |
+|-----------------|----------|
+| Status sensor | Renders the snapshot's actual status — Operational / Unreachable / Denied / Not Locked / Auth Failed / etc. No synthetic "Restarting…" label. Always available. |
+| Health sensors (ICMP, HTTP, health_status) | Independent coordinator. Continue updating on their own cadence — probes naturally report UNRESPONSIVE while the modem is down and recover when the modem does. |
+| Data sensors (channel counts, SNR, power, uptime, system_info fields) | Available when the snapshot's `modem_data` is not None. Unavailable when `modem_data is None` (poll failed — typically UNREACHABLE during the reboot itself). This is the same rule as any non-recovery period; no recovery-specific special case. |
+| Per-channel sensors | Same as data sensors. |
+| Restart button | Disabled only while `active_operation == "restart"` (during the ~2–5 s command dispatch). After that it's clickable again — the user may choose to retry after observing the dashboard. |
+| Update Modem Data button | Press is refused when `active_operation` is set. Normal polling at recovery cadence already refreshes the dashboard; extra manual refreshes would be wasted. |
+| Reset Entities button | Press is refused when `active_operation` is set. |
 
-See ORCHESTRATION_USE_CASES.md UC-40 through UC-49 and UC-72 for
-detailed scenarios.
+Data sensors going Unavailable on poll failure is the honest
+reading: the measurement didn't happen. A gap in time-series
+history during a reboot is accurate — uptime and channel power
+aren't valid while the modem is off. Holding the last reading
+would publish false values.
+
+**Unload during a window:** `async_unload_entry` stops the data
+coordinator's scheduled polls. The recovery window state lives on
+the orchestrator; it continues to tick but has no observable effect
+until the next `async_setup_entry`. All state is memory-only — a
+fresh setup starts with `recovery_active == False`.
+
+**HA restart during a window:** executor threads die with the
+process. The fresh orchestrator on next startup is in a clean state.
+
+See ORCHESTRATION_USE_CASES.md UC-40 through UC-46, UC-49, UC-72,
+UC-78, UC-88 for detailed scenarios.
+
+---
+
+## Recovery Adapter
+
+All HA-side recovery wiring lives in `custom_components/cable_modem_monitor/recovery_adapter.py`.
+The module owns the cadence constant, the per-entry dispatcher
+signal name, and the single setup entry point that installs the
+Core observer and the event-loop listener. Other HA modules don't
+reference recovery state directly — they read
+`orchestrator.recovery_active` or render snapshot truth.
+
+`__init__.py` imports `attach_recovery_cadence_listener` directly
+and calls it once during `async_setup_entry`. `coordinator.py`
+stays a pure types module (`CableModemRuntimeData` +
+`CableModemConfigEntry`); health-recovery wiring is a small private
+helper in `__init__.py` because it's local to startup and
+conceptually separate from Core's recovery observer.
+
+### Public surface
+
+```python
+# recovery_adapter.py
+
+_RECOVERY_POLL_INTERVAL = timedelta(seconds=30)
+# Data coordinator cadence while Core's recovery window is open.
+
+
+def recovery_state_signal(entry_id: str) -> str:
+    """Per-entry dispatcher signal name for recovery transitions."""
+
+
+def attach_recovery_cadence_listener(
+    hass: HomeAssistant,
+    entry: CableModemConfigEntry,
+    orchestrator: Orchestrator,
+    data_coordinator: DataUpdateCoordinator[ModemSnapshot],
+) -> None:
+    """Install the recovery observer and cadence listener.
+
+    Called once during ``async_setup_entry`` (Step 6a). Registers
+    an unsubscribe callback on ``entry.async_on_unload``.
+    """
+```
+
+### Behavior
+
+- On `attach_recovery_cadence_listener()`:
+  - Captures `data_coordinator.update_interval` as the "normal"
+    cadence (closure local; NOT stored on RuntimeData).
+  - Calls `orchestrator.set_recovery_observer(...)` with a
+    thread-safe dispatcher send (hops to the event loop via
+    `call_soon_threadsafe`).
+  - Connects an event-loop listener on
+    `recovery_state_signal(entry.entry_id)` that applies the
+    cadence switch.
+- On `recovery_active` True→False or False→True:
+  - Core fires the observer from the poll thread.
+  - The dispatcher send hops to the event loop.
+  - The listener reads `orchestrator.recovery_active` and switches
+    `data_coordinator.update_interval` between
+    `_RECOVERY_POLL_INTERVAL` (True) and the captured normal
+    cadence (False).
+  - On True, also calls `async_request_refresh()` so the first
+    fast-cadence poll happens immediately.
+- When the captured normal cadence is `None` (user disabled
+  polling): the listener is a no-op — we don't override the user's
+  explicit opt-out.
+
+### Why in HA and not Core
+
+Core is synchronous and owns no timers. Pushing the "poll faster"
+loop to HA's native scheduling keeps Core free of threads and
+bounded-latency concerns and gives timer cancellation, reschedule-
+on-interval-change, and event-loop safety for free.
+
+### Consumers
+
+Only `__init__.py` imports from `recovery_adapter.py` —
+`async_setup_entry` calls `attach_recovery_cadence_listener()`
+once during startup. Sensors and buttons do NOT reference the
+recovery signal:
+
+- `sensor.py` — reads snapshot state, which already updates via
+  the coordinator on every poll (faster during a window, normal
+  outside). No recovery signal subscription needed.
+- `button.py` — gates only on `active_operation`. Does not read
+  `recovery_active` or subscribe to any recovery signal.
+
+The signal is used internally for the cadence listener. Tests
+import `recovery_state_signal` directly for dispatcher-level
+assertions; no other production module does.
+
+---
+
+## Operation Mutex
+
+The adapter enforces mutual exclusion between destructive buttons
+via the `active_operation` field on `RuntimeData`. The field
+carries the name of the operation currently running, or `None`
+when nothing is active.
+
+Distinct from Core's `recovery_active`:
+
+- `active_operation` gates button presses for the duration of a
+  single handler (seconds). It's the only gate on the button.
+- `recovery_active` is a cadence signal, not a gate. HA reads it
+  to switch the data coordinator's polling interval. The restart
+  button does NOT read it — a user who sees a flakey modem mid-
+  recovery may legitimately want to retry.
+
+### Concurrency matrix
+
+| Running | Attempted | Behavior |
+|---------|-----------|----------|
+| — (no active_operation) | restart | Allowed; `active_operation = "restart"` for the handler's duration (~2–5 s). |
+| — (no active_operation) | reset | Allowed; `active_operation = "reset"`. |
+| — (no active_operation) | refresh (user) | Allowed — runs normally. |
+| `active_operation` set | any button | Refused (button disabled in UI; direct invocation logs and returns). |
+
+`recovery_active` has no row because it doesn't participate in
+gating. A button press during a recovery window is allowed; the
+press goes through `active_operation` like any other.
+
+### Context manager
+
+Set/clear discipline lives in a single helper so both destructive
+buttons share one code path.
+
+```python
+@contextmanager
+def hold_active_operation(
+    entry: CableModemConfigEntry,
+    op: ActiveOperation,
+) -> Iterator[None]:
+    runtime = entry.runtime_data
+    if runtime is None:
+        raise OperationUnavailableError("runtime_data unavailable — entry is unloading")
+    if runtime.active_operation is not None:
+        raise OperationInProgressError(runtime.active_operation)
+    runtime.active_operation = op
+    try:
+        yield
+    finally:
+        # Re-read — entry may have unloaded during the body.
+        runtime = entry.runtime_data
+        if runtime is not None:
+            runtime.active_operation = None
+```
+
+Guarantees:
+
+- The field is cleared on every exit path — success, exception,
+  cancellation — because `finally` runs.
+- Cleanup tolerates a concurrent entry unload that clears
+  `runtime_data` to `None`.
+- Uses `contextmanager` (not `asynccontextmanager`) because the
+  set/clear itself is synchronous; the body is where awaits happen.
+- No dispatcher signal fired from the mutex — `active_operation`
+  is short-lived (seconds) and the buttons that read it don't need
+  a signal (they only read the field when the user interacts with
+  them). Core's `recovery_state_signal` handles the longer-lived
+  window transitions.
+
+### Diagnostics
+
+`active_operation` is surfaced in the diagnostics download so a
+stuck-state report is self-diagnosing. If the field is non-None
+despite no handler actually running, the field's string value
+identifies which code path left it set. `recovery_active` and the
+recovery window's elapsed time are also exposed for the same
+reason.
+
+### Acceptance
+
+The `active_operation` field and the `hold_active_operation` helper
+are adapter-layer only — they gate destructive *buttons* for their
+runtime (seconds). That is the ONLY button gate.
+
+`orchestrator.recovery_active` is Core-scoped state set by the
+recovery module when a window is open (from any trigger: command,
+observed outage, reboot-signal match). Core's recovery observer fires the
+dispatcher signal named by `recovery_state_signal(entry_id)` on
+transitions. HA consumes it in one place only: the cadence listener
+installed by `attach_recovery_cadence_listener` in `recovery_adapter.py`,
+which drops the data coordinator's `update_interval` while a window
+is open. Nothing else subscribes.
+
+Core doesn't know *what* the observer does — it just invokes a
+callable — which keeps the layering one-directional. No HA-side
+component reads `recovery_active` for UX purposes: sensors render
+snapshot truth, the button gates on the short-lived
+`active_operation` mutex, and the user is trusted to decide when to
+retry based on what the dashboard shows.
+
+---
+
+## Reset Entities Concurrency Guard
+
+The Reset Entities button tears down and re-creates data-dependent
+entities to pick up new channel IDs after a modem reboots to a
+different channel set (UC-80). A second click while the first is
+still running can fire `_handle_coordinator_update()` against
+already-unloaded entities — observed symptom is an `AttributeError`
+on `entry.runtime_data` after the entry is partially torn down.
+
+The Reset button uses the shared `_hold_active_operation` context
+manager (see § Operation Mutex) for its mutex discipline. The
+button-specific availability toggle lives inside the `with` body:
+
+```python
+async def async_press(self) -> None:
+    try:
+        with _hold_active_operation(self._entry, "reset"):
+            self._attr_available = False
+            self.async_write_ha_state()
+            try:
+                # existing reset body — remove data-dependent entities,
+                # re-register deferred listener, trigger refresh
+                ...
+            finally:
+                self._attr_available = True
+                self.async_write_ha_state()
+    except OperationInProgressError:
+        return  # another destructive operation is running
+```
+
+Three defences, all required:
+
+1. **`active_operation` check at entry** (via the context manager) —
+   a second click while any destructive operation is running refuses
+   immediately. The field lives on `RuntimeData`, not the button
+   instance, so it survives the temporary teardown of data-dependent
+   entities during reset.
+2. **`_attr_available = False` during the work** — the UI visibly
+   disables the button so the user isn't tempted to hammer it.
+3. **Null-safety** — the context manager re-reads `runtime_data` on
+   exit because `async_unload_entry` can fire concurrently and clear
+   it to `None`. The reset flow must not assume the entry is still
+   loaded when it returns.
 
 ---
 
@@ -464,6 +768,10 @@ included automatically when new diagnostics are added to the model.
 - Full channel dump (`downstream_channels` + `upstream_channels`)
 - Config entry details (host, protocol, supports_icmp, etc.)
 - Coordinator state (last_update_success, update_interval)
+- `active_operation` field — surfaces a stuck mutex in user reports
+- Recovery window state — `recovery_active`, `recovery_reason`, and
+  window elapsed seconds so a stuck-fast-poll report is
+  self-diagnosing
 - Generic auth diagnostics (per-strategy, not HNAP-specific)
 
 **Sanitization:**
@@ -611,12 +919,18 @@ device is specified.
 **Behavior:**
 
 1. Resolve device_id to config entry
-2. Call `orchestrator.reset_connectivity()` to clear backoff
-3. Refresh health coordinator (if health monitoring is enabled)
-4. Refresh data coordinator
+2. Short-circuit if `runtime.active_operation is not None` — a
+   restart or reset is already running and will trigger its own
+   post-operation refresh; no user action is needed
+3. Call `orchestrator.reset_connectivity()` to clear backoff
+4. Refresh health coordinator (if health monitoring is enabled)
+5. Refresh data coordinator
 
 Same logic as the "Update Modem Data" button — both use the shared
-`async_request_modem_refresh()` helper to stay DRY.
+`async_request_modem_refresh()` helper to stay DRY, including the
+`active_operation` gate. Internal refreshes (post-restart step 6,
+health recovery listener) call the coordinator directly rather than
+going through the helper.
 
 **Automation example:**
 
@@ -779,7 +1093,8 @@ The HA adapter layer consists of these modules:
 | Module | Responsibility |
 |--------|---------------|
 | `__init__.py` | Startup, unload, migration dispatch, device registry, service registration |
-| `coordinator.py` | Update functions wrapping Core orchestrator and health monitor |
+| `coordinator.py` | `CableModemRuntimeData` dataclass + `CableModemConfigEntry` type alias |
+| `recovery_adapter.py` | Recovery cadence listener — observer into Core + dispatcher signal that flips `update_interval` while a window is open |
 | `sensor.py` | Entity classes for all sensor types |
 | `button.py` | Restart, Update, Reset Entities buttons |
 | `config_flow.py` | Setup wizard and options flow |

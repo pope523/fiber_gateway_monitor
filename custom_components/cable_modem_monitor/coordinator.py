@@ -9,9 +9,8 @@ or ``const.py`` (which should stay a leaf module with no heavy imports).
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -31,6 +30,13 @@ if TYPE_CHECKING:
         Orchestrator,
     )
 
+# Name of a destructive button operation currently in progress, or
+# None when nothing is running. Acts as a mutex between the Restart
+# and Reset buttons — a second press while one is in flight is
+# refused. Distinct from Core's ``recovery_active`` flag: that one
+# is a cadence signal, this one is a short-lived handler gate.
+ActiveOperation = Literal["restart", "reset"]
+
 
 @dataclass
 class CableModemRuntimeData:
@@ -45,9 +51,12 @@ class CableModemRuntimeData:
     health_coordinator: DataUpdateCoordinator[HealthInfo] | None
     orchestrator: Orchestrator
     health_monitor: HealthMonitor | None
-    cancel_event: threading.Event | None
     modem_identity: ModemIdentity
     channel_map: ChannelMap = field(default_factory=ChannelMap)
+    # Set while a destructive button handler (Restart, Reset) is
+    # running; cleared in the handler's ``finally`` block. Read by
+    # other buttons that must refuse overlapping presses.
+    active_operation: ActiveOperation | None = None
 
 
 CableModemConfigEntry: TypeAlias = ConfigEntry[CableModemRuntimeData]  # noqa: UP040 — mypy doesn't support PEP 695 yet

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import functools
 import logging
-import threading
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.const import CONF_HOST, EntityCategory
@@ -127,11 +126,13 @@ async def async_setup_entry(
 
 
 class RestartModemButton(_ButtonBase):
-    """Button to restart the cable modem.
+    """Button to dispatch a modem restart command.
 
-    Only created when modem.yaml declares actions.restart.  Runs
-    orchestrator.restart() in an executor thread with cooperative
-    cancellation via cancel_event.
+    Only created when modem.yaml declares actions.restart. Calls
+    ``orchestrator.restart()`` on an executor thread — a one-shot
+    command that returns in 2–5 seconds after authenticating,
+    sending the reboot instruction, and triggering a recovery
+    window.
 
     See HA_ADAPTER_SPEC.md § Restart Lifecycle.
     """
@@ -144,51 +145,61 @@ class RestartModemButton(_ButtonBase):
         self._attr_icon = "mdi:restart"
 
     async def async_press(self) -> None:
-        """Handle the button press — restart modem and monitor recovery."""
+        """Handle the button press — dispatch the restart command."""
         runtime = self._entry.runtime_data
         orchestrator = runtime.orchestrator
-
         model = runtime.modem_identity.model
 
-        if orchestrator.is_restarting:
-            _LOGGER.warning("Restart already in progress [%s] — ignoring press", model)
+        # Refuse overlapping destructive operations. ``active_operation``
+        # is the only gate — no ``recovery_active`` check. A user who
+        # sees a flakey modem after a restart is allowed to retry once
+        # this press finishes; Core's recovery window doesn't block
+        # the button.
+        if runtime.active_operation is not None:
+            _LOGGER.warning(
+                "Operation '%s' already in progress [%s] — ignoring restart press",
+                runtime.active_operation,
+                model,
+            )
             return
 
         _LOGGER.info("Modem restart initiated [%s]", model)
 
-        # Create cancel_event for cooperative cancellation
-        cancel_event = threading.Event()
-        runtime.cancel_event = cancel_event
-
-        # Show button as unavailable during restart
+        # Claim the mutex and mark the button busy. Clear both in
+        # finally so the button recovers even if restart raises.
+        runtime.active_operation = "restart"
         self._attr_available = False
         self.async_write_ha_state()
 
         try:
-            result: RestartResult = await self.hass.async_add_executor_job(orchestrator.restart, cancel_event)
+            result: RestartResult = await self.hass.async_add_executor_job(orchestrator.restart)
         finally:
-            runtime.cancel_event = None
-            # Restore button availability
+            # Re-read runtime_data — the entry may have unloaded
+            # during the await. If unloaded, nothing to clear.
+            current_runtime = self._entry.runtime_data
+            if current_runtime is not None:
+                current_runtime.active_operation = None
             self._attr_available = True
             self.async_write_ha_state()
 
-        # Notify user of outcome
         if result.success:
-            _LOGGER.info("Modem restart completed in %.0fs [%s]", result.elapsed_seconds, model)
+            _LOGGER.info("Restart command sent [%s] in %.1fs", model, result.elapsed_seconds)
             await self._notify(
-                f"Modem Restart Complete [{model}]",
-                f"{model} restarted successfully in {result.elapsed_seconds:.0f} seconds.",
+                f"Restart Command Sent [{model}]",
+                f"{model} restart command dispatched in {result.elapsed_seconds:.1f} seconds.",
                 _NOTIFY_RESTART,
             )
         else:
             _LOGGER.warning("Modem restart failed [%s]: %s", model, result.error)
             await self._notify(
                 f"Modem Restart Failed [{model}]",
-                f"{model} restart did not complete: {result.error}",
+                f"{model} restart did not dispatch: {result.error}",
                 _NOTIFY_RESTART,
             )
 
-        # Trigger immediate data refresh regardless of outcome
+        # Trigger an immediate refresh so the dashboard reacts to the
+        # post-reboot state (typically UNREACHABLE while the modem
+        # comes back).
         await runtime.data_coordinator.async_request_refresh()
 
 

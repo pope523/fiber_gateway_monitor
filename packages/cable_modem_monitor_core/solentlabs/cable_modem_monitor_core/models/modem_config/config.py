@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .actions import ActionsConfig, BehaviorsConfig
+from .actions import ActionsConfig
 from .auth import AuthConfig, get_transport_strategy_sets
 from .health import HealthConfig
 from .metadata import AttributionConfig, HardwareConfig, ReferencesConfig
@@ -42,7 +42,6 @@ class ModemConfig(BaseModel):
 
     # Actions
     actions: ActionsConfig | None = None
-    behaviors: BehaviorsConfig | None = None
 
     # Hardware
     hardware: HardwareConfig | None = None

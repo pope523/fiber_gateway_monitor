@@ -72,13 +72,3 @@ class HealthStatus(Enum):
     ICMP_BLOCKED = "icmp_blocked"
     UNRESPONSIVE = "unresponsive"
     UNKNOWN = "unknown"
-
-
-class RestartPhase(Enum):
-    """Recovery phases during a modem restart."""
-
-    COMMAND_SENT = "command_sent"
-    WAITING_RESPONSE = "waiting"
-    CHANNEL_SYNC = "channel_sync"
-    COMPLETE = "complete"
-    TIMEOUT = "timeout"

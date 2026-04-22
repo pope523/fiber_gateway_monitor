@@ -303,6 +303,144 @@ expanding the action model. This is intentional.
 
 ---
 
+## Recovery Architecture
+
+### Restart is a command, recovery is a window
+
+**Decision:** `Orchestrator.restart()` is a one-shot command
+(authenticate → execute action → clear session → trigger recovery →
+return). It does not probe, does not wait for operational, does not
+observe the reboot. Anything that happens after the command lands is
+handled by a separate "recovery" module that owns polling cadence
+for a bounded window.
+
+**Rationale:** The earlier design conflated the *command* (send a
+reboot instruction) with the *recovery observation* (watch until the
+modem is operational again). These are separable concerns with
+different contracts. The command is transactional — it either
+dispatches cleanly or it doesn't. Recovery is a polling-cadence
+concern — HOW OFTEN to poll for a while after a disruption. Merging
+them produced a restart method that blocked for three minutes,
+needed cancellation plumbing, owned its own probe loop, and
+duplicated work that external-reboot detection also needed.
+
+Splitting them lets each do one thing. Restart becomes ~5 lines.
+Recovery becomes a single module that any trigger (command, observed
+outage, heuristic) can ask to enter a window. The Status sensor
+always reflects real snapshot state (Unreachable → ranging → Operational);
+no synthetic "Restarting…" label. The restart button returns quickly;
+the dashboard tells the user what's actually happening.
+
+**Constrains:** Restart never waits, never times out, never
+cancels. Its only failure mode is `command_failed` (auth or action
+executor raised). Recovery cannot be triggered by caller request
+other than the three defined paths (command, observed failure,
+reboot-signal check). Consumers cannot observe recovery window
+progress — they see the snapshot stream and react to that.
+
+### One recovery concept, multiple triggers
+
+**Decision:** Recovery is a unified module — `orchestration/recovery.py` —
+with a single state (`active: bool`) and three entry triggers:
+command dispatched, observed connectivity outage, and a reboot-
+signal check on successful polls. All three enter the same window
+with the same behavior.
+
+**Rationale:** The modem's physical state — "not fully operational,
+expected to return" — is the same regardless of what triggered it.
+Modeling it as one thing with multiple triggers matches reality.
+The earlier design had two implementations (inline wait for
+commanded, flag+observer for detected) running in parallel; they
+shared a deadline constant, differed in everything else, and
+required the orchestrator to arbitrate between them. The unified
+module removes the arbitration.
+
+Triggers differ only in how they recognize "recovery is needed."
+The recovery module's reaction is the same: open a window, let
+polls run at a faster cadence, close the window when the window
+duration expires. Exit is time-based, not snapshot-based — that
+sidesteps the "should we exit on OPERATIONAL?" inference trap.
+
+**Constrains:** New trigger paths go through the recovery module's
+existing entry API (`begin(reason)`, `evaluate_snapshot`,
+`evaluate_failure`). No other module owns polling loops, deadlines,
+or cadence decisions. The orchestrator delegates; the collector has
+no knowledge of recovery.
+
+### Generic timing, not per-modem knobs
+
+**Decision:** Recovery timing lives as class attributes on
+`Recovery` in `orchestration/recovery.py` (e.g. `WINDOW_SECONDS`).
+Modem YAML and action models carry no timing fields.
+
+**Rationale:** Per-modem tuning was tried in v3.14 alpha and
+removed. "How long a reboot takes" varies by firmware version, CMTS
+load, and DOCSIS ranging — none of which are modem-class
+characteristics. Bench-tuning values per modem doesn't scale:
+firmware updates silently invalidate them, and a value too short or
+too long produces misleading UX or wasted polls.
+
+**Constrains:** New modems cannot introduce grace/timeout fields on
+action models or in `modem.yaml`. Recovery timing is a global
+concern. If future needs justify user-configurable cadence/window
+settings, they live in HA's options flow, not per-modem config.
+
+### Reboot-signal trigger is a simple threshold vote, bounded harm
+
+**Decision:** The "did a reboot happen between polls?" trigger is a
+2-of-3 vote over three observables: counter reset, uptime drop,
+transitional docsis. Implemented as a private method
+`_check_reboot_signals` on the `Recovery` class — no separate
+module, no weights, no probabilities, no inference framing. Its
+output is binary: "trigger a recovery window, or don't."
+
+**Rationale:** An earlier sketch called this "recovery heuristics"
+and lived in its own module with inference framing. That oversold
+both the complexity and the uncertainty of the logic. It's boolean
+logic over observables — a simple vote. The state it needs
+(previous counter totals, previous uptime) belongs with
+Recovery's other state; splitting it created a seam where there
+wasn't a real boundary.
+
+A false positive (two signals match without a real reboot) causes
+polling to run faster for a bounded window and nothing else. No UX
+misrepresentation (the snapshot still reports whatever the modem
+reports), no misleading labels, no stalls. That blast-radius cap
+is why the threshold can stay simple.
+
+**Constrains:** The reboot-signal check cannot set status, cannot
+publish UX state, cannot extend window duration. It returns a
+reason string (e.g. `"reboot_signals:counter_reset+transitional_docsis"`)
+or None. If the rule grows more complex — weighted scoring,
+per-modem opt-outs, user-level disable — it graduates to its own
+module then. Not now.
+
+### Core→HA recovery coupling via observer callback
+
+**Decision:** `Orchestrator.set_recovery_observer(callback)` lets
+the HA adapter register a callable that fires when
+`recovery_active` flips (False→True on window entry, True→False on
+window exit). HA wires this to `dispatcher_send` so the data
+coordinator switches between normal and recovery cadence, and the
+restart button's enabled state updates promptly.
+
+**Rationale:** Core cannot import `homeassistant.*` (principle #3).
+Polling `recovery_active` from HA would lag by a coordinator cycle
+and miss rapid transitions. An observer callback keeps Core
+platform-agnostic while giving HA immediate, thread-safe
+notification when state changes on the Core poll thread. The
+"poll faster for a while" loop lives in HA (via
+`coordinator.update_interval`), not in Core — Core only signals
+state.
+
+**Constrains:** New Core→HA state signals follow the same observer
+pattern, not shared mutable state or HA-side polling. Observer
+callbacks must be safe to call from the Core poll thread. Any
+"check until condition" loops triggered by Core state live in HA
+using its native scheduling primitives.
+
+---
+
 ## Testing Strategy
 
 ### HAR replay as integration tests
