@@ -36,21 +36,21 @@ Open source projects that informed our parser implementations:
 
 ### Polling Interval Research
 
-**SNMP Polling Best Practices**
+#### SNMP Polling Best Practices
 
 - **Source:** Obkio Network Monitoring Blog
 - **URL:** <https://obkio.com/blog/snmp-polling/>
 - **Contribution:** Industry standards for network device polling intervals (5-10 minutes standard)
 - **Applied:** Default scan interval configuration (300 seconds)
 
-**API Polling Best Practices**
+#### API Polling Best Practices
 
 - **Source:** Merge.dev Engineering Blog
 - **URL:** <https://www.merge.dev/blog/api-polling-best-practices>
 - **Contribution:** Guidance on preventing server overload (> 1 second polling can overload)
 - **Applied:** Minimum scan interval validation (60 seconds)
 
-**Network Device Polling Guidelines**
+#### Network Device Polling Guidelines
 
 - **Source:** Broadcom DX NetOps Community
 - **URL:** <https://community.broadcom.com/communities/community-home/digestviewer/viewthread?MID=824934>

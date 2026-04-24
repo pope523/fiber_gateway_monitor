@@ -120,7 +120,7 @@ class FormAuthManager(BaseAuthManager):
         # Step 4: Evaluate success
         error = _check_success(config, response)
         if error:
-            return AuthResult(success=False, error=error)
+            return AuthResult(success=False, error=error, response=response)
 
         response_path = urlparse(response.url).path if response.url else ""
 

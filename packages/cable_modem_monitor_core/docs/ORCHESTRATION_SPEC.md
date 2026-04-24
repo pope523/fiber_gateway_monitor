@@ -231,43 +231,61 @@ Example — successful collection with no channels:
 ### Auth Log Level
 
 Auth managers accept an optional `log_level` parameter (default
-`logging.DEBUG`). The collector passes this through from its caller:
+`logging.DEBUG`) used for their own internal narration during
+`authenticate()` — which login URL they're hitting, nonce extraction,
+session-cookie acceptance, etc. Callers leave the default in place
+during normal polling and config-flow validation, keeping
+steady-state logs quiet.
 
-- **Polling** (normal operation): `log_level=logging.DEBUG` — auth
-  details hidden in steady-state logs.
-- **Config flow** (setup wizard): `log_level=logging.INFO` — auth
-  details visible so users see why auth failed during setup.
+When auth fails, the collector emits a single sanitized ``WARNING``
+log carrying the modem's response (see § Auth-Failure Detail Log
+below). That line lands in HA's default log view without requiring
+the user to enable DEBUG, which is the diagnostic surface a
+maintainer needs when helping a stuck-setup user.
 
 This mirrors the existing `log_level` pattern used by action execution
 (both HTTP and HNAP actions). Auth managers use the level for all
 non-error log calls during `authenticate()`. Errors and warnings are
 always logged regardless of `log_level`.
 
-### HNAP Auth Diagnostics
+### Auth-Failure Detail Log
 
-The HNAP auth manager stores challenge and login request-response
-pairs for diagnostic retrieval. Passwords are redacted — only the
-computed `LoginPassword` hash (already HMAC-derived, not reversible)
-is stored.
+When the collector's auth phase fails, it emits one sanitized
+``WARNING`` log carrying the modem's response. That single line is
+the diagnostic surface for stuck-setup users — it lands in HA's
+default log view without requiring DEBUG to be enabled, which is
+what shortens the round-trip on issues like #86, #104, #120.
 
-```python
-@dataclass
-class HnapAuthDiagnostics:
-    """Diagnostic data from the last HNAP auth attempt.
-
-    Passwords are redacted. LoginPassword is the HMAC-derived
-    hash, not the user's password.
-    """
-
-    challenge_request: dict[str, Any]   # Phase 1 request body
-    challenge_response: dict[str, Any]  # Phase 1 response body
-    login_request: dict[str, Any]       # Phase 2 request body
-    login_response: dict[str, Any]      # Phase 2 response body
+```text
+Auth failed [MODEL] strategy=form
+  request: POST http://192.168.100.1/login?<redacted>
+  response: 401 text/html
+  body: <truncated 500-char snippet, with the user's password replaced by [REDACTED]>
 ```
 
-Accessible via `HnapAuthManager.last_auth_diagnostics`. Returns
-`None` if no auth attempt has been made. The HA diagnostics builder
-surfaces this for users debugging HNAP auth failures.
+The log fires from the collector's existing failure path, so
+initial setup, reauth, options-flow re-validation, and steady-state
+polling all surface the same detail. The auth circuit breaker
+bounds volume during persistent failure.
+
+**Sanitization** is local to the collector and minimal:
+
+- The user's literal password is replaced with ``[REDACTED]`` if it
+  appears in the body snippet.
+- URL query strings are stripped wholesale (``?<redacted>``) — some
+  strategies (Arris ``url_token``) put credentials in the query.
+- Body snippet is truncated to 500 characters.
+
+Derived credential forms (PBKDF2 hashes, encrypted blobs) are left
+intact — they're protocol-shaped, not the user's secret, and the
+maintainer needs them to confirm the strategy ran.
+
+Auth managers must include the ``requests.Response`` on their
+failure ``AuthResult`` so the collector can render the detail.
+
+See ARCHITECTURE_DECISIONS.md § "Auth-failure detail via single
+WARNING log" for the design rationale (replaces an earlier session-
+adapter capture mechanism that was over-engineered for the goal).
 
 ### Exceptions
 
@@ -300,7 +318,9 @@ def create_collector(
     modem_config, parser_config, post_processor,
     base_url, username="", password="", *, legacy_ssl=False,
 ) -> ModemDataCollector:
-    """Single-shot collector for config flow validation."""
+    """Single-shot collector. Used by all HA config-flow paths
+    (initial setup, reauth, options-flow re-validation) and by the
+    test harness."""
 
 def create_orchestrator(
     modem_config, parser_config, post_processor,
@@ -317,8 +337,10 @@ def create_orchestrator(
   resolves health probe defaults vs config entry overrides, calls
   `create_orchestrator()`. Config loading stays in the adapter;
   assembly delegates to Core.
-- **Config flow:** Calls `create_collector()` for single-shot
-  validation during setup.
+- **Config flow:** Calls `create_collector(...).execute()` for all
+  validation paths (initial setup, reauth, options re-validation).
+  Auth-failure detail is logged from the collector — no per-flow
+  variation. See § Auth-Failure Detail Log.
 - **Test harness:** Calls `create_orchestrator()` with
   `supports_icmp=False, http_probe=False` (no real modem to probe).
 
@@ -763,6 +785,11 @@ class OrchestratorDiagnostics:
             compute aggregates (min/max/avg) from this raw data.
         last_poll_timestamp: Monotonic time of last get_modem_data()
             call. None if never polled.
+
+    Note: auth-failure wire detail is not stored on this dataclass.
+    The collector emits a single sanitized ``WARNING`` log when
+    auth fails (see § Auth-Failure Detail Log), which is the
+    diagnostic surface; no separate structured type is exposed.
     """
 
     poll_duration: float | None

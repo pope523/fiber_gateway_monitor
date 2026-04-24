@@ -339,7 +339,7 @@ variant changes response structure, the golden file test catches it.
 
 ## Examples
 
-**Single variant, parser.yaml + parser.py**
+### Single variant, parser.yaml + parser.py
 
 ```text
 modems/{manufacturer}/{model}/
@@ -351,7 +351,7 @@ modems/{manufacturer}/{model}/
     └── modem.expected.json
 ```
 
-**Multi-variant, shared transport**
+### Multi-variant, shared transport
 
 ```text
 modems/{manufacturer}/{model}/
@@ -369,7 +369,7 @@ modems/{manufacturer}/{model}/
     └── modem-{variant}.expected.json
 ```
 
-**Config variant + test variant (e.g., SB6190)**
+### Config variant + test variant (e.g., SB6190)
 
 ```text
 modems/arris/sb6190/
@@ -389,7 +389,7 @@ modems/arris/sb6190/
 resolves it to `modem-form-nonce.yaml`. Same auth config, different
 firmware encoding detected at runtime.
 
-**HNAP, single variant, 100% parser.yaml**
+### HNAP, single variant, 100% parser.yaml
 
 ```text
 modems/{manufacturer}/{model}/
@@ -402,7 +402,7 @@ modems/{manufacturer}/{model}/
     └── modem-{compat}.expected.json
 ```
 
-**Multi-variant, 100% parser.py**
+### Multi-variant, 100% parser.py
 
 ```text
 modems/{manufacturer}/{model}/

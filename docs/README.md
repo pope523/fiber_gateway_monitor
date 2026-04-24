@@ -20,7 +20,7 @@ specs, see the indexes in each package's `docs/` directory.
 |----------|--------|
 | [reference/RELEASING.md](reference/RELEASING.md) | Release process (alpha, beta, stable) |
 | [reference/LINTING.md](reference/LINTING.md) | Linter configuration and rules |
-| [reference/CODEQL_SECURITY.md](reference/CODEQL_SECURITY.md) | CodeQL security analysis |
+| [`.github/codeql/README.md`](../.github/codeql/README.md) | CodeQL configuration, suppressed-rule rationales, sibling-repo workflow |
 | [reference/CODEQL_TESTING_GUIDE.md](reference/CODEQL_TESTING_GUIDE.md) | CodeQL test patterns |
 
 ## Setup

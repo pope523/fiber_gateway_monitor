@@ -25,8 +25,11 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
+import yaml
 from har_capture.patterns import load_allowlist
 from har_capture.sanitization import check_for_pii
 
@@ -51,6 +54,93 @@ def _load_safe_values() -> dict[str, list[str]]:
 
 _SAFE = _load_safe_values()
 
+# ---------------------------------------------------------------------------
+# Catalog-driven custom PII patterns
+# ---------------------------------------------------------------------------
+#
+# The catalog declares each modem's credential field name in
+# modem.yaml (auth.password_field). har-capture's universal
+# sensitive-field patterns catch most of these (anything matching
+# ``password|passwd|pwd|\bpass``), but quirky names like Hitron
+# CODA56's ``pws`` slip through. Build a custom-patterns JSON from
+# the catalog declarations so check_for_pii flags fixture commits
+# that contain those quirky fields with non-redacted values.
+#
+# Same source-of-truth principle as the runtime auth-failure log
+# scrubber in Core: the catalog owns the field-name knowledge; the
+# PII gate consumes that ownership.
+
+_CATALOG_MODEMS = Path(__file__).parent.parent / "solentlabs" / "cable_modem_monitor_catalog" / "modems"
+
+# Field names already covered by har-capture's defaults — anything
+# matching these patterns can be omitted from our custom regex to
+# avoid duplicate findings.
+_DEFAULT_COVERAGE_RE = re.compile(
+    r"password|passwd|pwd|\bpass|secret|token|credential",
+    re.IGNORECASE,
+)
+
+
+def _collect_uncovered_credential_fields() -> list[str]:
+    """Return catalog-declared password_field names not covered by har-capture defaults.
+
+    Walks every ``modem*.yaml`` in the catalog, extracts
+    ``auth.password_field`` (string or list-of-strings — both
+    shapes appear in the catalog), and returns the set of names
+    that har-capture's universal patterns would NOT match.
+    """
+    fields: set[str] = set()
+    if not _CATALOG_MODEMS.is_dir():
+        return []
+    for yml in _CATALOG_MODEMS.rglob("modem*.yaml"):
+        try:
+            data = yaml.safe_load(yml.read_text()) or {}
+        except yaml.YAMLError:
+            continue
+        auth = (data.get("auth") or {}) if isinstance(data, dict) else {}
+        pf = auth.get("password_field") if isinstance(auth, dict) else None
+        if isinstance(pf, str) and pf:
+            fields.add(pf)
+        elif isinstance(pf, list):
+            for item in pf:
+                if isinstance(item, str) and item:
+                    fields.add(item)
+    return sorted(f for f in fields if not _DEFAULT_COVERAGE_RE.search(f))
+
+
+def _build_catalog_pii_patterns_file() -> str | None:
+    """Generate a custom_patterns JSON for ``check_for_pii``.
+
+    Returns the path to the generated JSON file, or ``None`` if
+    the catalog has no credential fields beyond what har-capture
+    already covers (in which case the caller passes ``None`` to
+    ``check_for_pii`` and uses defaults only).
+    """
+    uncovered = _collect_uncovered_credential_fields()
+    if not uncovered:
+        return None
+
+    # Match form-urlencoded (``field=value``), JSON (``"field": "value"``),
+    # and YAML (``field: value``). Allows optional quoting around the
+    # field name. Requires at least 4 chars in the value to filter out
+    # empty/short placeholders.
+    field_alt = "|".join(re.escape(f) for f in uncovered)
+    pattern_def = {
+        "patterns": {
+            "catalog_credential_field": {
+                "regex": rf"['\"]?\b({field_alt})\b['\"]?\s*[=:]\s*['\"]?([^\s,&'\"]{{4,}})['\"]?",
+                "flags": ["IGNORECASE"],
+            }
+        }
+    }
+
+    out = Path(tempfile.gettempdir()) / "cmm_catalog_pii_patterns.json"
+    out.write_text(json.dumps(pattern_def, indent=2))
+    return str(out)
+
+
+_CATALOG_PII_PATTERNS = _build_catalog_pii_patterns_file()
+
 # Build a simple set of known allowlisted values from har-capture
 _allowlist = load_allowlist()
 PII_ALLOWLIST = set(_allowlist.get("static_placeholders", {}).get("values", []))
@@ -68,13 +158,11 @@ TAGVALUE_SAFE_PATTERNS: set[str] = set(_SAFE["safe_tagvalue_patterns"])
 _SAFE_SERIAL_PREFIXES: tuple[str, ...] = tuple(_SAFE["safe_serial_prefixes"])
 _CODE_INDICATORS: tuple[str, ...] = tuple(_SAFE["code_indicators"])
 _SAFE_IPV6_PREFIXES: tuple[str, ...] = tuple(_SAFE["safe_ipv6_prefixes"])
+_SAFE_CREDENTIAL_PLACEHOLDERS: set[str] = {v.lower() for v in _SAFE.get("safe_credential_placeholders", [])}
 
-# Known safe values (har-capture allowlist + common placeholders)
-SAFE_VALUES = set(PII_ALLOWLIST) | {
-    "00:00:00:00:00:00",
-    "ff:ff:ff:ff:ff:ff",
-    "0.0.0.0",
-}
+# Known safe values (har-capture allowlist + common placeholders +
+# documented public credential placeholders from the catalog).
+SAFE_VALUES = set(PII_ALLOWLIST) | {"00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "0.0.0.0"} | _SAFE_CREDENTIAL_PLACEHOLDERS
 
 # ---------------------------------------------------------------------------
 # Regex patterns (logic — stays in code)
@@ -153,6 +241,56 @@ def _has_code_indicators(match: str) -> bool:
     return any(ind in match for ind in _CODE_INDICATORS)
 
 
+def _is_safe_catalog_credential_match(match: str) -> bool:
+    """True if a catalog_credential_field match holds a known placeholder.
+
+    Match shape: ``<field>=<value>`` or ``<field>: <value>``. Safe only
+    when the value portion is a known redaction placeholder. No
+    code-indicator check here: the bare match is just the field+value
+    pair with no surrounding source context to inspect.
+    """
+    value_match = re.search(r"[=:]\s*['\"]?([^'\"\s,&]+)", match)
+    if not value_match:
+        return False
+    value = value_match.group(1).strip()
+    return value.startswith("***") or value == "[REDACTED]" or value.lower() in SAFE_VALUES
+
+
+def _is_safe_session_token_or_account_id(match: str) -> bool:
+    return _has_code_indicators(match) or " " in match
+
+
+def _is_safe_password_field(match: str) -> bool:
+    return _has_code_indicators(match) or match == "password=password"
+
+
+def _is_safe_ipv6(match: str) -> bool:
+    match_lower = match.lower()
+    if any(match_lower.startswith(p) for p in _SAFE_IPV6_PREFIXES):
+        return True
+    return len(match) <= 5
+
+
+def _is_safe_private_ip(match: str) -> bool:
+    return is_safe_ip(match) or match.startswith("10.")
+
+
+# Dispatch from pattern name → safe-finding handler. Adding a new
+# pattern category means adding a row here, not extending the if/elif
+# chain (which would push complexity back over the C901 threshold).
+_SAFE_FINDING_DISPATCH: dict[str, Callable[[str], bool]] = {
+    "public_ip": _is_safe_ip_finding,
+    "mac_address": is_safe_mac,
+    "private_ip": _is_safe_private_ip,
+    "serial_number": _is_safe_serial_finding,
+    "password_field": _is_safe_password_field,
+    "catalog_credential_field": _is_safe_catalog_credential_match,
+    "session_token": _is_safe_session_token_or_account_id,
+    "account_id": _is_safe_session_token_or_account_id,
+    "ipv6": _is_safe_ipv6,
+}
+
+
 def _is_safe_finding(finding: dict[str, str]) -> bool:
     """Filter known false positives from har-capture check_for_pii."""
     pattern = finding["pattern"]
@@ -161,24 +299,8 @@ def _is_safe_finding(finding: dict[str, str]) -> bool:
     if match.lower() in SAFE_VALUES:
         return True
 
-    if pattern == "public_ip":
-        return _is_safe_ip_finding(match)
-    if pattern == "mac_address":
-        return is_safe_mac(match)
-    if pattern == "private_ip":
-        return is_safe_ip(match) or match.startswith("10.")
-    if pattern == "serial_number":
-        return _is_safe_serial_finding(match)
-    if pattern == "password_field":
-        return _has_code_indicators(match) or match == "password=password"
-    if pattern in ("session_token", "account_id"):
-        return _has_code_indicators(match) or " " in match
-    if pattern == "ipv6":
-        match_lower = match.lower()
-        if any(match_lower.startswith(p) for p in _SAFE_IPV6_PREFIXES):
-            return True
-        return len(match) <= 5
-    return False
+    handler = _SAFE_FINDING_DISPATCH.get(pattern)
+    return handler(match) if handler else False
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +423,7 @@ def check_html_file(filepath: Path) -> list[str]:
     issues = []
     content = filepath.read_text(errors="ignore")
 
-    findings = check_for_pii(content, str(filepath))
+    findings = check_for_pii(content, str(filepath), custom_patterns=_CATALOG_PII_PATTERNS)
     for finding in findings:
         if not _is_safe_finding(finding):
             issues.append(f"  {finding['pattern']}: {finding['match']} (line {finding['line']})")
@@ -328,7 +450,7 @@ def check_json_file(filepath: Path) -> list[str]:
     issues.extend(check_session_tokens(content, filepath))
     issues.extend(check_ips_in_content(content, filepath))
 
-    findings = check_for_pii(content, str(filepath))
+    findings = check_for_pii(content, str(filepath), custom_patterns=_CATALOG_PII_PATTERNS)
     for finding in findings:
         if not _is_safe_finding(finding):
             issues.append(f"  {finding['pattern']}: {finding['match']} (line {finding['line']})")
@@ -358,7 +480,11 @@ def check_har_file(filepath: Path) -> list[str]:  # noqa: C901
             for key, value in obj.items():
                 new_path = f"{path}.{key}" if path else key
                 if key in ("text", "value", "content") and isinstance(value, str):
-                    findings = check_for_pii(value, f"{filepath}:{new_path}")
+                    findings = check_for_pii(
+                        value,
+                        f"{filepath}:{new_path}",
+                        custom_patterns=_CATALOG_PII_PATTERNS,
+                    )
                     for finding in findings:
                         if not _is_safe_finding(finding):
                             issues.append(f"  {finding['pattern']}: {finding['match']} (in {new_path})")

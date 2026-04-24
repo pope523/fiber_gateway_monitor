@@ -620,7 +620,6 @@ buttons, availability, device model) is unaffected.
 <!-- Catalog: parser.yaml files (source of field mappings) -->
 [s34-parser]: ../../../packages/cable_modem_monitor_catalog/solentlabs/cable_modem_monitor_catalog/modems/arris/s34/parser.yaml
 [mb8611-parser]: ../../../packages/cable_modem_monitor_catalog/solentlabs/cable_modem_monitor_catalog/modems/motorola/mb8611/parser.yaml
-[cm1200-parser]: ../../../packages/cable_modem_monitor_catalog/solentlabs/cable_modem_monitor_catalog/modems/netgear/cm1200/parser.yaml
 
 <!-- Catalog: verified/expected golden files (parsed output evidence) -->
 [s33v2-verified]: ../../../packages/cable_modem_monitor_catalog/solentlabs/cable_modem_monitor_catalog/modems/arris/s33v2/test_data/modem.verified.json

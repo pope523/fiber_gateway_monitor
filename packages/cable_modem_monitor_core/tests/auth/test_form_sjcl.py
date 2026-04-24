@@ -337,8 +337,11 @@ class TestFormSjclAuthManager:
         page_resp.text = _login_page_html()
 
         with (
-            patch.object(session, "get", return_value=page_resp),
-            patch.object(session, "post", side_effect=requests.ConnectionError("lost")),
+            patch.object(
+                session,
+                "request",
+                side_effect=[page_resp, requests.ConnectionError("lost")],
+            ),
             pytest.raises(requests.ConnectionError),
         ):
             manager.authenticate(session, "http://192.168.0.1", "admin", "password")

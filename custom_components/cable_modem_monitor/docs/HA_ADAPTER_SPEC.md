@@ -718,7 +718,10 @@ Circuit breaker opens
  │     (reuses Step 3 connection form — host + credentials)
  │
  ├─ 5. Validation runs in executor
- │     (connectivity + auth + parse — same as config flow Step 4)
+ │     (connectivity + auth + parse — same pipeline used by setup
+ │     and options flows; the collector emits a single WARNING with
+ │     the modem's response on auth failure — see ORCHESTRATION_SPEC
+ │     § Auth-Failure Detail Log)
  │
  ├─ 6. On success:
  │     ├─ Update config entry with new credentials
@@ -757,6 +760,14 @@ included automatically when new diagnostics are added to the model.
   successful collection (path, duration_ms, size_bytes per resource)
 - `last_poll_timestamp` — monotonic time of last poll
 
+**Auth-failure detail surfaces in `recent_logs`.** When auth fails,
+the collector emits a single sanitized ``WARNING`` log carrying
+the modem's response (see ORCHESTRATION_SPEC.md § Auth-Failure
+Detail Log). That line is included in the ``recent_logs`` block
+of the diagnostics download alongside other Core/HA log records —
+no separate auth-capture key, no on-demand round-trip to the modem
+during diagnostics build.
+
 **From HA (adapter-side):**
 
 - PII review checklist
@@ -772,13 +783,14 @@ included automatically when new diagnostics are added to the model.
 - Recovery window state — `recovery_active`, `recovery_reason`, and
   window elapsed seconds so a stuck-fast-poll report is
   self-diagnosing
-- Generic auth diagnostics (per-strategy, not HNAP-specific)
 
 **Sanitization:**
 
-- Credentials, private IPs, MAC addresses, serial numbers scrubbed
-- Uses `har_capture` library for HTML/content sanitization
-- PII checklist warns user to verify before sharing
+- File paths and RFC 1918 private IPs scrubbed in `recent_logs` and
+  `last_error` blocks (preserves the modem gateway IP). Other
+  blocks (`system_info`, channel dumps) pass through verbatim —
+  the PII checklist is the primary safety net.
+- PII checklist warns the user to verify before sharing
 
 **No raw HTML capture.** Use `har-capture` for collecting raw modem
 data for parser development.

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Recovery state machine** — new `orchestration/recovery.py` owns
+  the post-disruption polling window as a single concept with three
+  triggers: a dispatched restart command, an observed connectivity
+  outage, and a 2-of-3 reboot-signal vote (counter reset, uptime
+  drop, transitional DOCSIS state). HA's `recovery_adapter.py`
+  subscribes to a Core observer callback and flips the data
+  coordinator to a faster cadence while the window is open. Restart
+  (`orchestration/restart.py`) is now a one-shot command — it
+  dispatches the reboot, triggers recovery, and returns; it no
+  longer probes or waits. Status sensors render snapshot truth
+  throughout (no synthetic "Restarting…" label).
+- **Canonical channel key order** — `models/field_registry.py`
+  exposes `CHANNEL_FIELD_ORDER` and `canonicalize_channel_keys()`;
+  the HA diagnostics builder routes `downstream_channels` and
+  `upstream_channels` through it before emit. Output order is now
+  predictable (identification → location → quality → errors)
+  regardless of each modem's native table layout.
+- **CM2050V confirmed** on firmware tested by #105 (Dragon1473) —
+  catalog promoted from `awaiting_verification` to `confirmed`.
+- **Auth-failure detail in the log** — when authentication fails,
+  the collector now emits a single sanitized `WARNING` carrying the
+  modem's response (strategy, request line, status, Content-Type,
+  body snippet with the user's password redacted and URL query
+  stripped). Targets the stuck-in-setup workflow in #86, #104, #120
+  without the "please enable debug logging and retry" round-trip.
+  Same line surfaces in initial setup, reauth, options-flow
+  re-validation, and steady-state polling — no per-flow plumbing.
+
+### Changed
+
+- **ModemHealth freshness gate** — the health probe exposes
+  `latest_probe_at`; the orchestrator refuses to clear connectivity
+  backoff based on a stale RESPONSIVE reading from before an
+  observed outage.
+- **HA operation mutex** — `coordinator.active_operation` now gates
+  Restart and Reset Entities buttons against each other; the
+  destructive-button discipline lives on `RuntimeData` rather than
+  the button instances.
+
+### Removed
+
+- **Per-modem behavior flags** — the `behaviors:` block is removed
+  from every `modem.yaml`. Per-modem behavior tuning was a Core
+  extension point that attracted misuse; recovery timing is generic
+  (see `Recovery` class attributes) and no other behavior knob is
+  needed across the fleet.
+- **`BehaviorsConfig` / `RestartPhase` / `response_monitor` /
+  `channel_stability` / `parsers/coordinator` legacy modules** —
+  the old restart-monitor plumbing is replaced by the unified
+  recovery module.
+- **`HnapAuthDiagnostics`** — the HNAP-specific diagnostic dataclass
+  and `HnapAuthManager.last_auth_diagnostics` property are removed.
+  HNAP auth diagnostics now flow through the generic on-demand
+  capture along with every other strategy, and with sanitized
+  wire detail rather than raw request/response dicts.
+
 ## [3.14.0-alpha.16] - 2026-04-16
 
 ### Added
@@ -2085,6 +2143,11 @@ This release provides extensive diagnostic information to help understand why th
   - Added coverage enforcement to test job (--cov-fail-under=50)
 - Updated test requirements to include mypy and types-requests
 - Updated pre-commit hooks to include mypy type checking
+- **Improved Exception Handling** - Better timeout and connection error handling in XB7 parser
+  - Timeout errors logged at DEBUG level (reduces log noise during reboots)
+  - Connection errors logged at WARNING level
+  - Authentication errors logged at ERROR level
+  - Helps distinguish between network issues, modem reboots, and authentication problems
 
 ### Security
 
@@ -2150,19 +2213,6 @@ This release provides extensive diagnostic information to help understand why th
   - Automatic HTTPS/HTTP protocol detection with fallback
   - Unblocks MB8611 and other HTTPS modems (Issue #6)
 
-### Changed
-
-- Enhanced CI/CD workflows with additional quality checks
-  - Added mypy type checking to lint job
-  - Added coverage enforcement to test job (--cov-fail-under=50)
-- Updated test requirements to include mypy and types-requests
-- Updated pre-commit hooks to include mypy type checking
-- **Improved Exception Handling** - Better timeout and connection error handling in XB7 parser
-  - Timeout errors logged at DEBUG level (reduces log noise during reboots)
-  - Connection errors logged at WARNING level
-  - Authentication errors logged at ERROR level
-  - Helps distinguish between network issues, modem reboots, and authentication problems
-
 ### Documentation
 
 - **TROUBLESHOOTING.md** - Comprehensive troubleshooting guide
@@ -2174,49 +2224,6 @@ This release provides extensive diagnostic information to help understand why th
   - Complete implementation roadmap through v4.0
   - Issue management policy
   - Version targets and strategy
-
-### Security
-
-- **Comprehensive Security Remediation** - Resolved all 26 CodeQL security vulnerabilities
-  - **SSL/TLS Security (Critical/High - 4 issues)**
-    - Made SSL certificate verification configurable via integration settings
-    - Removed global `urllib3.disable_warnings()` call that suppressed all SSL warnings
-    - Fixed hardcoded `ssl=False` in health monitor with proper SSL context
-    - Added conditional SSL warning suppression only when verification is explicitly disabled
-    - Added enhanced user-facing warnings about MITM attack risks
-    - Defaults to disabled (verify_ssl=False) for backward compatibility with self-signed certificates
-  - **Open Redirect Prevention (Critical/High - 2 issues)**
-    - Added redirect URL validation in health monitor HTTP checks
-    - Implemented same-host redirect checking in Motorola parser login
-    - Added cross-host redirect blocking in Technicolor XB7 parser
-    - Validates all redirect targets to prevent phishing attacks
-  - **Command Injection Prevention (Medium - 1 issue)**
-    - Fixed unsafe subprocess execution in health monitor ping function
-    - Added comprehensive host validation with IPv4/IPv6/hostname regex patterns
-    - Implemented shell metacharacter blocking and input sanitization
-    - Protected ping subprocess from command injection attacks
-  - **Input Validation & Sanitization (Medium - 4 issues)**
-    - Added strict URL validation in config flow with protocol checking (HTTP/HTTPS only)
-    - Implemented hostname/IP format validation using proper patterns
-    - Added character whitelist validation blocking dangerous shell metacharacters
-    - Replaced regex-based URL extraction with proper `urllib.parse` throughout codebase
-    - Added validation helpers: `_is_valid_host()`, `_is_valid_url()`, `_is_safe_redirect()`
-  - **Credential Security (Medium - 3 issues)**
-    - Removed username logging from Motorola parser to prevent credential leakage
-    - Added comprehensive security documentation for Base64 password encoding
-    - Documented that Base64 is NOT encryption - it's merely encoding (modem firmware limitation)
-    - Sanitized all credential-related log messages
-  - **Exception Handling (Low - 4 issues)**
-    - Replaced broad `Exception` catches with specific exception types (`ValueError`, `TypeError`)
-    - Improved error messages for better debugging while preventing information leakage
-    - Maintained proper exception logging with context
-  - **Information Disclosure (Low - 4 issues)**
-    - Sanitized exception messages in diagnostics to prevent sensitive data exposure
-    - Added regex-based redaction of passwords, tokens, keys, and credentials from error messages
-    - Masked IP addresses and file paths in exception output
-    - Truncated long exception messages to 200 character limit
-  - **Files Modified**: `config_flow.py`, `core/health_monitor.py`, `core/modem_scraper.py`, `diagnostics.py`, `parsers/motorola/generic.py`, `parsers/technicolor/xb7.py`
-  - **Impact**: Eliminates all critical security vulnerabilities while maintaining backward compatibility
 
 ### Test Fixtures
 

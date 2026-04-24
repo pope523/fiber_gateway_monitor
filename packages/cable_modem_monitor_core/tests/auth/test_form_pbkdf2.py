@@ -197,8 +197,8 @@ class TestFormPbkdf2AuthManager:
                 mock_post.side_effect = [salt_resp, login_resp]
 
                 result = manager.authenticate(session, server.base_url, "admin", "password")
-                assert result.success is True
-                assert session.headers.get("X-CSRF-TOKEN") == "csrf_abc123"
+            assert result.success is True
+            assert session.headers.get("X-CSRF-TOKEN") == "csrf_abc123"
 
     def test_salt_request_connection_error_propagates(self, session: requests.Session) -> None:
         """ConnectionError on salt request propagates for collector."""

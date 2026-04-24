@@ -23,9 +23,10 @@ SNMP transport within CMM.
 ## Why v1/v2c Are Blocked
 
 ISPs control LAN-side SNMP access via the DOCSIS config file. The
-`docsDevNmAccessTable` ([RFC 4639][rfc4639]) filters community-string
-access by interface. All tested community strings (`public`, `private`,
-`cable-docsis`, `motorola`, and 8 others) timed out — no agent response.
+`docsDevNmAccessTable` ([RFC 4639][rfc4639]; [DOCSIS configuration
+reference][docsis-snmp]) filters community-string access by interface.
+All tested community strings (`public`, `private`, `cable-docsis`,
+`motorola`, and 8 others) timed out — no agent response.
 
 ## Why v3 Responds but Is Useless
 
@@ -37,8 +38,9 @@ The DOCSIS `NmAccessTable` only applies to v1/v2c traffic. Per
 
 v3 is unfiltered on the LAN side, but the SNMP user table is empty:
 
-- **ISP-provisioned users** (created via TLV34 DH key exchange) are
-  bound to the WAN/HFC interface. They don't appear on the LAN side.
+- **ISP-provisioned users** (created via [TLV34 DH key
+  exchange][docsis-v3]) are bound to the WAN/HFC interface. They
+  don't appear on the LAN side.
 - **No firmware default users** exist. Tested 16 common usernames
   (`docsisManager`, `initial`, `admin`, `broadcom`, etc.) — all
   returned "Unknown USM user."
@@ -51,7 +53,7 @@ levels, interface stats, DOCSIS diagnostics — all inaccessible.
 ## What v3 Engine Discovery Returns
 
 A single raw UDP packet (empty engine ID, empty username, no credentials)
-triggers an engine discovery response:
+triggers an engine discovery response, per [RFC 5343][rfc5343]:
 
 | Field | Example (MB7621) |
 |-------|-----------------|

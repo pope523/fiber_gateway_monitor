@@ -1345,6 +1345,13 @@ sequenceDiagram
 - Restart button is disabled only for the duration of the
   `active_operation` mutex (~2–5 s per press). A user who observes
   a flakey modem mid-window may re-press restart; see UC-42.
+- Snapshots during ranging may report reduced channel bonding
+  (e.g., 1 DS / 1 US) before full bonding restores. With at least
+  one locked downstream and upstream, `DocsisStatus = OPERATIONAL`
+  is correct — the modem is online at reduced capacity. Channel-
+  count sensors render the actual counts faithfully. Detecting
+  reduced bonding relative to a steady-state baseline is a capacity
+  concern, distinct from operational status.
 
 ---
 

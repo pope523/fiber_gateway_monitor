@@ -318,7 +318,7 @@ class TestVariantPath:
     """Verify _run_validation loads modem-{variant}.yaml when variant is set."""
 
     @patch(f"{_MODULE}.detect_probes")
-    @patch(f"{_MODULE}.create_collector")
+    @patch(f"{_MODULE}._attempt_validation")
     @patch(f"{_MODULE}.load_post_processor")
     @patch(f"{_MODULE}.load_parser_config")
     @patch(f"{_MODULE}.load_modem_config")
@@ -346,9 +346,7 @@ class TestVariantPath:
         mock_load_post.return_value = MagicMock()
         mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
 
-        collector = MagicMock()
-        collector.execute.return_value = _ok_result()
-        mock_collector_cls.return_value = collector
+        mock_collector_cls.return_value = _ok_result()
 
         _run_validation("192.168.100.1", None, "admin", "pw", modem_dir, "v2")
 
@@ -441,7 +439,7 @@ class TestProtocolRetry:
     """UC-85: Protocol fallback when auth fails on auto-detected HTTP."""
 
     @patch(f"{_MODULE}.detect_probes")
-    @patch(f"{_MODULE}.create_collector")
+    @patch(f"{_MODULE}._attempt_validation")
     @patch(f"{_MODULE}.load_post_processor")
     @patch(f"{_MODULE}.load_parser_config")
     @patch(f"{_MODULE}.load_modem_config")
@@ -483,12 +481,7 @@ class TestProtocolRetry:
         mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
 
         # Collector — return results in order (one per retry attempt)
-        mock_collectors = []
-        for result in collector_results:
-            collector_instance = MagicMock()
-            collector_instance.execute.return_value = result
-            mock_collectors.append(collector_instance)
-        mock_collector_cls.side_effect = mock_collectors
+        mock_collector_cls.side_effect = [r for r in collector_results]
 
         if expected_exception is not None:
             with pytest.raises(expected_exception):
@@ -517,7 +510,7 @@ class TestProtocolRetryCollectorArgs:
     """Verify the collector is created with correct args on each retry."""
 
     @patch(f"{_MODULE}.detect_probes")
-    @patch(f"{_MODULE}.create_collector")
+    @patch(f"{_MODULE}._attempt_validation")
     @patch(f"{_MODULE}.load_post_processor")
     @patch(f"{_MODULE}.load_parser_config")
     @patch(f"{_MODULE}.load_modem_config")
@@ -542,11 +535,10 @@ class TestProtocolRetryCollectorArgs:
         mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
 
         # First attempt: auth fails. Second (HTTPS): succeeds.
-        http_collector = MagicMock()
-        http_collector.execute.return_value = _auth_failed_result()
-        https_collector = MagicMock()
-        https_collector.execute.return_value = _ok_result()
-        mock_collector_cls.side_effect = [http_collector, https_collector]
+        mock_collector_cls.side_effect = [
+            _auth_failed_result(),
+            _ok_result(),
+        ]
 
         _run_validation("192.168.100.1", None, "admin", "pw", modem_dir, None)
 
@@ -561,7 +553,7 @@ class TestProtocolRetryCollectorArgs:
         assert second_call.kwargs["legacy_ssl"] is False
 
     @patch(f"{_MODULE}.detect_probes")
-    @patch(f"{_MODULE}.create_collector")
+    @patch(f"{_MODULE}._attempt_validation")
     @patch(f"{_MODULE}.load_post_processor")
     @patch(f"{_MODULE}.load_parser_config")
     @patch(f"{_MODULE}.load_modem_config")
@@ -585,12 +577,11 @@ class TestProtocolRetryCollectorArgs:
         mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
 
         # All three attempts: HTTP fails, HTTPS fails, legacy SSL succeeds
-        collectors = []
-        for result in [_auth_failed_result(), _auth_failed_result(), _ok_result()]:
-            c = MagicMock()
-            c.execute.return_value = result
-            collectors.append(c)
-        mock_collector_cls.side_effect = collectors
+        mock_collector_cls.side_effect = [
+            _auth_failed_result(),
+            _auth_failed_result(),
+            _ok_result(),
+        ]
 
         _run_validation("192.168.100.1", None, "admin", "pw", modem_dir, None)
 
@@ -600,7 +591,7 @@ class TestProtocolRetryCollectorArgs:
         assert third_call.kwargs["legacy_ssl"] is True
 
     @patch(f"{_MODULE}.detect_probes")
-    @patch(f"{_MODULE}.create_collector")
+    @patch(f"{_MODULE}._attempt_validation")
     @patch(f"{_MODULE}.load_post_processor")
     @patch(f"{_MODULE}.load_parser_config")
     @patch(f"{_MODULE}.load_modem_config")
@@ -624,11 +615,10 @@ class TestProtocolRetryCollectorArgs:
         mock_load_post.return_value = MagicMock()
         mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
 
-        http_collector = MagicMock()
-        http_collector.execute.return_value = _auth_failed_result()
-        https_collector = MagicMock()
-        https_collector.execute.return_value = _ok_result()
-        mock_collector_cls.side_effect = [http_collector, https_collector]
+        mock_collector_cls.side_effect = [
+            _auth_failed_result(),
+            _ok_result(),
+        ]
 
         _run_validation("192.168.100.1", None, "admin", "pw", modem_dir, None)
 
@@ -642,7 +632,7 @@ class TestProtocolRetryNotTriggered:
     """Verify retry does NOT happen for non-auth failures."""
 
     @patch(f"{_MODULE}.detect_probes")
-    @patch(f"{_MODULE}.create_collector")
+    @patch(f"{_MODULE}._attempt_validation")
     @patch(f"{_MODULE}.load_post_processor")
     @patch(f"{_MODULE}.load_parser_config")
     @patch(f"{_MODULE}.load_modem_config")
@@ -665,14 +655,126 @@ class TestProtocolRetryNotTriggered:
         mock_load_post.return_value = MagicMock()
         mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
 
-        collector = MagicMock()
-        collector.execute.return_value = _ok_result()
-        mock_collector_cls.return_value = collector
+        mock_collector_cls.return_value = _ok_result()
 
         result = _run_validation("192.168.100.1", None, "admin", "pw", modem_dir, None)
 
         assert result["protocol"] == "http"
         assert mock_collector_cls.call_count == 1
+
+
+# =====================================================================
+# End-to-end auth-failure log — real Core, real HARMockServer
+# =====================================================================
+
+
+class TestAuthFailureDetailLog:
+    """End-to-end: HA glue → real collector → auth-failure WARNING.
+
+    Other tests in this file mock the validation primitives, so the
+    real ``ModemDataCollector`` is never exercised. This class
+    runs the full path against a ``HARMockServer`` that returns
+    401, asserting:
+
+    - ``PermissionError`` with the right error-key reaches the HA
+      layer (form UI gets ``invalid_auth``).
+    - The collector emits one sanitized ``WARNING`` carrying the
+      modem's response — strategy name, request line, status,
+      Content-Type, and a body snippet with the user's password
+      replaced by ``[REDACTED]``.
+
+    Regression guard for the auth-capture teardown: if a future
+    refactor removes the failure-detail log or breaks the
+    HA→Core→logger path, this test fails before ship.
+    """
+
+    @staticmethod
+    def _write_form_auth_modem_yaml(tmp_path: Path) -> Path:
+        """Write a minimal valid form-auth modem.yaml.
+
+        No parser.yaml / parser.py — auth failure short-circuits
+        before parsing runs, so this is enough to exercise the
+        failure-log path.
+        """
+        modem_dir = tmp_path / "solent_labs" / "t100"
+        modem_dir.mkdir(parents=True)
+        (modem_dir / "modem.yaml").write_text(
+            "manufacturer: Solent Labs\n"
+            "model: T100\n"
+            "transport: http\n"
+            "default_host: 192.168.100.1\n"
+            "status: unsupported\n"
+            "auth:\n"
+            "  strategy: form\n"
+            "  action: /login\n"
+        )
+        return modem_dir
+
+    @patch(f"{_MODULE}.detect_probes")
+    def test_auth_failure_logs_wire_detail_and_raises_permission_error(
+        self,
+        mock_probes: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """401 on the auth POST → ``PermissionError`` + one WARNING with detail.
+
+        Passes ``protocol="http"`` to skip auto-detection and the
+        UC-85 HTTPS-fallback retry — the retry isn't under test
+        here, and letting it fire would attempt a real HTTPS
+        connection against the mock-server host.
+        """
+        import logging
+
+        from solentlabs.cable_modem_monitor_core.test_harness import HARMockServer
+
+        modem_dir = self._write_form_auth_modem_yaml(tmp_path)
+
+        entries = [
+            {
+                "request": {"method": "POST", "url": "http://192.168.100.1/login"},
+                "response": {
+                    "status": 401,
+                    "headers": [{"name": "Content-Type", "value": "text/plain"}],
+                    "content": {"text": "unauthorized"},
+                },
+            }
+        ]
+        # Skip real probe I/O — ICMP/HEAD aren't under test here.
+        mock_probes.return_value = {"supports_icmp": False, "supports_head": False}
+
+        with (
+            caplog.at_level(
+                logging.WARNING,
+                logger="solentlabs.cable_modem_monitor_core.orchestration.collector",
+            ),
+            HARMockServer(entries) as server,
+        ):
+            # ``base_url`` is built as ``f"{protocol}://{host}"``,
+            # so pass the mock server's "127.0.0.1:PORT" as host.
+            netloc = server.base_url.split("://", 1)[1]
+
+            with pytest.raises(PermissionError) as excinfo:
+                _run_validation(
+                    host=netloc,
+                    protocol="http",
+                    username="admin",
+                    password="wrong",
+                    modem_dir=modem_dir,
+                    variant=None,
+                )
+
+        # Error-key classification reaches the HA layer.
+        assert str(excinfo.value).startswith("auth_error:invalid_auth:")
+
+        # Single WARNING from the collector carrying the failure detail.
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_records, "expected a WARNING log for the auth failure"
+        msg = warning_records[0].getMessage()
+        assert "Auth failed" in msg
+        assert "strategy=form" in msg
+        assert "/login" in msg
+        assert "401" in msg
 
 
 # =====================================================================
@@ -741,3 +843,39 @@ class TestDetectAndInjectFormNonceEncoding:
         encoding, field = _detect_and_inject_form_nonce_encoding("http://192.168.100.1", config)
         assert encoding == "plain"
         assert field == ""
+
+
+# =====================================================================
+# _raise_validation_failure — plain PermissionError / RuntimeError
+# =====================================================================
+
+
+class TestRaiseValidationFailure:
+    """``_raise_validation_failure`` maps a failed ModemResult to the right exception."""
+
+    @staticmethod
+    def _auth_signals() -> tuple[CollectorSignal, ...]:
+        """Match the tuple used inside ``_run_validation``."""
+        return (
+            CollectorSignal.AUTH_FAILED,
+            CollectorSignal.AUTH_LOCKOUT,
+            CollectorSignal.LOAD_AUTH,
+        )
+
+    def test_auth_signal_raises_permission_error(self) -> None:
+        """AUTH_FAILED signal → ``PermissionError`` with ``auth_error:`` prefix."""
+        from custom_components.cable_modem_monitor.config_flow_helpers import (
+            _raise_validation_failure,
+        )
+
+        with pytest.raises(PermissionError, match=r"^auth_error:"):
+            _raise_validation_failure(_auth_failed_result(), self._auth_signals())
+
+    def test_non_auth_signal_raises_runtime_error(self) -> None:
+        """PARSE_ERROR signal → ``RuntimeError`` with ``collection_error:`` prefix."""
+        from custom_components.cable_modem_monitor.config_flow_helpers import (
+            _raise_validation_failure,
+        )
+
+        with pytest.raises(RuntimeError, match=r"^collection_error:"):
+            _raise_validation_failure(_parse_error_result(), self._auth_signals())

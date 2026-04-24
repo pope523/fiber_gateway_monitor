@@ -7,6 +7,7 @@
 | [AUTH_SJCL_SPEC.md](AUTH_SJCL_SPEC.md) | `form_sjcl` — SJCL AES-CCM protocol, encoding rules, firmware assumptions |
 | [AUTH_PBKDF2_SPEC.md](AUTH_PBKDF2_SPEC.md) | `form_pbkdf2` — PBKDF2 challenge-response protocol, salt handling |
 | [AUTH_CBN_SPEC.md](AUTH_CBN_SPEC.md) | `form_cbn` — CBN AES-256-CBC protocol, session token rotation |
+| [AUTH_HNAP_SPEC.md](AUTH_HNAP_SPEC.md) | `hnap` — HNAP HMAC challenge-response protocol, HNAP_AUTH header, lockout handling |
 | [MODEM_YAML_SPEC.md](MODEM_YAML_SPEC.md) | modem.yaml schema — identity, auth, session, actions |
 | [MODEM_DIRECTORY_SPEC.md](MODEM_DIRECTORY_SPEC.md) | Catalog directory structure, file roles, assembly rules |
 | [PARSING_SPEC.md](PARSING_SPEC.md) | Parsing overview — common concepts, output contract, channel types, aggregates, post-processing |

@@ -139,7 +139,7 @@ def _fetch_csrf_token(
     if header_name:
         token = resp.headers.get(header_name, "")
         if token:
-            return token
+            return str(token)
 
     return ""
 

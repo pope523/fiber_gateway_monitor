@@ -16,10 +16,20 @@
     "siblings_only": true
   },
 
-  // Raw HTML — allow layout elements used in README badges, images,
-  // and spec callouts.
+  // Raw HTML — allow ONLY elements with no markdown equivalent that
+  // are actually used in this project's docs. Each entry has a
+  // specific reason; do not preemptively allowlist tags. Adding here
+  // means a doc genuinely needs the tag and there is no markdown
+  // alternative — not "the linter complained."
+  //
+  //   img   — README, width="500" attribute (markdown can't size images)
+  //   p     — README, align="center" caption blocks (markdown has no alignment)
+  //   br    — README, required inside <p> caption blocks for layout
+  //   em    — README, required inside <p> blocks (markdown * doesn't process inside HTML)
+  //   span  — packages/cable_modem_monitor_catalog/README.md, id="..." inline
+  //           anchors for chipset cross-references in tables
   "MD033": {
-    "allowed_elements": ["img", "p", "br", "em", "a", "div", "span"]
+    "allowed_elements": ["img", "p", "br", "em", "span"]
   },
 
   // Table column style — disabled because the rule misdetects separator

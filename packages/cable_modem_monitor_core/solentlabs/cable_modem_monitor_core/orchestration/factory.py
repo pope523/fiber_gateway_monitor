@@ -6,7 +6,10 @@ Owns the YAML-to-running-components path.  Consumers supply *what*
 
 Two entry points:
 
-- ``create_collector`` — single-shot validation (config flow).
+- ``create_collector`` — build a collector for one or more
+  ``execute()`` calls. Used by the HA config flow for setup, reauth,
+  and options-flow re-validation, and by the test harness for
+  one-shot pipeline runs.
 - ``create_orchestrator`` — full graph for runtime polling.
 
 See ORCHESTRATION_SPEC.md § Factory API.

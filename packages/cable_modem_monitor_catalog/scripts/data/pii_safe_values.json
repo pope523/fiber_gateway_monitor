@@ -115,6 +115,16 @@
     ]
   },
 
+  "safe_credential_placeholders": {
+    "_description": "Values that appear in credential fields but are publicly documented placeholders, not real credentials. Each entry must cite where it's documented as public.",
+    "values": [
+      "nologin"
+    ],
+    "_provenance": {
+      "nologin": "Hitron CODA56 guest mode (user=nologin/pws=nologin) — modem.yaml sources.auth_config cites issue #89"
+    }
+  },
+
   "safe_serial_prefixes": {
     "_description": "Serial number prefixes produced by har-capture sanitization.",
     "values": [

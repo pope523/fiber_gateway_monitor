@@ -15,7 +15,11 @@ from __future__ import annotations
 
 from .actions import ActionResult, execute_action, execute_hnap_action, execute_http_action
 from .collector import LoginLockoutError, ModemDataCollector
-from .factory import apply_credential_encoding, create_collector, create_orchestrator
+from .factory import (
+    apply_credential_encoding,
+    create_collector,
+    create_orchestrator,
+)
 from .models import (
     HealthInfo,
     ModemResult,

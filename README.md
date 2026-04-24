@@ -22,11 +22,11 @@ A custom Home Assistant integration that monitors cable modem signal quality, po
 
 <img src="https://raw.githubusercontent.com/solentlabs/cable_modem_monitor/main/images/dashboard-screenshot.png" alt="Cable Modem Health Dashboard" width="500">
 
-*Monitor your cable modem's signal quality, errors, and connection health in real-time*
+Monitor your cable modem's signal quality, errors, and connection health in real-time.
 
 > **⭐ If you find this integration useful, please star this repo!**
 > It helps others discover the project and shows that the integration is actively used.
-
+>
 > **🤖 AI-Assisted Development**: This project uses AI-assisted development (Claude) to accelerate implementation while maintaining human oversight for architecture and community decisions.
 
 ## Quick Links

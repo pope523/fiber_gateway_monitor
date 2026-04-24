@@ -6,6 +6,6 @@
     "siblings_only": true
   },
   "MD033": {
-    "allowed_elements": ["img", "p", "br", "em", "a", "div", "span"]
+    "allowed_elements": ["img", "p", "br", "em", "span"]
   }
 }

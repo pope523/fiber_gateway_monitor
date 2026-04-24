@@ -35,7 +35,9 @@ from solentlabs.cable_modem_monitor_core.models.modem_config import ModemConfig
 from solentlabs.cable_modem_monitor_core.models.modem_config.auth import (
     get_strategy_display_labels,
 )
-from solentlabs.cable_modem_monitor_core.orchestration import create_collector
+from solentlabs.cable_modem_monitor_core.orchestration import (
+    create_collector,
+)
 from solentlabs.cable_modem_monitor_core.orchestration.models import ModemResult
 from solentlabs.cable_modem_monitor_core.orchestration.signals import (
     CollectorSignal,
@@ -233,45 +235,6 @@ def detect_probes(
 # ---------------------------------------------------------------------------
 
 
-def _try_collect(
-    modem_config: ModemConfig,
-    parser_config: Any,
-    post_processor: Any,
-    base_url: str,
-    username: str,
-    password: str,
-    legacy_ssl: bool,
-) -> ModemResult:
-    """Create a collector and execute one poll attempt.
-
-    Factored out of :func:`_run_validation` so the protocol retry loop
-    can call it with different ``base_url`` / ``legacy_ssl`` values
-    without duplicating collector setup.
-
-    Args:
-        modem_config: Loaded modem configuration.
-        parser_config: Loaded parser configuration (or None).
-        post_processor: Loaded post-processor callable (or None).
-        base_url: Full URL including protocol (e.g., ``https://192.168.100.1``).
-        username: Login credential.
-        password: Login credential.
-        legacy_ssl: Whether to use legacy SSL ciphers.
-
-    Returns:
-        ``ModemResult`` from the collector.
-    """
-    collector = create_collector(
-        modem_config=modem_config,
-        parser_config=parser_config,
-        post_processor=post_processor,
-        base_url=base_url,
-        username=username,
-        password=password,
-        legacy_ssl=legacy_ssl,
-    )
-    return collector.execute()
-
-
 def _detect_and_inject_form_nonce_encoding(
     base_url: str,
     modem_config: ModemConfig,
@@ -325,7 +288,7 @@ def _detect_and_inject_form_nonce_encoding(
         session = create_session(legacy_ssl=legacy_ssl)
         response = session.get(login_url, timeout=10)
     except (req_lib.ConnectionError, req_lib.Timeout) as exc:
-        # Modem unreachable or unresponsive — no point proceeding to _try_collect
+        # Modem unreachable or unresponsive — no point proceeding to validation
         _LOGGER.info("Login page unreachable during validation (%s): %s", login_url, exc)
         raise ConnectionError(str(exc)) from exc
     except Exception as exc:
@@ -355,6 +318,55 @@ def _detect_and_inject_form_nonce_encoding(
     return (detection.encoding, detection.credential_field)
 
 
+def _raise_validation_failure(
+    result: ModemResult,
+    auth_signals: tuple[CollectorSignal, ...],
+) -> None:
+    """Log the validation failure and raise the appropriate exception.
+
+    Never returns — raises ``PermissionError`` for auth-phase
+    failures and ``RuntimeError`` for collection-phase failures.
+    Wire-level detail for the failed attempt has already been
+    emitted at WARNING by the collector's auth-failure log; what
+    reaches HA from here is the error-key for the form UI.
+    """
+    _LOGGER.error("Validation failed: signal=%s, error=%s", result.signal, result.error)
+    error_key = classify_error(result.error, result.signal)
+    if result.signal in auth_signals:
+        raise PermissionError(f"auth_error:{error_key}:{result.error}")
+    raise RuntimeError(f"collection_error:{error_key}:{result.error}")
+
+
+def _attempt_validation(
+    *,
+    modem_config: ModemConfig,
+    parser_config: Any,
+    post_processor: Any,
+    base_url: str,
+    username: str,
+    password: str,
+    legacy_ssl: bool,
+) -> ModemResult:
+    """Run one validation attempt.
+
+    Same pipeline used for initial setup, reauth, and options-flow
+    re-validation — there is no per-flow variation. The collector's
+    auth-failure log emits a single sanitized WARNING with wire
+    detail when authentication fails, regardless of which HA flow
+    invoked it.
+    """
+    collector = create_collector(
+        modem_config=modem_config,
+        parser_config=parser_config,
+        post_processor=post_processor,
+        base_url=base_url,
+        username=username,
+        password=password,
+        legacy_ssl=legacy_ssl,
+    )
+    return collector.execute()
+
+
 def _run_validation(
     host: str,
     protocol: str | None,
@@ -373,6 +385,11 @@ def _run_validation(
         3a. Protocol retry (UC-85) if auth fails on HTTP
         4. Health-probe discovery (ICMP, HTTP HEAD)
         5. Build and return config entry dict
+
+    On auth failure, the collector emits a single sanitized WARNING
+    with the modem's response — that's the diagnostic surface for
+    "stuck-in-setup" users. Reauth and options flows run through
+    this same pipeline and benefit from the same log.
 
     Args:
         host: Bare hostname/IP (no protocol prefix).
@@ -422,14 +439,14 @@ def _run_validation(
     )
 
     # -- Step 3: Test data collection -----------------------------------------
-    result = _try_collect(
-        modem_config,
-        parser_config,
-        post_processor,
-        base_url,
-        username,
-        password,
-        legacy_ssl,
+    result = _attempt_validation(
+        modem_config=modem_config,
+        parser_config=parser_config,
+        post_processor=post_processor,
+        base_url=base_url,
+        username=username,
+        password=password,
+        legacy_ssl=legacy_ssl,
     )
 
     # -- Step 3a: Protocol retry (UC-85) --------------------------------------
@@ -438,15 +455,15 @@ def _run_validation(
     auth_signals = (CollectorSignal.AUTH_FAILED, CollectorSignal.AUTH_LOCKOUT, CollectorSignal.LOAD_AUTH)
     if not result.success and auto_detected_http and result.signal in auth_signals:
         _LOGGER.info("Auth failed on auto-detected HTTP — retrying with HTTPS")
-        http_result = result  # preserve the original auth signal
+        http_result = result  # preserve the original auth error for fallback
         https_url = f"https://{host}"
-        result = _try_collect(
-            modem_config,
-            parser_config,
-            post_processor,
-            https_url,
-            username,
-            password,
+        result = _attempt_validation(
+            modem_config=modem_config,
+            parser_config=parser_config,
+            post_processor=post_processor,
+            base_url=https_url,
+            username=username,
+            password=password,
             legacy_ssl=False,
         )
         if result.success:
@@ -454,13 +471,13 @@ def _run_validation(
         elif result.signal in auth_signals:
             # HTTPS with modern ciphers also failed — try legacy SSL
             _LOGGER.info("HTTPS also failed — retrying with legacy SSL ciphers")
-            result = _try_collect(
-                modem_config,
-                parser_config,
-                post_processor,
-                https_url,
-                username,
-                password,
+            result = _attempt_validation(
+                modem_config=modem_config,
+                parser_config=parser_config,
+                post_processor=post_processor,
+                base_url=https_url,
+                username=username,
+                password=password,
                 legacy_ssl=True,
             )
             if result.success:
@@ -472,11 +489,7 @@ def _run_validation(
             result = http_result
 
     if not result.success:
-        _LOGGER.error("Validation failed: signal=%s, error=%s", result.signal, result.error)
-        error_key = classify_error(result.error, result.signal)
-        if result.signal in auth_signals:
-            raise PermissionError(f"auth_error:{error_key}:{result.error}")
-        raise RuntimeError(f"collection_error:{error_key}:{result.error}")
+        _raise_validation_failure(result, auth_signals)
 
     _LOGGER.info("Validation succeeded: %d data keys", len(result.modem_data or {}))
 
@@ -508,7 +521,9 @@ async def validate_connection(
     """Run the full validation pipeline for the config flow.
 
     Decomposes the raw host input, then delegates to
-    :func:`_run_validation` in an executor thread.
+    :func:`_run_validation` in an executor thread. On auth failure
+    the collector emits a single WARNING with the modem's response;
+    no per-flow capture wiring needed.
 
     Args:
         hass: Home Assistant instance.

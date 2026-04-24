@@ -71,10 +71,12 @@ What's hardcoded in `auth/form_pbkdf2.py` that is specific to the Technicolor RE
 See [MODEM_YAML_SPEC.md](MODEM_YAML_SPEC.md#form_pbkdf2) for the complete field table.
 
 Fields that map to **crypto library** (PBKDF2-level):
+
 - `pbkdf2_iterations`, `pbkdf2_key_length` -- crypto parameters
 - `double_hash` -- whether to apply the second derivation round
 
 Fields that map to **firmware** (Technicolor-level):
+
 - `salt_trigger` -- the magic string that triggers salt response
 - `login_endpoint` -- URL path
 - `csrf_init_endpoint`, `csrf_header` -- CSRF mechanism

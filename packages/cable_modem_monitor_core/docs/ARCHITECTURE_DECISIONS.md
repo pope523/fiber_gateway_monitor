@@ -178,6 +178,46 @@ fields. The `max_concurrent: 1` constraint requires `actions.logout`
 to be declared (build-time validation error). Auth strategies that
 don't use cookies leave `cookie_name` empty (default).
 
+### Auth-failure detail via single WARNING log
+
+**Decision:** When the collector's auth phase fails, it emits one
+sanitized ``WARNING`` log carrying the modem's response — strategy
+name, request line, response status + Content-Type, and a short
+body snippet with the user's password scrubbed. There is no
+transport-layer adapter, no scoped capture, no separate entry
+point, no structured ``AuthExchange`` type, and no
+``har-capture`` dependency.
+
+**Rationale:** The motivating issues (#86 Arris TG3442DE, #104
+Netgear CM1100, #120 Technicolor CGA6444VF) are all stuck-setup
+failures where a maintainer needs to see what the modem returned
+to fix the catalog entry. The genuinely valuable signal for that
+is the response status, Content-Type, and a body snippet — enough
+to spot "this modem is HNAP, not form" or "the modem rejected our
+field name". One log line covers it. An earlier v3.14 iteration
+built a session-adapter capture mechanism with two entry points,
+gating policy, structured exchange JSON in the diagnostics
+download, and an upstream sanitization dependency — ~500 lines
+plus a runtime dep, for marginal value over a single log line.
+KISS prevailed.
+
+The failure-detail log fires from the collector's existing auth
+failure path, so initial setup, reauth, options-flow
+re-validation, and steady-state polling all benefit equally
+without per-flow plumbing. A circuit breaker bounds the volume
+during steady-state failure.
+
+**Constrains:** Auth managers must include the ``requests.Response``
+on their failure ``AuthResult`` so the collector can render the
+detail. The response body snippet is truncated to ~500 characters
+and the user's literal password is replaced with ``[REDACTED]``;
+URL query strings are stripped wholesale (some strategies put
+credentials in the query — Arris ``url_token`` notably). Derived
+credential forms (PBKDF2 hashes, SJCL/CBN encrypted blobs) are
+left intact in the snippet — they are protocol-shaped, not the
+user's secret, and they're often the diagnostic signal a
+maintainer needs to confirm the strategy ran.
+
 ---
 
 ## Parsing Architecture

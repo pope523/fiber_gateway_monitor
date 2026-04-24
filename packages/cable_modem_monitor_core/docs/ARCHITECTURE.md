@@ -619,7 +619,8 @@ already in `system_info` — computed by the parser coordinator.
 
 **`OrchestratorDiagnostics`** — operational diagnostics snapshot from
 `diagnostics()`, including poll timing, auth failure streak, circuit
-breaker state, and per-resource fetch details (`ResourceFetch`).
+breaker state, session validity, connectivity backoff state, and
+per-resource fetch details (`ResourceFetch`).
 
 **`ChannelData`** — per-channel metrics for downstream and upstream:
 

@@ -1,239 +1,148 @@
 # CodeQL Security Scanning Configuration
 
-This directory contains the CodeQL security scanning configuration for the Cable Modem Monitor project.
+This directory holds the CodeQL configuration that GitHub's code-scanning
+workflow consumes. It does **not** contain custom queries — those live
+in the sibling repo `cable-modem-monitor-ql/` (see § Custom Queries
+below).
 
 ## What is CodeQL?
 
-**CodeQL is GitHub's code analysis engine that finds security vulnerabilities automatically.**
-
-### How it works
+**GitHub's code analysis engine that finds security vulnerabilities
+automatically.**
 
 ```text
 Your Code → CodeQL Database → Queries → Security Alerts
 ```
 
-1. **Build a database**: CodeQL parses your code into a queryable database (like SQL for code)
-2. **Run queries**: Security queries ask questions like "Is there user input flowing into a SQL query without sanitization?"
-3. **Report findings**: Matches appear as alerts in GitHub's Security tab
+1. **Build a database**: CodeQL parses your code into a queryable
+   database (like SQL for code).
+2. **Run queries**: Security queries ask things like "Is user input
+   flowing into a SQL query without sanitization?"
+3. **Report findings**: Matches appear as alerts in GitHub's Security
+   tab.
 
-### How is it different from Ruff/linters?
+## How it differs from Ruff / mypy
 
-| Tool | What it checks | How it works |
-|------|----------------|--------------|
+| Tool | Checks | How |
+| --- | --- | --- |
 | **Ruff** | Style, syntax, simple bugs | Pattern matching on single files |
 | **mypy** | Type correctness | Type inference across files |
-| **CodeQL** | Security vulnerabilities | Data flow analysis across entire codebase |
+| **CodeQL** | Security vulnerabilities | Data flow analysis across the whole codebase |
 
-**Example**: Ruff can catch `except:` (too broad). CodeQL can trace that user input from a web form flows through 5 functions into an `eval()` call - a real security vulnerability that no linter can detect.
+Ruff catches `except:` (too broad). CodeQL traces user input flowing
+through 5 functions into an `eval()` call — a real vulnerability that
+a linter cannot detect.
 
-### Why we use it
+## Why we use it
 
-Cable modem integrations handle:
+The integration handles network requests to devices, user
+credentials, HTML parsing from untrusted sources, and file
+operations. CodeQL catches injection, credential-in-log, missing
+timeout, unsafe SSL, and path traversal classes of issues that
+linters do not see.
 
-- Network requests to devices
-- User credentials
-- HTML parsing from untrusted sources
-- File operations
+The trade-off: CodeQL has false positives. `codeql-config.yml`
+contains exclusions for patterns that are intentional in our context
+(e.g., `verify=False` for self-signed cable modem certs).
 
-CodeQL catches issues like:
-
-- SQL/command injection
-- Credentials in logs
-- Missing timeouts on requests
-- Unsafe SSL configurations
-- Path traversal vulnerabilities
-
-### The tradeoff
-
-CodeQL is thorough but has false positives. That's why `codeql-config.yml` has exclusions for patterns that are intentional in our context (like `verify=False` for cable modem self-signed certs).
-
----
-
-## Directory Structure
+## Files in this directory
 
 ```text
 .github/codeql/
-├── README.md                    # This file
-├── codeql-config.yml            # CodeQL configuration (filters, exclusions)
-└── queries/
-    ├── qlpack.yml               # CodeQL package definition
-    ├── cable-modem-security.qls # Query suite (lists all custom queries)
-    ├── README.md                # Detailed query documentation
-    ├── requests-no-timeout.ql   # Detects HTTP requests without timeouts
-    ├── subprocess-injection.ql  # Detects command injection risks
-    ├── unsafe-xml-parsing.ql    # Detects XXE vulnerabilities
-    ├── hardcoded-credentials.ql # Detects hardcoded secrets
-    ├── insecure-ssl-config.ql   # Detects SSL verification issues
-    └── path-traversal.ql        # Detects path traversal risks
+├── README.md          # This file
+└── codeql-config.yml  # CodeQL configuration (paths-ignore, query filters)
 ```
 
-## What This Does
+That's all. The `queries/` subdirectory referenced in earlier
+documentation never existed here — custom queries are developed and
+tested in the sibling `cable-modem-monitor-ql/` repo.
 
-**Automatic security scanning** runs on every:
+## What CI actually runs
 
-- Push to `main` branch
-- Pull request to `main`
-- Monday at 9:00 AM UTC (weekly scheduled scan)
+`.github/workflows/codeql.yml` invokes the standard query packs
+only:
 
-**Scans run:**
+```yaml
+queries: security-extended,security-and-quality
+config-file: .github/codeql/codeql-config.yml
+```
 
-1. 100+ standard GitHub security queries
-2. 6 custom queries specific to cable modem integrations
+That gives us the OWASP / CWE coverage GitHub maintains (~100+
+queries). **No custom queries run in CI** — they were removed from
+the workflow due to CodeQL Action compatibility issues with our
+custom-pack format. The custom query in the sibling repo is
+exercised by the local pre-commit hook only.
 
-**Results appear in:**
+`codeql-config.yml` configures behavior:
 
-- GitHub repo → Security tab → Code scanning alerts
-- Pull request checks (if issues found)
+- **paths-ignore**: excludes tools, scripts, docs, and test fixtures
+  from scanning
+- **query-filters**: suppresses false positives for intentional
+  patterns (SSL verify-disabled for self-signed certs, clear-text
+  diagnostic logging, etc.)
 
-## Configuration Files
+## Custom queries (sibling repo)
 
-### `codeql-config.yml`
+Project-specific queries live in `cable-modem-monitor-ql/queries/`.
+Currently:
 
-Configures CodeQL behavior:
+- `no_timeout.ql` — flags HTTP requests without an explicit timeout
 
-- **paths-ignore**: Excludes tools, scripts, docs, test fixtures from scanning
-- **query-filters**: Suppresses false positives for intentional patterns
-  - SSL verification disabled (cable modems use self-signed certs)
-  - Clear-text logging (diagnostic data, not secrets)
+These run via the `codeql-test` pre-commit hook
+(`scripts/dev/test-codeql.sh`), which uses the project-local CodeQL
+CLI to exercise the queries against the test cases in
+`cable-modem-monitor-ql/tests/`. They do **not** run in GitHub's
+code-scanning workflow.
 
-### `queries/qlpack.yml`
+To add a query:
 
-Defines the custom query package:
+1. Develop in `cable-modem-monitor-ql/queries/`.
+2. Add a test case in `cable-modem-monitor-ql/tests/`.
+3. Run `bash scripts/dev/test-codeql.sh` locally.
+4. Commit to `cable-modem-monitor-ql/`.
 
-- Package name: `cable-modem-monitor/security-queries`
-- Dependencies: Python CodeQL libraries
-- Query suite: `cable-modem-security.qls`
+Promoting a custom query into the GitHub-hosted CI scan would
+require resolving the CodeQL Action compatibility issue that caused
+custom queries to be removed in the first place.
 
-### `queries/cable-modem-security.qls`
+## Working with results
 
-Lists all custom security queries to run.
+### View scan results
 
-## Custom Queries
+1. Repository → Security tab → Code scanning alerts.
+2. Filter by severity, category, or query.
 
-See `queries/README.md` for detailed documentation of each query, including:
+### Suppress a false positive
 
-- CWE mappings
-- Severity ratings
-- Code examples
-- Justification rationale
-
-## How to Use
-
-### View Scan Results
-
-1. Go to GitHub repository
-2. Click **Security** tab
-3. Click **Code scanning alerts**
-4. Filter by severity, category, or query
-
-### Suppress False Positives
-
-**In code (preferred):**
+In code (preferred):
 
 ```python
 # Justification comment explaining why this is safe
 potentially_flagged_code()  # nosec B501
 ```
 
-**In UI:**
+In the GitHub UI: open the alert, dismiss with reason.
 
-- Navigate to alert in Security tab
-- Click "Dismiss alert"
-- Select reason and add comment
+For a project-wide pattern: add to `codeql-config.yml` `query-filters`
+with rationale.
 
-**In config file** (for project-wide patterns):
+### Test locally
 
-- Edit `codeql-config.yml`
-- Add to `query-filters` with rationale
-
-### Test Locally (Optional)
-
-Requires CodeQL CLI installation. See `docs/reference/CODEQL_TESTING_GUIDE.md` for setup.
-
-```bash
-# Quick syntax check
-bash scripts/dev/test-codeql.sh
-
-# Full local scan (advanced)
-# See docs/CODEQL_OVERVIEW.md for instructions
-```
-
-## Adding New Queries
-
-1. **Develop in sandbox:** Create query in `cable-modem-monitor-ql/queries/`
-2. **Add tests:** Create test cases in `cable-modem-monitor-ql/tests/`
-3. **Test locally:** Run `bash scripts/dev/test-codeql.sh`
-4. **Promote to production:**
-
-   ```bash
-   cp cable-modem-monitor-ql/queries/my-query.ql .github/codeql/queries/
-   ```
-
-5. **Add to suite:** Edit `queries/cable-modem-security.qls`, add query name
-6. **Document:** Add query details to `queries/README.md`
-7. **Commit and push:** GitHub Actions will run the new query
-
-## Workflow
-
-CodeQL runs via `.github/workflows/codeql.yml`:
-
-```yaml
-# Queries parameter tells CodeQL what to run:
-queries: security-extended,security-and-quality,.github/codeql/queries
-                                                 ^^^^^^^^^^^^^^^^^^^^^^
-                                                 Custom queries from this directory
-```
-
-## Documentation
-
-- **High-level overview:** `docs/CODEQL_OVERVIEW.md` (start here!)
-- **Query details:** `queries/README.md`
-- **Local testing:** `docs/reference/CODEQL_TESTING_GUIDE.md`
-- **CodeQL docs:** <https://codeql.github.com/docs/>
-
-## Troubleshooting
-
-### "Custom queries not running in CI"
-
-Check GitHub Actions log:
-
-```bash
-gh run view --log | grep "requests-no-timeout"
-```
-
-Should see: `Interpreted problem query "Requests get without timeout"`
-
-If missing, check:
-
-- `qlpack.yml` exists in this directory
-- Workflow `.github/workflows/codeql.yml` line 43 includes `.github/codeql/queries`
-
-### "Query syntax error"
-
-Test locally:
+Requires the CodeQL CLI installed locally — see
+[`docs/reference/CODEQL_TESTING_GUIDE.md`](../../docs/reference/CODEQL_TESTING_GUIDE.md)
+for setup. Then:
 
 ```bash
 bash scripts/dev/test-codeql.sh
-```
-
-Errors indicate issues with query `.ql` files.
-
-### "Too many false positives"
-
-Add query filter in `codeql-config.yml`:
-
-```yaml
-query-filters:
-  - exclude:
-      id: py/your-query-id
-      # Rationale: Explain why this pattern is intentional
 ```
 
 ## Status
 
-✅ **Active** - CodeQL scans run automatically on every push/PR
-✅ **6 custom queries** - Cable modem specific security checks
-✅ **100+ standard queries** - OWASP Top 10, CWE coverage
-✅ **Documented** - See docs/ for comprehensive guides
+- ✅ CI runs standard CodeQL packs (`security-extended`,
+  `security-and-quality`) on push, PR, and a weekly schedule.
+- ✅ 1 custom query in the sibling repo, exercised by the local
+  pre-commit hook.
+- ⚠️ Custom queries are **not** wired into CI — pending resolution of
+  the CodeQL Action compatibility issue noted in the workflow.
 
-Last updated: 2025-11-26
+Last updated: 2026-04-24

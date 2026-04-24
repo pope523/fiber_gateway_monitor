@@ -1,32 +1,29 @@
-"""Tests for v3.13→v3.14 gap analysis fixes (G-1 through G-9).
+"""Tests for v3.13→v3.14 gap analysis fixes (G-1, G-2, G-3, G-6, G-9).
 
 Covers:
 - G-1: url_token body token extraction with success_indicator guard
 - G-2: Pre-login cookie clearing
 - G-3: Form auth Referer header
 - G-6: HNAP header parsing warning filter
-- G-7: HNAP auth diagnostics tracking
 - G-9: Auth log_level parameter
+
+G-7 (HNAP auth diagnostics) was retired: ``HnapAuthDiagnostics`` is
+replaced by the generic on-demand adapter-based auth capture in
+``auth/http_capture.py``. See tests/auth/test_http_capture.py for the
+replacement coverage.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 import requests
-from requests.cookies import RequestsCookieJar
 from solentlabs.cable_modem_monitor_core.auth.form import FormAuthManager
-from solentlabs.cable_modem_monitor_core.auth.hnap import (
-    HnapAuthDiagnostics,
-    HnapAuthManager,
-)
 from solentlabs.cable_modem_monitor_core.auth.url_token import UrlTokenAuthManager
 from solentlabs.cable_modem_monitor_core.models.modem_config.auth import (
     FormAuth,
-    HnapAuth,
     UrlTokenAuth,
 )
 from solentlabs.cable_modem_monitor_core.test_harness import HARMockServer
@@ -278,78 +275,10 @@ class TestG6HNAPWarningFilter:
         assert "_HNAPHeaderParsingFilter" in filter_types
 
 
-# ┌────────────────────────────────────────────────────────────────────┐
-# │ G-7: HNAP auth diagnostics                                        │
-# └────────────────────────────────────────────────────────────────────┘
-
-
-class TestG7HnapAuthDiagnostics:
-    """G-7: HnapAuthManager stores challenge/login diagnostics."""
-
-    def test_diagnostics_none_before_auth(self) -> None:
-        """No diagnostics before any auth attempt."""
-        config = HnapAuth(strategy="hnap", hmac_algorithm="md5")
-        manager = HnapAuthManager(config)
-        assert manager.last_auth_diagnostics is None
-
-    def test_diagnostics_populated_after_auth(self) -> None:
-        """Diagnostics populated after successful HNAP auth.
-
-        Uses a mock session with sequential responses to simulate
-        the two-phase HNAP login (challenge, then login).
-        """
-        challenge_json = {
-            "LoginResponse": {
-                "Challenge": "abc123",
-                "PublicKey": "pub456",
-                "Cookie": "uid_cookie",
-                "LoginResult": "",
-            }
-        }
-        login_json = {"LoginResponse": {"LoginResult": "OK"}}
-
-        # Build mock responses for sequential calls
-        mock_challenge = MagicMock()
-        mock_challenge.json.return_value = challenge_json
-        mock_challenge.status_code = 200
-
-        mock_login = MagicMock()
-        mock_login.json.return_value = login_json
-        mock_login.status_code = 200
-
-        session = MagicMock(spec=requests.Session)
-        session.cookies = RequestsCookieJar()
-        session.post = MagicMock(side_effect=[mock_challenge, mock_login])
-
-        config = HnapAuth(strategy="hnap", hmac_algorithm="md5")
-        manager = HnapAuthManager(config)
-        result = manager.authenticate(
-            session,
-            "http://192.168.100.1",
-            "admin",
-            "password",
-        )
-
-        assert result.success is True
-        diag = manager.last_auth_diagnostics
-        assert diag is not None
-        assert isinstance(diag, HnapAuthDiagnostics)
-        # Challenge request has Login action
-        assert "Login" in diag.challenge_request
-        # Challenge response has LoginResponse
-        assert "LoginResponse" in diag.challenge_response
-        # Login request has Login action with "login" action
-        assert diag.login_request.get("Login", {}).get("Action") == "login"
-        # Login response has LoginResult
-        assert "LoginResponse" in diag.login_response
-
-    def test_diagnostics_dataclass_fields(self) -> None:
-        """HnapAuthDiagnostics has the expected fields."""
-        diag = HnapAuthDiagnostics()
-        assert diag.challenge_request == {}
-        assert diag.challenge_response == {}
-        assert diag.login_request == {}
-        assert diag.login_response == {}
+# G-7 (HNAP auth diagnostics) was retired. The per-strategy
+# ``HnapAuthDiagnostics`` dataclass is replaced by the adapter-based
+# on-demand capture in ``auth/http_capture.py``; see
+# ``tests/auth/test_http_capture.py`` for coverage.
 
 
 # ┌────────────────────────────────────────────────────────────────────┐

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Final
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
@@ -33,6 +34,10 @@ from .signals import CollectorSignal
 _logger = logging.getLogger(__name__)
 _LOGOUT_LOG_LEVEL: Final[int] = logging.DEBUG
 _DEFAULT_AUTH_LOG_LEVEL: Final[int] = logging.DEBUG
+
+# Maximum response body characters included in the auth-failure log.
+_FAILURE_BODY_SNIPPET_MAX: Final[int] = 500
+_REDACTED: Final[str] = "[REDACTED]"
 
 
 class LoginLockoutError(Exception):
@@ -80,11 +85,7 @@ class ModemDataCollector:
         self._base_url = base_url.rstrip("/")
         self._username = username
         self._password = password
-
-        # Persistent session — reused across execute() calls.
-        # Created via create_session() so HTTPS modems with self-signed
-        # certs get verify=False, and legacy firmware gets SECLEVEL=0.
-        self._session = create_session(legacy_ssl=legacy_ssl)
+        self._legacy_ssl = legacy_ssl
 
         # Auth manager and context
         self._auth_manager: BaseAuthManager = create_auth_manager(modem_config)
@@ -92,11 +93,10 @@ class ModemDataCollector:
         self._last_auth_result: AuthResult | None = None
         self._session_reused: bool = False
 
-        # Configure session with static headers
-        session_headers: dict[str, str] = {}
-        if modem_config.session and modem_config.session.headers:
-            session_headers = dict(modem_config.session.headers)
-        self._auth_manager.configure_session(self._session, session_headers)
+        # Persistent session — reused across execute() calls.
+        # Created via create_session() so HTTPS modems with self-signed
+        # certs get verify=False, and legacy firmware gets SECLEVEL=0.
+        self._session = self._build_session()
 
         # Parser coordinator (reused across polls)
         self._coordinator: ModemParserCoordinator | None = None
@@ -132,7 +132,13 @@ class ModemDataCollector:
                 error=str(exc),
             )
         except (requests.ConnectionError, requests.Timeout) as exc:
-            _logger.info("Connection failed during auth [%s]", self._modem_config.model)
+            _log_auth_failure_detail(
+                model=self._modem_config.model,
+                strategy=_strategy_name(self._modem_config),
+                response=None,
+                error=str(exc),
+                password=self._password,
+            )
             return ModemResult(
                 success=False,
                 signal=CollectorSignal.CONNECTIVITY,
@@ -140,7 +146,13 @@ class ModemDataCollector:
             )
 
         if not auth_result.success:
-            _logger.info("Auth failed [%s]: %s", self._modem_config.model, auth_result.error)
+            _log_auth_failure_detail(
+                model=self._modem_config.model,
+                strategy=_strategy_name(self._modem_config),
+                response=auth_result.response,
+                error=auth_result.error,
+                password=self._password,
+            )
             return ModemResult(
                 success=False,
                 signal=CollectorSignal.AUTH_FAILED,
@@ -262,6 +274,11 @@ class ModemDataCollector:
         """Per-resource timing from the last successful collection."""
         return self._last_resource_fetches
 
+    @property
+    def session(self) -> requests.Session:
+        """The underlying ``requests.Session`` used for auth and loading."""
+        return self._session
+
     def clear_session(self) -> None:
         """Invalidate the current session.
 
@@ -275,6 +292,22 @@ class ModemDataCollector:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _build_session(self) -> requests.Session:
+        """Build a ``requests.Session`` configured for this modem.
+
+        Applies the modem's legacy-SSL setting, copies session-scoped
+        headers from modem.yaml, and runs the auth manager's
+        ``configure_session`` hook. Called once during ``__init__``
+        for the polling session, and once per diagnostic capture
+        attempt via :meth:`run_capture_attempt` for isolation.
+        """
+        session = create_session(legacy_ssl=self._legacy_ssl)
+        session_headers: dict[str, str] = {}
+        if self._modem_config.session and self._modem_config.session.headers:
+            session_headers = dict(self._modem_config.session.headers)
+        self._auth_manager.configure_session(session, session_headers)
+        return session
 
     def authenticate(
         self,
@@ -542,3 +575,93 @@ def _to_resource_fetches(
         )
         for r in raw
     ]
+
+
+# ---------------------------------------------------------------------------
+# Auth-failure detail log
+# ---------------------------------------------------------------------------
+
+
+def _log_auth_failure_detail(
+    model: str,
+    strategy: str,
+    response: requests.Response | None,
+    error: str,
+    password: str,
+) -> None:
+    """Emit one WARNING with sanitized wire detail for an auth failure.
+
+    Replaces the older session-adapter capture machinery: a
+    maintainer triaging a stuck-setup user only needs to see what
+    the modem returned. Here it is in one log line — strategy,
+    request line, response status + Content-Type, and a short body
+    snippet with the user's password scrubbed if it appears
+    literally.
+
+    The URL has its query string stripped (some strategies — Arris
+    ``url_token`` notably — put credentials in the query). The body
+    snippet is truncated to keep logs tractable.
+    """
+    if response is None:
+        # ConnectionError / Timeout — no response to dump.
+        _logger.warning("Auth failed [%s] strategy=%s — %s", model, strategy, error)
+        return
+
+    method = response.request.method if response.request else "?"
+    url = _strip_url_query(response.url)
+    status = response.status_code
+    content_type = response.headers.get("Content-Type", "")
+    body_snippet = _scrub_password(response.text[:_FAILURE_BODY_SNIPPET_MAX], password)
+    if len(response.text) > _FAILURE_BODY_SNIPPET_MAX:
+        body_snippet = body_snippet + "... (truncated)"
+
+    _logger.warning(
+        "Auth failed [%s] strategy=%s\n" "  request: %s %s\n" "  response: %d %s\n" "  body: %s",
+        model,
+        strategy,
+        method,
+        url,
+        status,
+        content_type,
+        body_snippet,
+    )
+
+
+def _strip_url_query(url: str) -> str:
+    """Replace any URL query string with ``?<redacted>``.
+
+    URL-token strategies put base64-encoded credentials directly in
+    the query (``?<base64(user:password)>``). Stripping the query
+    wholesale is conservative — non-credential queries lose
+    visibility, but they're rare in modem auth and not worth the
+    field-name guessing it would take to differentiate.
+    """
+    parsed = urlparse(url)
+    if not parsed.query:
+        return url
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, "<redacted>", parsed.fragment))
+
+
+def _strategy_name(modem_config: Any) -> str:
+    """Return the auth strategy name for the failure log (e.g., ``"form"``)."""
+    auth = getattr(modem_config, "auth", None)
+    return getattr(auth, "strategy", "none") if auth is not None else "none"
+
+
+def _scrub_password(text: str, password: str) -> str:
+    """Replace literal occurrences of the user's password with ``[REDACTED]``.
+
+    Catches the common cases:
+
+    - Modem error pages that echo the submitted password back.
+    - Form-encoded request bodies that some modems include in their
+      response (rare but observed).
+
+    Does not attempt to scrub derived forms (PBKDF2 hashes, encrypted
+    blobs) — those are protocol-shaped credentials, not the user's
+    secret, and reversing them isn't trivial enough to leak useful
+    info from a body snippet.
+    """
+    if not password:
+        return text
+    return text.replace(password, _REDACTED)
