@@ -343,15 +343,23 @@ Key rules:
 
 ## Issue Labels
 
-Labels should reflect actionable state:
+State labels (`needs-triage`, `in-development`, `needs-testing`,
+`needs-data`, `backlog`) are mutually exclusive — exactly one
+applies. Same for `release:vX.Y` labels. Everything else stacks.
 
-- `in-development` - Code actively being written or in unreleased branch
-- `needs-testing` - Released and awaiting user verification (user CAN test now)
-- `needs-data` - Waiting on user to provide captures or info
+- `needs-triage` — auto-applied; replace with a real state on first read
+- `in-development` — code being written or in an unreleased branch
+- `needs-testing` — released and installable; user can verify now
+- `needs-data` — waiting on user for HAR / diagnostics / clarification
+- `backlog` — acknowledged, not actively prioritized
 
-**Only change to `needs-testing` after the code is released and installable.**
-A parser on an unreleased branch is still `in-development` even if the code is complete.
+**Don't apply `needs-testing` until the code is released.** A parser
+on an unreleased branch is `in-development` even when complete.
+
+Apply `release:vX.Y` when the work is committed to that release
+(branch cut, or merged). All `release:vX.Y` descriptions read
+"Tagged for vX.Y."
 
 When a user confirms a modem parser works on real hardware, promote
-the modem per the procedure in
+the modem per
 [`MODEM_DIRECTORY_SPEC.md`](packages/cable_modem_monitor_core/docs/MODEM_DIRECTORY_SPEC.md#promotion-procedure).
