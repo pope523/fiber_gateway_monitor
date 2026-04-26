@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.0-alpha.17] - 2026-04-26
+
 ### Changed (developer-only — no user-facing impact)
 
 - **Setup docs collapsed to a single canonical path.**
@@ -33,6 +35,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transitively. The `[mcp]` extra is removed. Anyone using a
   dev/CI command like `pip install -e packages/cable_modem_monitor_core[mcp,sjcl]`
   should drop the `mcp` element.
+- **Contributor path restructured around AI-assisted catalog growth.**
+  `MODEM_REQUEST.md` is the user-facing path (low friction, AI
+  screening optional); `CONTRIBUTING.md` is the developer / AI
+  contributor path centered on a new "AI-Assisted Catalog
+  Contribution" section (533 → ~270 lines after collapsing redundant
+  test/lint sections). Attribution Standards moved to a new
+  `docs/ATTRIBUTION.md` (parser docstring template, AI-attribution
+  discipline, honest framing levels). Solo-maintained framing
+  removed across all contributor-facing surfaces. Issue Closing
+  Policy clarified: no auto-close ever; closing requires either an
+  artifact (HAR + `modem.verified.json` for modem requests, reporter
+  confirmation for bugs) or a deliberate manual close.
+- **Issue-template polish.** `modem_verification.yml` and
+  `modem_request.yml` issue templates trimmed to a single ask each;
+  dropped "we" framing, the inline diagnostics-download walkthrough,
+  and the trailing "What Happens Next?" sections. Also codified
+  issue-label mutual-exclusivity (`needs-triage` / `in-development`
+  / `needs-testing` / `needs-data` / `backlog` are exactly one) and
+  the `release:vX.Y` rule in `CLAUDE.md`.
+- **CHANGELOG hygiene** — internal roadmap references (Pxx codes,
+  internal milestone names) stripped from prior alpha sections;
+  user-facing entries cite GitHub issues only.
+- **Linter config alignment.** `.pre-commit-config.yaml` ruff bumped
+  from v0.8.2 to v0.15.2 to match the project venv; the two
+  versions disagreed on import-block formatting and 15
+  catalog_tools test files were ping-ponging on every `--fix`.
+  Folded in two markdownlint fixes that had been generating noise:
+  bare URL in `CONTRIBUTING.md` (MD034) wrapped in angle brackets,
+  and the vendored CodeQL workspace clone directory added to
+  markdownlint ignores. The new ruff `ruff` hook id is a legacy
+  alias in v0.15.x — flagged for a follow-up cleanup, not blocking.
 
 ### Added
 
