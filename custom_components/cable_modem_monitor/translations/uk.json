@@ -167,7 +167,7 @@
     },
     "convert_channel_identity": {
       "name": "Convert Channel Identity",
-      "description": "Renames orphaned channel entities to match the current channel identity mode. Run after changing the mode in config flow. Modem must be online.",
+      "description": "Renames recorder statistics to match the current channel identity mode after re-adding the integration in the other mode. Modem must be online.",
       "fields": {
         "device_id": {
           "name": "Device",

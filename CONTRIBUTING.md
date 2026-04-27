@@ -48,10 +48,9 @@ Linting runs continuously in the **PROBLEMS** tab via the Ruff, mypy,
 and Pyright extensions — keep it at zero.
 
 For terminal use, `make format` / `make check` / `make test` cover the
-same ground. `./scripts/dev/commit.sh "message"` runs format → check →
-commit in one step. Pre-commit hooks check formatting, linting,
-type-check, and PII; pre-push hooks run the full lint and test suite
-(1–2 minutes).
+same ground. Pre-commit hooks check formatting, linting, type-check,
+and PII at commit time. See [Submitting Changes](#submitting-changes)
+below for the pre-push gate.
 
 ### Test on Local HA
 

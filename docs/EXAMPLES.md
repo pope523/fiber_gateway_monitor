@@ -47,7 +47,7 @@ channel types (QAM, OFDM, ATDMA, OFDMA), and entity prefix.
 ### Calling from an automation or script
 
 ```yaml
-service: cable_modem_monitor.generate_dashboard
+action: cable_modem_monitor.generate_dashboard
 data:
   include_status_card: true
   include_downstream_power: true
@@ -63,57 +63,33 @@ The YAML is in `result.yaml`.
 
 ## Manual Dashboard Example
 
-If you prefer to build your dashboard by hand, here is a static example
-showing all 24 downstream channels (typical for DOCSIS 3.0 modems),
-upstream channels, and error tracking.
+If you prefer to build your dashboard by hand, see
+[`examples/manual-dashboard.yaml`](examples/manual-dashboard.yaml) — a
+167-line Lovelace YAML covering the status entities, downstream and
+upstream history graphs, and error totals. Copy it into your
+dashboard's Raw Configuration Editor as a starting point.
 
-The full dashboard configuration is in [`examples/manual-dashboard.yaml`](examples/manual-dashboard.yaml) — a 167-line Lovelace YAML covering the status entities, downstream and upstream history graphs, and error totals. Copy it into your dashboard's Raw Configuration Editor as a starting point.
-
-**Note**: This dashboard example includes all 24 downstream channels. If your modem has fewer channels (e.g., 16 or 8), simply remove the extra channel entries. If you have more channels, add them by following the same pattern with entity_ids like `sensor.cable_modem_ds_ch_X_power` where X is the channel number.
+The example uses 24 downstream channels (typical for DOCSIS 3.0). If
+your modem has fewer or more, add/remove channel entries following the
+existing pattern. Entity IDs follow the [Entity Naming Pattern in the
+README](../README.md#available-sensors).
 
 ---
 
 ## Last Boot Time Display Options
 
-The `sensor.cable_modem_last_boot_time` is a timestamp sensor. You can customize how it displays:
-
-**Relative time (recommended)** - Compact and informative:
-
-```yaml
-- entity: sensor.cable_modem_last_boot_time
-  format: relative
-```
-
-Output: `29 days ago`
-
-**Date only** - Just the date:
+`sensor.cable_modem_last_boot_time` is a timestamp sensor. The format
+options below control how it displays in dashboard cards:
 
 ```yaml
 - entity: sensor.cable_modem_last_boot_time
-  format: date
+  format: relative   # "29 days ago"  (recommended — compact and informative)
+  # format: date     # "2025-09-25"
+  # format: time     # "00:38:00"
+  # format: datetime # "2025-09-25 00:38:00"
 ```
 
-Output: `2025-09-25`
-
-**Time only** - Just the time:
-
-```yaml
-- entity: sensor.cable_modem_last_boot_time
-  format: time
-```
-
-Output: `00:38:00`
-
-**Full datetime (fits in UI)** - Date and time:
-
-```yaml
-- entity: sensor.cable_modem_last_boot_time
-  format: datetime
-```
-
-Output: `2025-09-25 00:38:00`
-
-**Custom template** - For more control (may be too long for some UIs):
+For a custom template (more control, may be too long for narrow cards):
 
 ```yaml
 type: markdown
@@ -124,112 +100,18 @@ content: >
   }}
 ```
 
-Output: `Last Reboot: 2025-09-25 00:38`
-
 ---
 
 ## Automation Examples
 
-### Alert on High Uncorrected Errors
+Each automation is a standalone YAML file you can copy into your
+`automations.yaml` or paste into the **Automation Editor → Edit in
+YAML** view. Tune thresholds and entity IDs to match your modem.
 
-```yaml
-automation:
-  - alias: "Cable Modem - High Uncorrected Errors"
-    trigger:
-      - platform: numeric_state
-        entity_id: sensor.cable_modem_total_uncorrected_errors
-        above: 100
-    action:
-      - service: notify.notify
-        data:
-          title: "Cable Modem Alert"
-          message: "High uncorrected errors detected. Check your cable connection."
-```
-
-### Alert on Low SNR
-
-```yaml
-automation:
-  - alias: "Cable Modem - Low SNR Warning"
-    trigger:
-      - platform: numeric_state
-        entity_id: sensor.cable_modem_ds_ch_1_snr
-        below: 30
-    action:
-      - service: notify.notify
-        data:
-          title: "Cable Modem Alert"
-          message: "Low signal quality detected on downstream channel 1."
-```
-
-### Alert on Channel Count Changes
-
-```yaml
-automation:
-  - alias: "Cable Modem - Channel Count Changed"
-    trigger:
-      - platform: state
-        entity_id:
-          - sensor.cable_modem_downstream_channel_count
-          - sensor.cable_modem_upstream_channel_count
-    condition:
-      - condition: template
-        value_template: "{{ trigger.from_state.state != 'unavailable' }}"
-    action:
-      - service: notify.notify
-        data:
-          title: "Cable Modem Alert"
-          message: "Channel count changed: {{ trigger.to_state.name }} is now {{ trigger.to_state.state }}"
-```
-
-### Auto-Restart on Network Issues
-
-```yaml
-automation:
-  - alias: "Cable Modem - Auto Restart on High Errors"
-    trigger:
-      - platform: numeric_state
-        entity_id: sensor.cable_modem_total_uncorrected_errors
-        above: 1000
-    action:
-      - service: notify.notify
-        data:
-          title: "Cable Modem Alert"
-          message: "High error count detected. Restarting modem..."
-      - service: button.press
-        target:
-          entity_id: button.cable_modem_restart_modem
-```
-
-### Modem Status Alert (v3.10.0+)
-
-```yaml
-automation:
-  - alias: "Cable Modem Status Alert"
-    trigger:
-      - platform: state
-        entity_id: sensor.cable_modem_status
-        to: "Unresponsive"
-        for:
-          minutes: 5
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "Modem Offline"
-          message: "Cable modem is not responding. Check power and connections."
-
-  - alias: "Cable Modem DOCSIS Alert"
-    trigger:
-      - platform: state
-        entity_id: sensor.cable_modem_status
-        to:
-          - "Not Locked"
-          - "Partial Lock"
-        for:
-          minutes: 10
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "Modem Connection Issue"
-          message: "Cable modem DOCSIS status: {{ states('sensor.cable_modem_status') }}"
-```
+| Scenario | File | What it does |
+|----------|------|--------------|
+| **High uncorrected errors** | [alert-uncorrected-errors.yaml](examples/automations/alert-uncorrected-errors.yaml) | Notify when total uncorrected errors exceed a threshold |
+| **Low SNR on a channel** | [alert-low-snr.yaml](examples/automations/alert-low-snr.yaml) | Notify when a downstream channel's SNR drops below 30 dB |
+| **Channel count changed** | [alert-channel-count.yaml](examples/automations/alert-channel-count.yaml) | Notify when downstream or upstream bonding totals change |
+| **Auto-restart on errors** | [auto-restart-on-errors.yaml](examples/automations/auto-restart-on-errors.yaml) | Automatically restart the modem on a hard error threshold (use sparingly) |
+| **Status alerts (offline / DOCSIS)** | [status-alerts.yaml](examples/automations/status-alerts.yaml) | Notify on `Unresponsive` or DOCSIS `Not Locked` / `Partial Lock` after a debounce window |

@@ -53,76 +53,20 @@ tool produces a sanitized, gzipped `.sanitized.har.gz` file.
 `har-capture` automatically redacts MAC addresses, serial numbers,
 public IPs, and known credential patterns — but it's best-effort. Some
 modems embed WiFi credentials in unlabeled JavaScript or proprietary
-blobs the sanitizer hasn't seen. Before sharing:
+blobs the sanitizer hasn't seen. Pick one of these to verify before
+sharing:
 
-**Option A — AI-assisted self-screen (faster).** Decompress the
-`.sanitized.har.gz` and attach it to ChatGPT, Claude, or any AI
-assistant that accepts file attachments. ChatGPT in an incognito window
-without an account works for a few prompts; the free tiers of ChatGPT
-and Claude both work. Paste this prompt:
+- **AI-assisted self-screen (faster)** — paste a prepared prompt into
+  ChatGPT, Claude, or any AI assistant that takes file attachments.
+  Full prompt and instructions:
+  [docs/examples/har-pii-screen-prompt.md](examples/har-pii-screen-prompt.md).
+- **Manual checklist (5 minutes)** — open the file in a text editor and
+  search for a short list of patterns:
+  [docs/examples/har-pii-manual-checklist.md](examples/har-pii-manual-checklist.md).
 
-````text
-I need a defensive privacy review on a sanitized HAR file before I
-share it publicly on GitHub. The file has been through an automated
-sanitizer; I'm asking you to look for anything it might have missed,
-so I can redact before sharing. This is a leak-prevention check, not
-credential extraction.
-
-Search the attached HAR for:
-
-1. WiFi network names — short alphanumeric tokens near "ssid",
-   "network_name", "wifi_name", or JSON keys ending in "Ssid" or
-   "NetworkName". Report any value that doesn't look like a placeholder.
-2. Passwords — any value near "password", "passphrase", "psk",
-   "wpa_key", "admin_password" that is NOT "***REDACTED***" or empty.
-3. MAC addresses NOT in the format "02:xx:xx:xx:xx:xx" (sanitizer
-   hash format starts with 02). Real MACs in any other format are a leak.
-4. IPv4 addresses that aren't RFC1918 private (10.x, 172.16-31.x,
-   192.168.x), 0.0.0.0, 127.0.0.1, or 240.x.x.x (sanitizer's
-   placeholder for redacted public IPs).
-5. Session tokens, bearer tokens, or API keys — long opaque strings
-   in cookies, Authorization headers, or response bodies that aren't
-   already "***REDACTED***".
-
-Output a fenced markdown block:
-
-```
-## PII review
-
-- WiFi names found: <list or "none">
-- Passwords found: <list or "none">
-- Non-hashed MACs: <list or "none">
-- Non-redacted public IPs: <list or "none">
-- Suspicious tokens: <list or "none">
-- Verdict: <CLEAN | NEEDS MANUAL REDACTION>
-```
-
-For each item include the entry index plus a 10-20 character snippet
-around the value (e.g. "entry 47, response body, near
-`var wifiSsid = `"). Don't paste the actual sensitive value back to me.
-````
-
-If the verdict is **CLEAN**, you're ready to submit. If it's **NEEDS
-MANUAL REDACTION**, open the file in a text editor, replace each flagged
-value with `***REDACTED***`, save, re-gzip, and submit. Note in your
-issue what you redacted so the sanitizer can be improved for future
-contributors.
-
-False positives are common (an AI may flag a placeholder as suspicious).
-Err on the side of redacting if unsure — the cost of an unnecessary
-redaction is zero, the cost of a leaked credential is real.
-
-**Option B — Manual checklist.** Open `.sanitized.har` in a text editor
-and search for each:
-
-- Your WiFi network name (SSID) — should return no results
-- Your WiFi password — should return no results
-- Your router admin password — should return no results
-- Your public IP — should be `***PUBLIC_IP***`
-- Serial numbers — should be `***SERIAL***` or hashed
-
-If anything sensitive remains, replace it with `***REDACTED***` and
-note it in your issue.
+If anything sensitive remains, replace it with `***REDACTED***`, save,
+re-gzip, and note what you redacted in your issue so the sanitizer
+can be improved for future contributors.
 
 ## Step 3 — Submit
 
@@ -153,15 +97,6 @@ Modem IPs like `192.168.100.1` are preserved — they're standard
 defaults, not personal information.
 
 ---
-
-## Want to help more?
-
-If you have AI access and want to do more than file a request — analyze
-your own capture, propose a catalog entry, help triage other users'
-submissions — see the
-[AI-assisted catalog contribution guide](../CONTRIBUTING.md#ai-assisted-catalog-contribution).
-The intake pipeline is designed for outside contributors with hardware
-the maintainer doesn't have.
 
 ## Questions
 

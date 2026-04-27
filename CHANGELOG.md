@@ -170,8 +170,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the default for new installs, giving stable entity IDs across
   reboots. Existing installs keep ID mode (`channel_id`) via v1→v2
   migration so DCID-based naming continues. A `convert_channel_identity`
-  dev service migrates recorder statistics between modes without
-  delete + re-add. Related to #117.
+  service renames recorder statistics to match the current mode after a
+  remove-and-re-add in the other mode, so historical graphs survive the
+  switch. Related to #117.
 - **Channel numbering across all parser formats** — Core auto-assigns
   `channel_number` (1-based position) on all 7 parser formats. Unlocked
   channels now return only `channel_number` + `lock_status`; all other

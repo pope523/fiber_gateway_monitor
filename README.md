@@ -177,11 +177,12 @@ To return to stable, repeat the steps with **Show beta versions** off and pick t
 
 After setup, configure via **Settings → Devices & Services → Cable Modem Monitor → Configure**:
 
+- **Host**: Update modem IP / URL
+- **Credentials**: Update username/password if your modem requires authentication
 - **Polling Interval**: How often to fetch full modem status (30 seconds – 24 hours, default: 10 minutes)
 - **Health Check Interval**: How often to run lightweight reachability probes (default depends on probe support: 30 seconds with ICMP/HEAD, 60 seconds with HTTP-GET only)
-- **Modem Model**: Change model selection
-- **Credentials**: Update username/password if your modem requires authentication
-- **Channel Identity**: Switch between Channel Number and Channel ID modes (also exposed via the `convert_channel_identity` service)
+
+Channel Identity and Modem Model are install-time choices. To change either, remove the integration and add it again.
 
 ---
 
@@ -191,11 +192,21 @@ All sensors use the `cable_modem_` prefix for consistent entity naming and easy 
 
 **Entity Naming Pattern:**
 
-- System sensors: `sensor.cable_modem_{metric}` (e.g., `sensor.cable_modem_status`)
-- Channel sensors: `sensor.cable_modem_{direction}_{type}_ch_{number}_{metric}`
-  - Example: `sensor.cable_modem_ds_qam_ch_1_power` (downstream QAM channel 1 power)
-  - Example: `sensor.cable_modem_us_atdma_ch_3_frequency` (upstream ATDMA channel 3 frequency)
+System sensors: `sensor.cable_modem_{metric}` (e.g., `sensor.cable_modem_status`).
+
+Channel sensor naming depends on the **Channel Identity** mode you picked at setup:
+
+- **Channel Number mode** (recommended default — stable across reboots):
+  `sensor.cable_modem_{direction}_ch_{number}_{metric}`
+  - Example: `sensor.cable_modem_ds_ch_1_power`
+  - Example: `sensor.cable_modem_us_ch_3_frequency`
+- **Channel ID mode** (DOCSIS DCID-based):
+  `sensor.cable_modem_{direction}_{type}_ch_{id}_{metric}`
+  - Example: `sensor.cable_modem_ds_qam_ch_1_power`
+  - Example: `sensor.cable_modem_us_atdma_ch_3_frequency`
   - DOCSIS 3.1 modems also have OFDM/OFDMA channels: `sensor.cable_modem_ds_ofdm_ch_1_power`
+
+Channel Identity is set when you add the integration. To switch, remove and re-add it in the other mode, then call the `convert_channel_identity` service to rename existing recorder history to match.
 
 ### Modem Status
 
@@ -255,7 +266,7 @@ The integration registers three buttons under the modem device:
 - **`cable_modem_monitor.generate_dashboard`**: Generates a Lovelace dashboard YAML tailored to your modem's channel layout. Configurable: which graphs to include (status card, downstream/upstream power/SNR/frequency, errors, latency), `graph_hours` window (1–168), and short-title mode.
 - **`cable_modem_monitor.request_refresh`**: Triggers an immediate data poll for the selected device.
 - **`cable_modem_monitor.request_health_check`**: Runs an immediate health probe (ICMP / TCP / HTTP) outside the regular cadence.
-- **`cable_modem_monitor.convert_channel_identity`**: Switches the integration between Channel Number mode (stable entity IDs across reboots — recommended) and Channel ID mode (DOCSIS DCID-based naming).
+- **`cable_modem_monitor.convert_channel_identity`**: Renames recorder statistics from the previous Channel Identity mode to the current one, so historical graphs survive a remove-and-re-add in the other mode. Modem must be online.
 
 ## Understanding the Values
 

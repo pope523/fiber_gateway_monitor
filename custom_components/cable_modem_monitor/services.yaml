@@ -64,3 +64,11 @@ request_health_check:
       selector:
         device:
           integration: cable_modem_monitor
+
+convert_channel_identity:
+  fields:
+    device_id:
+      required: false
+      selector:
+        device:
+          integration: cable_modem_monitor
