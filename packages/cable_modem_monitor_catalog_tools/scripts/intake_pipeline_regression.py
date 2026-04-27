@@ -40,7 +40,9 @@ from typing import Any
 import yaml
 from solentlabs.cable_modem_monitor_catalog_tools.analysis.types import FleetPatterns
 
-CATALOG_ROOT = Path(__file__).resolve().parent.parent / ("solentlabs/cable_modem_monitor_catalog/modems")
+CATALOG_ROOT = (
+    Path(__file__).resolve().parents[2] / "cable_modem_monitor_catalog/solentlabs/cable_modem_monitor_catalog/modems"
+)
 
 CONFIG_FILES = ("modem.yaml", "parser.yaml", "parser.py")
 

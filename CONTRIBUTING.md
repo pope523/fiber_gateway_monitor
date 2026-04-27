@@ -197,9 +197,22 @@ capture and golden file.
 
 ## Submitting Changes
 
-Standard fork → branch → PR flow. Before pushing: `make check` and
-`make test` (or VS Code's **🧪 Test: All** task) — pre-push hooks will
-run them anyway, but catching failures locally is faster.
+Standard fork → branch → PR flow.
+
+**Inner loop**: `make test` (or VS Code's **🧪 Test: All** task) for
+quick iteration. Runs the package and integration test suites — same
+pytest CI runs, but it's a *subset* of the full CI gate.
+
+**Pre-push gate**: `make validate-ci`. This is the canonical local
+mirror of the CI Tests workflow — lint, format, type-check, tests,
+intake regression, PII check, and catalog README freshness. If
+`make validate-ci` is green, CI will be green. Pre-push hooks run a
+subset, so failures still surface, but `make validate-ci` is the
+definitive local check.
+
+`scripts/release.py` runs `make validate-ci` automatically as part of
+every version bump, so a release can never silently land on top of
+regressions that accumulated since the last bump.
 
 PRs that touch a modem (parser, catalog entry) should follow the
 [AI-Assisted Catalog Contribution](#ai-assisted-catalog-contribution)

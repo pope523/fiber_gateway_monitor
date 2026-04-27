@@ -8,18 +8,18 @@ handles all git operations.
 Steps:
 1. Validate version format
 2. Check git working directory is clean
-3. Run tests (pytest)
-4. Run code quality checks (ruff, black, mypy)
-5. Verify translations/en.json matches strings.json
-6. Update version in all required files:
+3. Run `make validate-ci` (full CI mirror — lint, format, type-check,
+   tests, intake regression, PII check, catalog README freshness)
+4. Verify translations/en.json matches strings.json
+5. Update version in all required files:
    - custom_components/cable_modem_monitor/manifest.json
    - custom_components/cable_modem_monitor/const.py
    - tests/components/test_version_and_startup.py
    - packages/cable_modem_monitor_core/pyproject.toml
    - packages/cable_modem_monitor_catalog/pyproject.toml
-7. Update CHANGELOG.md
-8. Verify all version files are consistent
-9. Print changed files and suggested next steps
+6. Update CHANGELOG.md
+7. Verify all version files are consistent
+8. Print changed files and suggested next steps
 
 Usage:
     python scripts/release.py 3.5.2                    # Full release prep
@@ -360,60 +360,27 @@ def show_changed_files(version: str) -> None:
     print_info("  gh run watch $(gh run list -w 'Publish to PyPI' --json databaseId -q '.[0].databaseId')")
 
 
-def run_tests(repo_root: Path) -> bool:
-    """Run the full test suite."""
-    try:
-        print_info("Running tests...")
-        subprocess.run(
-            [str(repo_root / ".venv" / "bin" / "python"), "-m", "pytest", "-v"],
-            cwd=repo_root,
-            check=True,
-        )
-        print_success("All tests passed")
-        return True
-    except subprocess.CalledProcessError:
-        print_error("Tests failed! Fix issues before releasing.")
-        return False
+def run_validate_ci(repo_root: Path) -> bool:
+    """Run the full local CI mirror (`make validate-ci`).
 
-
-def run_code_quality_checks(repo_root: Path) -> bool:
-    """Run code quality checks (ruff, black, mypy).
-
-    Matches CI configuration exactly to catch issues before push.
+    `make validate-ci` is the canonical local stand-in for the CI Tests
+    workflow surface (lint + format + type-check + tests + intake
+    regression + PII check + catalog README freshness). Calling it here
+    means a release is gated on the same checks CI will run, so version
+    bumps can't silently land on top of regressions introduced earlier
+    in the cycle.
     """
     try:
-        venv_python = str(repo_root / ".venv" / "bin" / "python")
-
-        # Run ruff - check entire repo (matches CI)
-        print_info("Running ruff on entire repository...")
+        print_info("Running make validate-ci (full CI mirror)...")
         subprocess.run(
-            [venv_python, "-m", "ruff", "check", "."],
+            ["make", "validate-ci"],
             cwd=repo_root,
             check=True,
         )
-        print_success("Ruff checks passed")
-
-        # Run black - check entire repo (matches CI)
-        print_info("Running black on entire repository...")
-        subprocess.run(
-            [venv_python, "-m", "black", "--check", "."],
-            cwd=repo_root,
-            check=True,
-        )
-        print_success("Black formatting checks passed")
-
-        # Run mypy - check entire repo with config (matches CI)
-        print_info("Running mypy with config file...")
-        subprocess.run(
-            [venv_python, "-m", "mypy", ".", "--config-file=mypy.ini"],
-            cwd=repo_root,
-            check=True,
-        )
-        print_success("Mypy type checks passed")
-
+        print_success("Full CI validation passed")
         return True
     except subprocess.CalledProcessError:
-        print_error("Code quality checks failed!")
+        print_error("CI validation failed! Fix issues before releasing.")
         return False
 
 
@@ -652,11 +619,8 @@ def _run_release(args: argparse.Namespace, repo_root: Path) -> None:
     # Validate preconditions
     validate_release_preconditions(version, repo_root)
 
-    # Run tests — not optional
-    _exit_on_failure(run_tests(repo_root))
-
-    # Run code quality checks — not optional
-    _exit_on_failure(run_code_quality_checks(repo_root))
+    # Full CI mirror — gates the release on what CI will see
+    _exit_on_failure(run_validate_ci(repo_root))
 
     # Verify translations
     _exit_on_failure(verify_translations(repo_root))

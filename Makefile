@@ -1,4 +1,4 @@
-.PHONY: help test test-quick test-simple clean lint lint-fix fix-imports lint-all type-check format format-check check docker-start docker-stop docker-restart docker-logs docker-status docker-clean docker-shell
+.PHONY: help test test-quick test-simple clean lint lint-fix fix-imports lint-all type-check format format-check check validate validate-ci validate-host intake-regression pii-check catalog-readme-check docker-start docker-stop docker-restart docker-logs docker-status docker-clean docker-shell
 
 # Default target - show help
 help:
@@ -101,9 +101,34 @@ validate:
 	@$(MAKE) test-quick
 	@echo "✅ Validation passed! Safe to commit."
 
-# Full CI validation (thorough) - requires venv
-validate-ci: check test
+# Full CI validation (thorough) - requires venv.
+# Mirrors the CI Tests workflow surface so a green local run guarantees
+# a green CI run. Skipped vs. CI: HACS hassfest (uses an external
+# GitHub Action) and version-check (release.py covers that separately).
+validate-ci: check test intake-regression pii-check catalog-readme-check
 	@echo "✅ Full CI validation passed!"
+
+# Intake pipeline accuracy regression — mirrors CI test-packages step.
+intake-regression:
+	@echo "🔍 Running intake pipeline regression..."
+	@python packages/cable_modem_monitor_catalog_tools/scripts/intake_pipeline_regression.py
+
+# Fixture PII / credential scan — mirrors CI pii-check job.
+pii-check:
+	@echo "🔍 Scanning fixtures for PII..."
+	@python packages/cable_modem_monitor_catalog/scripts/check_fixture_pii.py
+
+# Catalog README freshness — mirrors CI catalog-readme job.
+catalog-readme-check:
+	@echo "🔍 Checking catalog README is up to date..."
+	@python packages/cable_modem_monitor_catalog/scripts/generate_catalog_index.py --print > /tmp/catalog_readme.md
+	@if ! diff -q packages/cable_modem_monitor_catalog/README.md /tmp/catalog_readme.md > /dev/null 2>&1; then \
+		echo "❌ Catalog README is out of date."; \
+		echo "   Run: python packages/cable_modem_monitor_catalog/scripts/generate_catalog_index.py"; \
+		diff --unified packages/cable_modem_monitor_catalog/README.md /tmp/catalog_readme.md || true; \
+		exit 1; \
+	fi
+	@echo "✅ Catalog README is up to date"
 
 # Cross-platform validation (auto-installs tools, works without venv)
 validate-host:
