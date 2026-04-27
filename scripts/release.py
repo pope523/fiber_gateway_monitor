@@ -603,10 +603,9 @@ def verify_version_consistency(repo_root: Path, version: str) -> bool:
     if all_correct:
         print_success("All version files are consistent!")
         return True
-    else:
-        print_error("Version consistency check failed!")
-        print_error("This would cause CI to fail with: 'Tag version does not match manifest.json version'")
-        return False
+    print_error("Version consistency check failed!")
+    print_error("This would cause CI to fail with: 'Tag version does not match manifest.json version'")
+    return False
 
 
 def _run_release(args: argparse.Namespace, repo_root: Path) -> None:

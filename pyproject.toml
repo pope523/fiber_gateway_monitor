@@ -55,6 +55,12 @@ exclude = [
 [tool.ruff.lint]
 select = [
     "E", "F", "W", "C90", "I", "UP", "B", "SIM", "TID", "N",
+    "G",      # flake8-logging-format — lazy logging, no f-strings in log calls
+    "LOG",    # flake8-logging — non-format API misuse (deprecated .warn, exc_info consistency)
+    "RSE",    # flake8-raise — `raise Exception()` cleanup
+    "ASYNC",  # async/await correctness — important on an async-heavy HA integration
+    "PIE",    # flake8-pie — misc improvements
+    "RET",    # flake8-return — return statement clarity
     "PLC",    # pylint convention (catches useless imports, etc.)
     "PLE",    # pylint errors
     "PLW",    # pylint warnings (catches self-assignment, redeclared names)

@@ -86,12 +86,11 @@ def sanitize_log_message(message: str) -> str:
     """
     message = re.sub(r"/config/[^\s,}\]]+", "/config/***PATH***", message)
     message = re.sub(r"/home/[^\s,}\]]+", "/home/***PATH***", message)
-    message = re.sub(
+    return re.sub(
         r"\b(?!192\.168\.100\.1\b)" r"(?:10\.|172\.(?:1[6-9]|2[0-9]|3[01])\.|192\.168\.)" r"\d{1,3}\.\d{1,3}\b",
         "***PRIVATE_IP***",
         message,
     )
-    return message
 
 
 # ------------------------------------------------------------------

@@ -218,6 +218,6 @@ def _detect_unit_suffix(values: list[str], candidates: tuple[str, ...]) -> str:
     for value in values:
         stripped = value.strip()
         for unit in candidates:
-            if stripped.endswith(unit) or stripped.endswith(unit.lower()):
+            if stripped.endswith((unit, unit.lower())):
                 return candidates[0]  # Return canonical form
     return ""

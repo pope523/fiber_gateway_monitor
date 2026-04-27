@@ -78,10 +78,9 @@ def ensure_tool(name: str, package: str | None = None) -> bool:
         if tool_exists(name):
             print(f"  ✓ {name} installed successfully")
             return True
-        else:
-            # Tool installed but not in PATH - try running via python -m
-            print(f"  ✓ {name} installed (will use via python -m)")
-            return True
+        # Tool installed but not in PATH - try running via python -m
+        print(f"  ✓ {name} installed (will use via python -m)")
+        return True
 
     print(f"  ✗ Failed to install {name}")
     return False

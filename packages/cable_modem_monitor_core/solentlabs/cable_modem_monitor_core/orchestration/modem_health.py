@@ -387,8 +387,7 @@ class HealthMonitor:
             host = host.split("://", 1)[1]
         # Strip path and port
         host = host.split("/", 1)[0]
-        host = host.split(":", 1)[0]
-        return host
+        return host.split(":", 1)[0]
 
     @staticmethod
     def _extract_port(base_url: str) -> int:

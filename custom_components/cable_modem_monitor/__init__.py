@@ -157,13 +157,13 @@ async def _check_channel_bond_change(
         return
 
     if action == "onboarding":
-        title = "Cable Modem Monitor: modem online"
+        title = "Cable Modem Monitor: Modem online"
         message = format_onboarding_message(model=model, current=current)
         notification_id = f"cable_modem_monitor_onboarding_{entry.entry_id}"
     else:
         # "change" — evaluate only returns this when stored is not None.
         assert stored is not None
-        title = "Cable Modem Monitor: channel bond changed"
+        title = "Cable Modem Monitor: Channel bond changed"
         message = format_change_message(model=model, prior=stored, current=current)
         notification_id = f"cable_modem_monitor_channel_change_{entry.entry_id}"
 

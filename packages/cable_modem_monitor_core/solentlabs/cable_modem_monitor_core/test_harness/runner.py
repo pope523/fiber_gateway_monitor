@@ -382,9 +382,7 @@ def _run_pipeline(
 
         # Parse
         coordinator = ModemParserCoordinator(parser_config, post_processor)
-        data = coordinator.parse(resources)
-
-        return data
+        return coordinator.parse(resources)
 
 
 def _run_orchestrated(
