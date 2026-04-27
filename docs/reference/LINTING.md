@@ -105,17 +105,6 @@ bandit -r custom_components/
 
 **Catches:** Hardcoded secrets, SQL injection, shell injection, weak crypto, SSL issues.
 
-### Semgrep (Optional - Local)
-
-Multi-language security scanner.
-
-```bash
-pip install semgrep
-semgrep --config=auto custom_components/
-```
-
-**Catches:** SSL verification disabled, command injection, sensitive data in logs.
-
 ### Common Security Fixes
 
 | Issue | Bad | Good |
@@ -130,11 +119,6 @@ semgrep --config=auto custom_components/
 ```python
 # Bandit
 password = get_password()  # nosec B105
-
-# Semgrep (in .semgrep.yml)
-paths:
-  exclude:
-    - tests/
 ```
 
 ---
