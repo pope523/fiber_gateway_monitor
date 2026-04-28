@@ -32,6 +32,24 @@ body:
     validations:
       required: true
 
+  - type: input
+    id: firmware-version
+    attributes:
+      label: Firmware Version
+      description: What firmware version is your modem running? Usually shown on the modem's status or about page.
+      placeholder: "e.g., 1.0.0.15, SB_KOMODO-1.0.7.26-180214-NOSH"
+    validations:
+      required: true
+
+  - type: input
+    id: isp
+    attributes:
+      label: Internet Service Provider (ISP)
+      description: Which ISP are you using?
+      placeholder: "e.g., Comcast/Xfinity, Spectrum, Cox, Virgin Media"
+    validations:
+      required: true
+
   - type: dropdown
     id: auth-required
     attributes:
@@ -87,11 +105,10 @@ body:
     id: additional-info
     attributes:
       label: Additional Information
-      description: Any other details that might help? (ISP, firmware version, URL patterns, etc.)
+      description: Any other details that might help? (URL patterns you noticed, output from the optional AI HAR audit, anything unusual about the modem.)
       placeholder: |
-        - ISP: Comcast/Xfinity
-        - Firmware version: 1.0.0.15
-        - Notes: Status page is at http://192.168.100.1/cmconnectionstatus.html
+        - Status page is at http://192.168.100.1/cmconnectionstatus.html
+        - HAR audit output (if you ran it)
     validations:
       required: false
 
@@ -105,5 +122,5 @@ body:
           required: true
         - label: I have searched my capture file for my WiFi SSID and password to verify they're not present
           required: true
-        - label: I'm willing to test the parser once it's developed
-          required: false
+        - label: I'm willing to install the beta and confirm whether the parser works on my hardware
+          required: true

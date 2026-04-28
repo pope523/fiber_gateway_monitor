@@ -79,14 +79,12 @@ body:
     id: contribution
     attributes:
       label: Contribution
-      description: Are you willing to contribute to implementing this feature?
+      description: How are you willing to help move this forward? Feature requests with no contributor commitment may not be prioritized.
       options:
-        - "Yes, I can submit a PR"
-        - "Yes, I can help test"
-        - "No, but I'd be happy to provide feedback"
-        - "Not sure"
+        - "I can submit a PR"
+        - "I can help test"
     validations:
-      required: false
+      required: true
 
   - type: checkboxes
     id: checklist

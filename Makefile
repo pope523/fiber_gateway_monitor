@@ -105,6 +105,10 @@ validate:
 # Mirrors the CI Tests workflow surface so a green local run guarantees
 # a green CI run. Skipped vs. CI: HACS hassfest (uses an external
 # GitHub Action) and version-check (release.py covers that separately).
+# Skipped vs. CI: HACS validation (.github/workflows/validate.yaml uses
+# hacs/action@main, which runs in a GitHub-hosted Docker context with
+# external network checks against home-assistant/brands and HACS APIs;
+# not reasonably reproducible locally — same exception class as hassfest).
 validate-ci: check test intake-regression pii-check catalog-readme-check
 	@echo "✅ Full CI validation passed!"
 

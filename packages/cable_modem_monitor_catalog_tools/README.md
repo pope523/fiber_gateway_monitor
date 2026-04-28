@@ -1,17 +1,20 @@
 # Cable Modem Monitor Catalog Tools
 
-Maintainer authoring tools for the Cable Modem Monitor catalog.
+Authoring tools for the Cable Modem Monitor catalog — for anyone with
+a HAR capture who wants to produce a catalog entry. The pipeline
+mechanics are plain Python; the judgment work (format detection,
+metadata, test failure diagnosis) realistically benefits from AI
+assistance.
 
 This package contains the intake pipeline — HAR analysis, YAML
 generation, golden-file construction, verification ingest, fleet
-pattern scanning, and trial parsing. It is run by maintainers to
-produce and validate catalog entries; it is **never installed by
-Home Assistant**.
+pattern scanning, and trial parsing. It produces and validates catalog
+entries; it is **never installed by Home Assistant**.
 
 Runtime consumers install [Core](../cable_modem_monitor_core/) plus
 [Catalog](../cable_modem_monitor_catalog/). The minimum required
-surface is those two packages — a maintainer could hand-author a
-valid `parser.yaml` and `modem.yaml` and the integration would work
+surface is those two packages — anyone could hand-author a valid
+`parser.yaml` and `modem.yaml` and the integration would work
 end-to-end. This package exists to reach a working configuration
 faster and more consistently, not to make configuration possible.
 

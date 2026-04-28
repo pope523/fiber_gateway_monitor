@@ -44,7 +44,7 @@ body:
       description: Which ISP are you using?
       placeholder: "e.g., Comcast/Xfinity, Spectrum, Cox"
     validations:
-      required: false
+      required: true
 
   - type: checkboxes
     id: features_working
@@ -79,10 +79,10 @@ body:
     id: diagnostics_file
     attributes:
       label: Diagnostics File
-      description: Drag and drop your diagnostics JSON file here
+      description: Drag and drop your diagnostics JSON file here. This is the verification artifact — without it, the report can't promote a modem from Awaiting to Verified.
       placeholder: "Drag and drop your diagnostics .json file here"
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: additional_context

@@ -12,7 +12,9 @@ set -euo pipefail
 # Type-checker / linter configs use anchored regex patterns to exclude
 # directories from analysis — these are pattern-matchers, not file
 # references that fail when the path is absent.
-EXCLUDE_PATTERN='(\.gitignore|pyrightconfig\.json|mypy\.ini|\.markdownlint-cli2\.jsonc|check-local-path-refs\.sh)$'
+# GitHub workflow files reference CI runtime paths (e.g., `dist/` for
+# upload-artifact) that exist on the runner, not in the working tree.
+EXCLUDE_PATTERN='(\.gitignore|pyrightconfig\.json|mypy\.ini|\.markdownlint-cli2\.jsonc|check-local-path-refs\.sh)$|^\.github/workflows/'
 
 # --- Extract directory names from .gitignore ---
 #

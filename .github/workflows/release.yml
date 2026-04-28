@@ -12,10 +12,6 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    # Alpha tags publish to PyPI only (via publish.yml) — no GitHub
-    # release, so HACS never advertises them. Developers side-load
-    # alphas via HACS branch tracking on the feature branch.
-    if: "!contains(github.ref, '-alpha.')"
 
     steps:
       - name: Checkout code
@@ -37,8 +33,8 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-          # Check if this is a prerelease (alpha or beta)
-          if [[ "$VERSION" == *"-alpha."* ]] || [[ "$VERSION" == *"-beta."* ]]; then
+          # Check if this is a prerelease (beta)
+          if [[ "$VERSION" == *"-beta."* ]]; then
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
             echo "📦 Detected prerelease: $VERSION"
           else

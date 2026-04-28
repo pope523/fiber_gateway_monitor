@@ -45,7 +45,7 @@ Monitor your cable modem's signal quality, errors, and connection health in real
 
 **Returning contributor?** See the [Contributing Guide](./CONTRIBUTING.md) for workflow, code style, and PR guidelines.
 
-**Architecture (v3.14):** Two runtime pip packages in `packages/` (Core + Catalog) plus a thin HA adapter in `custom_components/`. A third package — **Catalog Tools** — provides maintainer authoring tools (HAR analysis, YAML generation, verification) and is never installed by HA. See [CONTRIBUTING.md](./CONTRIBUTING.md#project-architecture) for details.
+**Architecture (v3.14):** Two runtime pip packages in `packages/` (Core + Catalog) plus a thin HA adapter in `custom_components/`. A third package — **Catalog Tools** — provides catalog authoring tools (HAR analysis, YAML generation, verification) for contributors and maintainers; it is never installed by HA. See [CONTRIBUTING.md](./CONTRIBUTING.md#project-architecture) for details.
 
 ---
 
@@ -153,17 +153,17 @@ The catalog grows when contributors with hardware step up. Two paths:
 3. Click **Download**
 4. Restart Home Assistant
 
-### Testing a Pre-Release Version
+### Testing a Beta Release
 
-Pre-release versions (alpha and beta) are opt-in via HACS's per-integration pre-release switch:
+Beta releases install manually — there's no auto-update path on betas. Each beta is a deliberate per-version install.
 
-1. Open **HACS** → Integrations → **Cable Modem Monitor**
-2. Click the ⋯ menu → **Redownload**
-3. Toggle **Show beta versions** on
-4. Pick the version you want from the dropdown
-5. Click **Download** and restart Home Assistant
+1. In HACS, open **Cable Modem Monitor**.
+2. Click the **⋯** menu → **Redownload**.
+3. Click **Need a different version?**.
+4. Pick the desired beta from the **Release** dropdown.
+5. Click **Download** and restart Home Assistant.
 
-To return to stable, repeat the steps with **Show beta versions** off and pick the latest stable.
+To return to stable: repeat the steps and pick the latest stable release.
 
 ## Setup
 

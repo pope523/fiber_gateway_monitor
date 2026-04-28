@@ -5,17 +5,59 @@ If the modem uses patterns Core already knows, onboarding is fully
 automated. If the modem uses something new, the pipeline stops with
 a clear report of what Core needs to support.
 
-> **Authoritative spec:** [ONBOARDING_SPEC.md](../../cable_modem_monitor_core/docs/ONBOARDING_SPEC.md)
+> **The HAR capture is the only authoritative input.** Every config
+> decision traces to wire evidence in the capture. Without a complete
+> HAR — including the authentication flow — the pipeline cannot run
+> and a parser cannot be built. Recapture is always the answer to a
+> bad HAR; there is no workaround.
+
+<!-- -->
+
+> **Authoritative spec:** [ONBOARDING_SPEC.md](ONBOARDING_SPEC.md)
 > covers tool contracts, decision trees, validation rules, worked examples,
-> and error handling in full detail. This document is the operator workflow.
+> and error handling in full detail. This document is the runnable workflow.
 
-## Arguments
+## Audience
 
-The user provides one of:
+This walkthrough is for anyone with a HAR capture who wants to produce
+a draft catalog entry — whether that's the modem owner working on their
+own hardware, or a contributor helping triage someone else's submission.
 
-- A HAR file path (local)
-- A GitHub issue number with an attached HAR
-- A modem manufacturer + model name (looks up existing HAR in catalog)
+The pipeline tooling is plain Python, but the judgment work — format
+detection on ambiguous HTML, metadata enrichment, test failure
+diagnosis, modem config shaping — realistically benefits from an AI
+assistant. This project itself was built with [Claude Code](https://claude.com/claude-code).
+If you have access to a similar AI tool, treat it as the expected
+helper for the judgment steps; if not, expect those steps to take
+more reading and iteration against the specs.
+
+> Throughout this doc: when you're triaging someone else's HAR, anything
+> that asks "you" to confirm a value routes back to the original filer.
+> When you're working on your own modem, you confirm with yourself.
+
+## Prerequisites
+
+- Repo cloned and the dev environment working (`make validate` green).
+  See [docs/setup/GETTING_STARTED.md](../../../docs/setup/GETTING_STARTED.md)
+  for one-time setup. Standard setup installs Core, Catalog, and
+  catalog_tools together in editable mode.
+- A `.sanitized.har` file. Capture is done with
+  [solentlabs/har-capture](https://github.com/solentlabs/har-capture),
+  this project's own tool — which means it's editable when a modem
+  needs special handling (pre-flight headers, custom URL filters,
+  non-standard auth flows). PRs to extend `har-capture` itself are
+  welcome. For the standard capture walkthrough, see
+  [docs/MODEM_REQUEST.md](../../../docs/MODEM_REQUEST.md). If a HAR
+  has cookies on the first request and no auth flow, recapture in
+  incognito/private browsing — the pipeline will reject it.
+
+## Inputs
+
+You provide one of:
+
+- A HAR file path (local) — most common when you're working on your own modem.
+- A GitHub issue number with an attached HAR — when triaging a submission.
+- A modem manufacturer + model name — looks up an existing HAR in the catalog (useful for re-running the pipeline on a known-good HAR, e.g. after a Core change).
 
 ## Pipeline Flow
 
@@ -32,15 +74,17 @@ Two outcomes:
 
 ## Step 1: Obtain HAR
 
-If given a GitHub issue number:
+If you have a local file (your own capture, or one downloaded from an
+issue), use the path directly.
+
+If you're triaging a submitted issue:
 
 ```bash
 gh issue view <number> --json body,comments
 ```
 
-Extract HAR attachment URL, download to a temp directory.
-
-If given a local path, use directly.
+Extract the HAR attachment URL from the body and download it to a temp
+directory.
 
 ## Step 2: Validate HAR
 
@@ -49,11 +93,11 @@ from solentlabs.cable_modem_monitor_catalog_tools.validate_har import validate_h
 result = validate_har(har_path)
 ```
 
-If `result.valid is False`: stop and report the issues to the user.
-Validation catches structural problems and missing auth flows early
--- there is no point scanning the fleet or running analysis on a
-bad HAR. Common fix: HAR was captured with an existing session
-(post-auth). Ask user to recapture in incognito/private browsing.
+If `result.valid is False`: stop and address the issues before going
+further. Validation catches structural problems and missing auth flows
+early — there is no point scanning the fleet or running analysis on a
+bad HAR. Common fix: HAR was captured against an existing session
+(post-auth). Recapture in incognito/private browsing.
 
 ## Step 3: Scan Fleet Patterns
 
@@ -78,9 +122,9 @@ analysis = result.to_dict()
 
 Check three outputs:
 
-1. **`hard_stops`** -- if non-empty, report and stop
-2. **`warnings`** -- note for later, don't stop
-3. **`core_gaps`** -- if present, report and stop (Step 5)
+1. **`hard_stops`** — if non-empty, report and stop
+2. **`warnings`** — note for later, don't stop
+3. **`core_gaps`** — if present, report and stop (Step 5)
 
 Report what was detected:
 
@@ -127,7 +171,7 @@ For each item in `enrich_result.missing`:
 - **isps**: web search `"{model} compatible ISPs"`
 - **default_host**: usually 192.168.100.1 for DOCSIS modems
 
-Ask user to confirm or provide values you can't find.
+Confirm any values you can't find rather than guessing.
 
 ## Step 7: Generate Config
 
@@ -142,7 +186,7 @@ If `result.validation.valid is False`:
 - Fix the analysis dict or metadata
 - Retry
 
-Show the generated YAML to the user for review before proceeding.
+Review the generated YAML before proceeding.
 
 ## Step 8: Generate Golden File + Write Package
 
@@ -164,6 +208,9 @@ from solentlabs.cable_modem_monitor_catalog_tools.write_modem_package import wri
 write_result = write_modem_package(output_dir, ...)
 ```
 
+See [ONBOARDING_SPEC.md](ONBOARDING_SPEC.md) for the full
+`write_modem_package` signature.
+
 ## Step 9: Run Tests
 
 ```python
@@ -182,8 +229,25 @@ Fix the config, re-run. Loop until green.
 
 ## Step 10: Show Changes
 
-List all files created/modified. Show `git diff --stat`. Do NOT commit or
-push -- the developer stages and commits per project rules.
+Run `git status` to see all files created or modified, and
+`git diff --stat` for a summary. Do NOT commit or push automatically —
+staging and commits are yours to make.
+
+## Step 11: Open a Pull Request
+
+Once tests are green and the diff looks right:
+
+1. Create a branch, stage the new catalog files, commit with a clear
+   message (e.g. `Add catalog entry for {manufacturer} {model}`).
+2. Open a PR against `main` (or the active release branch). Reference
+   the originating issue with `Related to #N` — never `Fixes #N`
+   (see [CONTRIBUTING.md § Issue Closing Policy](../../../CONTRIBUTING.md#issue-closing-policy)).
+3. Include in the PR description: the verdict from the HAR audit (if
+   you ran one), channel counts from Step 8, and any unresolved
+   warnings from `analyze_har`.
+
+A maintainer reviews and merges. The originating issue is closed by
+whoever filed it once the parser is confirmed on real hardware.
 
 ## Key Rules
 
@@ -200,11 +264,11 @@ push -- the developer stages and commits per project rules.
    are needed, that's a gap to flag.
 5. **Iterate on test failures.** Expect the first run to fail. Diagnose,
    fix, re-run. This is normal.
-6. **Never commit automatically.** Show changes, let the developer stage.
+6. **Never commit automatically.** Show changes; stage them yourself.
 7. **Alias vs separate entry.** Each model a user would purchase by name
    gets its own catalog directory. Aliases are only for manufacturer
    rebrands, internal/OEM model numbers, and marketing name variants.
-   See `MODEM_YAML_SPEC.md` § Aliases vs Separate Entries.
+   See [MODEM_YAML_SPEC.md](../../cable_modem_monitor_core/docs/MODEM_YAML_SPEC.md) § Aliases vs Separate Entries.
 8. **Consolidate issue resources.** When a HAR is incomplete (e.g.,
    missing XHR due to Playwright `networkidle` bug), extract data from
    screenshots, embedded HTML/JS, and user confirmations before building

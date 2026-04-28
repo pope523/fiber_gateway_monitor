@@ -57,8 +57,8 @@ def print_warning(msg: str) -> None:
 
 
 def validate_version(version: str) -> bool:
-    """Validate that version follows semantic versioning (X.Y.Z, X.Y.Z-alpha.N, or X.Y.Z-beta.N)."""
-    pattern = r"^\d+\.\d+\.\d+(-(alpha|beta)\.\d+)?$"
+    """Validate that version follows semantic versioning (X.Y.Z or X.Y.Z-beta.N)."""
+    pattern = r"^\d+\.\d+\.\d+(-beta\.\d+)?$"
     return bool(re.match(pattern, version))
 
 
@@ -448,9 +448,7 @@ def validate_release_preconditions(version: str, repo_root: Path) -> None:
     # Validate version format
     if not validate_version(version):
         print_error(
-            f"Invalid version format: {version}. "
-            "Must be X.Y.Z, X.Y.Z-alpha.N, or X.Y.Z-beta.N "
-            "(e.g., 3.5.1, 3.5.1-alpha.1, 3.5.1-beta.1)"
+            f"Invalid version format: {version}. " "Must be X.Y.Z or X.Y.Z-beta.N " "(e.g., 3.5.1, 3.5.1-beta.1)"
         )
         sys.exit(1)
 

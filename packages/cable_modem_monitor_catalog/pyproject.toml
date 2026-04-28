@@ -17,7 +17,7 @@ authors = [
 ]
 keywords = ["docsis", "cable-modem", "monitoring", "home-assistant", "modem-catalog"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",

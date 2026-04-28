@@ -12,7 +12,7 @@ files; this document explains the choices that shaped them.
 
 **Decision:** Core (engine) ← Catalog (content) ← HA Integration
 (adapter), enforced through real Python packaging. A fourth package —
-`catalog_tools` — provides maintainer authoring tools; it is off
+`catalog_tools` — provides catalog authoring tools; it is off
 this runtime chain. See "catalog_tools is a developer accelerator"
 below.
 
@@ -46,11 +46,12 @@ Strategy changes are validated across all modems automatically.
 contains the modem-onboarding pipeline — HAR analysis, YAML
 generation, golden-file construction, verification ingest,
 analyzer-correctness lints, fleet-pattern scanning, and trial
-parsing. It is installed only in maintainer development environments
-and CI. It is never installed by HA or any other runtime consumer.
+parsing. It is installed in development environments (maintainer
+and contributor) and CI. It is never installed by HA or any other
+runtime consumer.
 
 **Rationale:** The system's minimum required surface is Core +
-Catalog. A maintainer could hand-author a valid `parser.yaml` and
+Catalog. Anyone could hand-author a valid `parser.yaml` and
 `modem.yaml` and the integration would work end-to-end. Catalog tools
 exist to reach a working configuration *faster and more consistently*,
 not to make configuration possible. Every byte that ships to a user's

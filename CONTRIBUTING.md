@@ -98,11 +98,14 @@ entries. This section is for that audience.
 If you have AI access (Claude, ChatGPT, or similar with file
 attachment support), you can do significantly more than file a request:
 
-- Audit your own HAR capture for completeness before submitting
-- Walk an incoming HAR through the intake pipeline and propose a
-  catalog entry
-- Triage user-submitted HARs and give feedback on quality
-- Analyze logs from bug reports to identify patterns
+- **Audit your own HAR** for completeness before submitting (prompt
+  in the next section).
+- **Run the intake pipeline** on a HAR — yours or one attached to a
+  stalled issue — and open a PR with the resulting catalog entry. See
+  [MODEM_INTAKE_WORKFLOW.md](packages/cable_modem_monitor_catalog_tools/docs/MODEM_INTAKE_WORKFLOW.md).
+- **Comment on stalled issues** with HAR audit results so other
+  contributors can pick them up.
+- **Analyze logs** from bug reports to identify patterns.
 
 ### Auditing a HAR for completeness
 
@@ -178,8 +181,12 @@ detects auth strategy, classifies response formats, generates
 - [Modem Intake Workflow](packages/cable_modem_monitor_catalog_tools/docs/MODEM_INTAKE_WORKFLOW.md)
 - [Onboarding Spec](packages/cable_modem_monitor_catalog_tools/docs/ONBOARDING_SPEC.md)
 
-The catalog tools package is maintainer-only and never installed by
-Home Assistant — it's a developer accelerator for catalog growth.
+The catalog tools package is never installed by Home Assistant — it's
+a developer accelerator for catalog growth, open to contributors with
+hardware. The pipeline mechanics are plain Python; the judgment work
+(format detection on ambiguous HTML, metadata enrichment, test failure
+diagnosis) realistically benefits from AI assistance — that's what
+this section's audience brings to the table.
 
 Modem configurations live in the catalog package
 (`packages/cable_modem_monitor_catalog/`). Each modem has a
@@ -278,7 +285,6 @@ ATTRIBUTION.md.
 
 ## Questions?
 
-- 💬 Open a [GitHub Discussion](https://github.com/solentlabs/cable_modem_monitor/discussions)
 - 🐛 Report issues via [GitHub Issues](https://github.com/solentlabs/cable_modem_monitor/issues)
 - 📧 Contact maintainers via GitHub
 

@@ -1,4 +1,4 @@
-"""Cable Modem Monitor Catalog Tools — maintainer authoring pipeline.
+"""Cable Modem Monitor Catalog Tools — catalog authoring pipeline.
 
 Contains HAR analysis, YAML generation, golden-file construction,
 verification ingest, fleet pattern scanning, and trial parsing.

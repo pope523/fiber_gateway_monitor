@@ -75,8 +75,7 @@ and:
 
 - Fill in modem details (model, manufacturer)
 - Attach your `.sanitized.har.gz`
-- If you ran the AI screen, paste the output block in **Additional
-  Information**
+- If you ran the AI screen, include the output block in your issue
 - Note any manual redactions you made
 
 ---
@@ -98,11 +97,9 @@ defaults, not personal information.
 
 ---
 
-## Questions
+## Resources
 
 - Browse [existing modem request issues](https://github.com/solentlabs/cable_modem_monitor/issues?q=label%3A%22new+modem%22)
   for examples
-- [Open a Discussion](https://github.com/solentlabs/cable_modem_monitor/discussions)
-  for questions
 - See the [modem catalog](../packages/cable_modem_monitor_catalog/solentlabs/cable_modem_monitor_catalog/modems/)
   for currently supported modems

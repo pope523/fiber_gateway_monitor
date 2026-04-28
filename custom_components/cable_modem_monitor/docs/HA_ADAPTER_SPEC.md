@@ -1254,14 +1254,49 @@ ship to users.
 
 ### HACS configuration
 
-`hacs.json` uses the default source archive download (no
-`zip_release`). Branch-based installs (alpha testing via
-`update.install` with `version: feature/v3.14.0`) require HACS to
-download the source archive directly from GitHub — `zip_release: true`
-breaks this path because HACS expects a zip asset on a GitHub release
-that doesn't exist for branch refs. The `zip_release` optimization
-(124 KB zip vs 3.4 MB source) will be re-enabled at stable release
-when branch installs are no longer needed.
+`hacs.json` uses release-asset distribution. Each release tag
+attaches a `cable_modem_monitor.zip` built by `release.yml`; HACS
+downloads that asset for fresh installs and updates.
+
+```json
+{
+  "name": "Cable Modem Monitor",
+  "render_readme": true,
+  "homeassistant": "2024.12.0",
+  "hacs": "2.0.0",
+  "zip_release": true,
+  "filename": "cable_modem_monitor.zip",
+  "hide_default_branch": true
+}
+```
+
+**Field rationale:**
+
+- `zip_release: true` + `filename: "cable_modem_monitor.zip"` — HACS
+  fetches the zip asset rather than the full source archive. Smaller
+  download (~120 KB vs ~3.4 MB) containing only runtime files; the
+  `release.yml` zip step excludes `docs/` and bytecode.
+- `hide_default_branch: true` — hides the default branch from HACS's
+  version selector. Without it, users can pick the branch and
+  trigger a silent downgrade.
+- `hacs: "2.0.0"` — minimum HACS version. Defensive — establishes
+  the floor below which behavior is undefined.
+- `homeassistant: "2024.12.0"` — minimum HA version. Bump only when
+  cmm depends on something newer.
+
+**Lesson: alpha.11 (zip_release vs. branch installs).** With
+`zip_release: true` on the default branch, HACS rejects branch
+installs by design. From `hacs/integration#3513` (HACS maintainer):
+*"When a repository uses release assets (`zip_release`), only those
+assets are valid."* This is the one-way change at the alpha→beta
+cut — branch tracking dies the moment this lands on `main`.
+
+**Lesson: alpha.17 (hide_default_branch mandatory).** Without
+`hide_default_branch: true`, the version selector keeps the default
+branch as a pickable option. Users can pick it, expecting an
+update, and silently land on the latest GitHub release zip — which
+can be older than what they had. The pair `zip_release: true` +
+`hide_default_branch: true` is mandatory.
 
 ### Manifest loggers
 
@@ -1280,8 +1315,8 @@ the `custom_components.cable_modem_monitor` logger is captured.
 
 ### Install flow
 
-1. HACS downloads the source archive from GitHub
-2. HACS extracts `custom_components/cable_modem_monitor/` into place
+1. HACS downloads `cable_modem_monitor.zip` from the GitHub release
+2. HACS extracts the zip into `custom_components/cable_modem_monitor/`
 3. HA reads `manifest.json` → sees `requirements` pins
 4. HA pip-installs Core and Catalog from PyPI (exact `==` pins)
 5. Integration loads
@@ -1303,20 +1338,37 @@ to receive the new catalog version.
 
 ### Release tiers
 
-| Tag pattern | PyPI (publish.yml) | GitHub release (release.yml) | HACS visibility |
-|-------------|-------------------|----------------------------|-----------------|
-| `v*-alpha.*` | Core + Catalog published | Skipped — no release | Not visible. Side-load via branch tracking. |
-| `v*-beta.*` | Core + Catalog published | Prerelease + zip asset | Users with "Show beta versions" enabled |
-| `v*.*.*` (stable) | Core + Catalog published | Release + zip asset | All users |
+Two tiers ship: beta and stable. Alpha is a local-source-only
+development concept and never tags.
 
-PyPI publishing happens for all tiers. The GitHub release (and thus
-HACS visibility) is what varies by tier.
+| Tag pattern       | PyPI (publish.yml) | GitHub release (release.yml) | HACS visibility                                |
+|-------------------|--------------------|------------------------------|------------------------------------------------|
+| `v*.*.*-beta.*`   | Published          | Pre-release + zip asset      | Manual install via Redownload → version picker |
+| `v*.*.*` (stable) | Published          | Release + zip asset          | Default — auto-update offer to all users       |
+
+**Decision (2026-04-28): no auto-update on betas.** Each beta is a
+deliberate per-version install by the tester. HACS exposes a
+per-integration "Pre-release" switch entity that gates auto-update
+offers; it is intentionally not documented for cmm users because
+auto-update opts out of the "you are explicitly testing this
+version" model and tends to surface silent installs of stale or
+broken intermediate betas. The manual picker (Redownload → "Need a
+different version?" → Release) shows all releases regardless of
+switch state, so testers pick explicitly without any switch setup.
+
+**Decision (2026-04-28): no alpha tier.** Post-alpha.17, alpha
+exists only as a working-tree state for developers running from a
+local clone. Alpha tags are not pushed; `release.py` rejects alpha
+versions; `release.yml` and `publish.yml` neither expect nor handle
+them. This supersedes the prior `BETA_ROADMAP` "Future Alphas"
+plan that proposed alphas as opt-in HACS pre-releases.
 
 ### Rollback safety
 
-HACS reads `hacs.json` from the default branch to determine download
-strategy. When `zip_release` is eventually re-enabled for stable
-release, HACS will expect a zip asset on every release — including
-older ones a user might roll back to. Prior stable releases must have
-a `cable_modem_monitor.zip` asset uploaded before `zip_release: true`
-reaches the default branch. See P-merge in the alpha roadmap.
+`zip_release: true` means HACS expects a `cable_modem_monitor.zip`
+asset on every release a user might roll back to. Older stable
+releases (v3.13.x and earlier) lack this asset because the zip
+wasn't built before the beta cut. Backfilling older releases is a
+separate cleanup task. Without that backfill, rollback to a pre-beta
+release fails with a HACS asset-not-found error; forward-only
+updates work fine.

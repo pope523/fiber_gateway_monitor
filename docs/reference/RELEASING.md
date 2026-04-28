@@ -90,34 +90,45 @@ Verify at: <https://github.com/solentlabs/cable_modem_monitor/releases>
 
 ## Release Tiers
 
-All three tiers — alpha, beta, stable — distribute the same way:
-PyPI publish on tag push, GitHub Release with zip asset, HACS
-visibility gated by the per-integration pre-release switch. The
-distinction between tiers is the version string and the GitHub
-Release `prerelease` flag, not the install mechanism.
+Two tiers ship: beta and stable. Both publish to PyPI and create
+GitHub Releases with a zip asset. Beta tags carry the GitHub
+`prerelease` flag; stable tags don't. Alpha is a development concept
+only — alphas run from a local source clone and never tag.
 
-| Tier | Tag pattern | PyPI | GitHub Release | HACS visibility |
-|------|-------------|------|----------------|-----------------|
-| Alpha | `v*.*.*-alpha.*` | Published (`publish.yml`) | Pre-release with zip asset | Pre-release switch ON |
-| Beta | `v*.*.*-beta.*` | Published | Pre-release with zip asset | Pre-release switch ON |
-| Stable | `v*.*.*` | Published | Stable with zip asset | Default (always visible) |
+| Tier   | Tag pattern       | PyPI      | GitHub Release          | HACS visibility                   |
+|--------|-------------------|-----------|-------------------------|-----------------------------------|
+| Beta   | `v*.*.*-beta.*`   | Published | Pre-release + zip asset | Manual install via version picker |
+| Stable | `v*.*.*` (no `-`) | Published | Release + zip asset     | Default (auto-update offer)       |
 
-HACS's pre-release switch is binary — it doesn't distinguish alpha
-from beta. Users who flip it on see whichever pre-release is newest.
-That's the intended HACS pattern for opt-in pre-stable testing, and
-mature integrations (including HACS itself) follow it.
+Betas install manually via HACS → integration → Redownload → "Need
+a different version?" → Release. There is no auto-update path on
+betas — by design, each beta is a deliberate per-version install.
 
-Tags live on main. Cut alphas and betas as tags on `main` after the
-release-prep PR merges — same flow for all three tiers.
+**Where tags live:**
+
+- The first beta of a release line (`vX.Y.0-beta.1`) tags from
+  `main` — directly after the development branch merges in. This
+  keeps `main`'s state in lock-step with the latest published
+  release as the new model goes live.
+- Subsequent betas (`vX.Y.0-beta.2` onward) tag from a beta-line
+  branch off `main` (e.g., `feature/vX.Y.0-beta`). Beta iteration
+  doesn't disturb `main`. The branch merges back when the line
+  cuts stable.
+- Stable (`vX.Y.0`) tags from `main` after the beta-line branch
+  merges back.
+
+This keeps `main` either at "latest published release" or "ahead of
+latest published release by an in-progress merge," never at
+"diverged with no tagged version that matches."
 
 ### `hacs.json` configuration
 
 ```json
 {
   "name": "Cable Modem Monitor",
-  "content_in_root": false,
   "render_readme": true,
   "homeassistant": "2024.12.0",
+  "hacs": "2.0.0",
   "zip_release": true,
   "filename": "cable_modem_monitor.zip",
   "hide_default_branch": true

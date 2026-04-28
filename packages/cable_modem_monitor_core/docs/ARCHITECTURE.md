@@ -55,7 +55,7 @@ packages/
 ├── cable_modem_monitor_catalog/        # modem data (pure content)
 │   ├── pyproject.toml                  # name = "solentlabs-cable-modem-monitor-catalog"
 │   └── solentlabs/cable_modem_monitor_catalog/
-└── cable_modem_monitor_catalog_tools/  # maintainer authoring tools (never installed by HA)
+└── cable_modem_monitor_catalog_tools/  # catalog authoring tools (never installed by HA)
     ├── pyproject.toml                  # name = "solentlabs-cable-modem-monitor-catalog-tools"
     └── solentlabs/cable_modem_monitor_catalog_tools/
 custom_components/

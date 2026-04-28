@@ -3,9 +3,6 @@ contact_links:
   - name: 📊 Check Supported Modems First
     url: https://pypi.org/project/solentlabs-cable-modem-monitor-catalog/
     about: See if your modem is already supported before opening an issue
-  - name: Question or Support
-    url: https://github.com/solentlabs/cable_modem_monitor/discussions
-    about: Ask questions or get help from the community
   - name: Troubleshooting Guide
     url: https://github.com/solentlabs/cable_modem_monitor/blob/main/docs/TROUBLESHOOTING.md
     about: Check common issues and solutions

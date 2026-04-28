@@ -20,7 +20,7 @@ body:
     attributes:
       label: Integration Version
       description: What version of Cable Modem Monitor are you running?
-      placeholder: "e.g., 2.5.0"
+      placeholder: "e.g., 3.14.0"
     validations:
       required: true
 
@@ -29,7 +29,7 @@ body:
     attributes:
       label: Home Assistant Version
       description: What version of Home Assistant are you running?
-      placeholder: "e.g., 2024.1.0"
+      placeholder: "e.g., 2026.4.0"
     validations:
       required: true
 
@@ -53,6 +53,24 @@ body:
         - Not sure / Don't remember
     validations:
       required: false
+
+  - type: input
+    id: firmware-version
+    attributes:
+      label: Firmware Version
+      description: What firmware version is your modem running? Usually shown on the modem's status or about page, or in the diagnostics file.
+      placeholder: "e.g., 1.0.0.15, SB_KOMODO-1.0.7.26-180214-NOSH"
+    validations:
+      required: true
+
+  - type: input
+    id: isp
+    attributes:
+      label: Internet Service Provider (ISP)
+      description: Which ISP are you using?
+      placeholder: "e.g., Comcast/Xfinity, Spectrum, Cox, Virgin Media"
+    validations:
+      required: true
 
   - type: textarea
     id: description
@@ -84,45 +102,6 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    id: logs
-    attributes:
-      label: Relevant Log Output
-      description: |
-        Please copy and paste any relevant log output from Home Assistant.
-        This will be automatically formatted into code, so no need for backticks.
-
-        **How to get logs:**
-        1. Settings → System → Logs
-        2. Click "Download full log" (recommended) OR "View Raw Logs"
-        3. Search for "cable_modem_monitor" in the downloaded file
-
-        **For connection/detection issues, include:**
-        - Any lines with "auto-detection" or "Detection successful"
-        - Lines showing "Using auto-detection mode" or "Attempting to connect"
-        - Any error messages (ConnectionError, SSLError, etc.)
-
-        **Tip:** Raw logs contain more detail than the filtered UI view. Auto-detection
-        messages are INFO level and may not appear in the filtered view.
-      render: shell
-    validations:
-      required: false
-
-  - type: textarea
-    id: config
-    attributes:
-      label: Configuration
-      description: |
-        Please share your configuration (remove any sensitive information like passwords)
-      placeholder: |
-        Example:
-        - URL: http://192.168.100.1
-        - Authentication: Basic Auth
-        - Update interval: 300 seconds
-      render: yaml
-    validations:
-      required: false
-
   - type: dropdown
     id: installation
     attributes:
@@ -139,36 +118,27 @@ body:
     attributes:
       label: Diagnostics Download
       description: |
-        **Highly Recommended:** Download diagnostics for complete debugging information.
-
-        Diagnostics include:
-        - Configuration details
-        - Modem detection info (parser used, detected model, etc.)
-        - Channel data
-        - Recent logs (last 150 log entries, sanitized for security)
-        - Error information
+        Diagnostics include configuration, modem detection info, channel
+        data, recent logs (last 150 entries, sanitized), and error
+        information — everything needed to debug the report.
 
         **How to download:**
         1. Go to Settings → Devices & Services
         2. Find Cable Modem Monitor
         3. Click the three dots (⋮) → Download diagnostics
         4. Attach the downloaded JSON file to this issue
-
-        If you attach diagnostics, you may not need to provide logs separately.
-      placeholder: "Attach the diagnostics JSON file or paste its contents here"
+      placeholder: "Attach the diagnostics JSON file"
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: additional
     attributes:
       label: Additional Context
       description: |
-        Add any other context about the problem here.
-        - Screenshots
-        - Modem firmware version
-        - ISP information
-        - Network setup details
+        Add any other context about the problem here — screenshots,
+        network setup details, anything unusual about your environment
+        that might be relevant.
     validations:
       required: false
 

@@ -255,9 +255,10 @@ download (`config_entry-cable_modem_monitor-*.json`):
 1. Open the user's diagnostics file and take the `data` section.
 2. Strip the sections listed under **Stripped sections** above.
 3. Prepend two top-level fields: `verified_at` (ISO date, `YYYY-MM-DD`)
-   and `version` (the alpha/beta string the user ran, e.g.
-   `3.14.0-alpha.16`). Both appear before `config_entry` in the output
-   file for diff readability.
+   and `version` (the version string the user ran — whatever was
+   visible in their Home Assistant install, e.g. `3.14.0-beta.1`).
+   Both appear before `config_entry` in the output file for diff
+   readability.
 4. Preserve everything else verbatim — no rounding, no field drops, no
    reordering within preserved sections.
 5. Write to `test_data/modem.verified.json` (or the matching
