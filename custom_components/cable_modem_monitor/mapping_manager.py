@@ -4,6 +4,11 @@ Pure module with no HA imports.  The mapping manager reads the user's
 channel identity mode and builds slot maps that sensor entities use for
 O(1) lookup.
 
+Channel-state filtering (nulling unlocked channels, leaving missing-
+``lock_status`` channels alone) is owned by Core's parser coordinator
+— see ``parsers/coordinator.py``.  This module trusts that contract
+and only translates the resulting list into a keyed slot map.
+
 See CHANNEL_IDENTIFICATION_SPEC.md § 5, § 10.
 """
 
@@ -28,38 +33,30 @@ class ChannelMap:
     upstream: dict[SlotKey, dict[str, Any]] = field(default_factory=dict)
 
 
-def _null_unlocked(ch: dict[str, Any]) -> dict[str, Any]:
-    """Return a nulled channel dict for an unlocked position.
-
-    Only channel_number and lock_status are preserved.
-    All other fields are set to None.
-    """
-    nulled: dict[str, Any] = {key: None for key in ch}
-    nulled["channel_number"] = ch["channel_number"]
-    nulled["lock_status"] = ch["lock_status"]
-    return nulled
-
-
 def _build_direction_slots(
     channels: list[dict[str, Any]],
     mode: ChannelIdentity,
 ) -> dict[SlotKey, dict[str, Any]]:
-    """Build slot map for one direction (downstream or upstream)."""
+    """Build slot map for one direction (downstream or upstream).
+
+    NUMBER mode keys every channel by ``channel_number`` — Core has
+    already nulled the metric fields on unlocked channels, so they
+    flow through as nulled slots.
+
+    ID mode keys by ``(channel_type, channel_id)``; channels missing
+    either key are skipped.  Core nulls ``channel_type`` and
+    ``channel_id`` on unlocked channels, which causes them to be
+    skipped here automatically.
+    """
     slots: dict[SlotKey, dict[str, Any]] = {}
 
     for ch in channels:
-        is_locked = ch.get("lock_status") == "locked"
-
         if mode == ChannelIdentity.NUMBER:
             ch_num = ch.get("channel_number")
             if ch_num is None:
                 continue
-            slots[ch_num] = ch if is_locked else _null_unlocked(ch)
-
+            slots[ch_num] = ch
         else:
-            # ID mode — unlocked channels excluded (no valid key)
-            if not is_locked:
-                continue
             ch_type = ch.get("channel_type")
             ch_id = ch.get("channel_id")
             if ch_type is None or ch_id is None:

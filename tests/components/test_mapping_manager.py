@@ -56,6 +56,11 @@ def ds_all_unlocked() -> list[dict[str, Any]]:
     return _load("ds_all_unlocked.json")
 
 
+@pytest.fixture
+def ds_no_lock_status() -> list[dict[str, Any]]:
+    return _load("ds_no_lock_status.json")
+
+
 # -----------------------------------------------------------------------
 # build_channel_map — position mode ("number")
 # -----------------------------------------------------------------------
@@ -197,3 +202,31 @@ class TestEdgeCases:
         result = build_channel_map([], us_locked, ChannelIdentity.ID)
         assert set(result.upstream.keys()) == {("atdma", 5)}
         assert result.upstream[("atdma", 5)]["power"] == 42.0
+
+
+# -----------------------------------------------------------------------
+# Modems that don't report lock_status at all
+# -----------------------------------------------------------------------
+#
+# Per Core's coordinator contract (parsers/coordinator.py): "Channels
+# without lock_status are left alone — some modems do not report lock
+# status at all."  These channels arrive at mapping_manager with full
+# data and no lock_status key, and must be treated as locked.
+
+
+class TestNoLockStatus:
+    """Channels with no lock_status key (modem does not report it)."""
+
+    def test_number_mode_includes_channels_with_full_data(self, ds_no_lock_status) -> None:
+        """NUMBER mode keys channels and preserves their data."""
+        result = build_channel_map(ds_no_lock_status, [], ChannelIdentity.NUMBER)
+        assert set(result.downstream.keys()) == {1, 2}
+        assert result.downstream[1]["power"] == 2.5
+        assert result.downstream[1]["channel_id"] == 29
+        assert result.downstream[2]["power"] == -1.0
+
+    def test_id_mode_keys_by_type_and_id(self, ds_no_lock_status) -> None:
+        """ID mode keys these channels by (channel_type, channel_id)."""
+        result = build_channel_map(ds_no_lock_status, [], ChannelIdentity.ID)
+        assert set(result.downstream.keys()) == {("qam", 29), ("ofdm", 30)}
+        assert result.downstream[("qam", 29)]["power"] == 2.5

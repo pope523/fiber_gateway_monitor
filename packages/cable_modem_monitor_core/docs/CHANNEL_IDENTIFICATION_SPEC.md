@@ -313,8 +313,22 @@ lock status is not `"locked"`:
   distinguishing an unlocked channel from a poll failure (entity
   unavailable)
 
-This is the same nulling rule applied by Core's coordinator — see
-PARSING_SPEC.md § Field Guarantees.
+**Where this happens.** Core's parser coordinator owns the nulling
+pass — see PARSING_SPEC.md § Field Guarantees and
+`parsers/coordinator.py`. By the time `modem_data` reaches the HA
+adapter, unlocked channels have already been nulled. The mapping
+manager is a translator (flat list → keyed slot map), not a filter;
+it does not re-run the nulling rule. Two implementations of the same
+rule would be a DRY violation, and one such divergence already caused
+the v3.14.0-beta.1 missing-`lock_status` setup-crash regression.
+
+**Modems that don't report `lock_status`.** Some modems
+(`hitron/coda56`, `arris/cm820b`, `arris/tm1602a`, several others)
+emit channels with no `lock_status` field at all. Per Core's
+coordinator: *channels without `lock_status` are left alone — some
+modems do not report lock status at all*. They flow through the
+pipeline unchanged and must be treated as locked at every downstream
+consumer, including the mapping manager.
 
 Unlocked positions are expected — the entity set covers full hardware
 capacity. These entities exist permanently with
@@ -516,7 +530,7 @@ See PARSING_SPEC.md § Field Guarantees for the output guarantee.
 
 | Module | Change |
 |---|---|
-| `custom_components/.../mapping_manager.py` | New module: translates Core channel_id keys to HA entity slots; excludes unlocked channels in ID mode |
+| `custom_components/.../mapping_manager.py` | New module: translates Core's channel list into keyed slot maps. Pure translation — Core owns nulling, this module trusts the contract. ID mode excludes unlocked channels by relying on Core's having nulled `channel_type`/`channel_id`. |
 | `custom_components/.../sensor.py` | Read slot from mapping manager; position mode creates fixed set, ID mode creates dynamically |
 | `custom_components/.../coordinator.py` | Build `_downstream_by_slot` / `_upstream_by_slot` via mapping manager |
 | `custom_components/.../config_flow.py` | Add `channel_identity` selector |
