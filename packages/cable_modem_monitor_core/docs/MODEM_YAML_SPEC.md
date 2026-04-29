@@ -73,8 +73,8 @@ timeout: 15
 
 # Health (optional, defaults are correct for most modems)
 health:
-  http_probe: false      # disable HTTP probes for fragile modems
-  supports_head: false   # modem rejects HTTP HEAD (use GET)
+  http_probe: false      # disable TCP/HEAD probes for fragile modems
+  supports_head: false   # modem rejects HTTP HEAD (HEAD probe skipped, no fallback)
   supports_icmp: true    # hint; auto-detection overrides at setup
 
 # Metadata
@@ -1028,18 +1028,23 @@ this modem.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `http_probe` | bool | `true` | Whether HTTP health probes are enabled |
+| `http_probe` | bool | `true` | Whether TCP and HEAD health probes are enabled |
 | `supports_head` | bool | `true` | Whether the modem handles HTTP HEAD correctly |
 | `supports_icmp` | bool | `true` | Whether ICMP ping is expected to work |
 
-When `http_probe` is `false`, the HealthMonitor skips HTTP HEAD/GET
-probes entirely — only ICMP runs (if supported). Use this for fragile
-modems where every HTTP request carries crash risk (e.g., S33v2, #117).
+When `http_probe` is `false`, the HealthMonitor skips both the TCP
+and HEAD probes entirely — only ICMP runs (if supported). Use this
+for fragile modems where every HTTP-stack interaction carries crash
+risk (e.g., S33v2, #117).
 
-When `supports_head` is `false`, the HealthMonitor uses GET instead
-of HEAD for HTTP probes. Some modems return 405 or unexpected
-responses to HEAD requests. This is a modem characteristic — set
-per-model in modem.yaml.
+When `supports_head` is `false`, the HealthMonitor **skips the HEAD
+probe entirely** — there is no GET fallback. The TCP probe still
+runs as the L4 reachability signal; HEAD is purely a latency-only
+metric and skipping it on incompatible modems leaves the
+`http_latency_ms` field None rather than corrupting it with bimodal
+GET timing. Some modems return 405 or unexpected responses to HEAD
+requests; this is a modem characteristic — set per-model in
+modem.yaml.
 
 `supports_icmp` is a network-dependent hint. Auto-detection during
 setup overrides this default. User options override both. Useful for

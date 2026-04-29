@@ -34,6 +34,7 @@ from homeassistant.util import slugify as ha_slugify
 from .const import (
     CONF_CHANNEL_IDENTITY,
     CONF_ENTITY_PREFIX,
+    CONF_SUPPORTS_HEAD,
     CONF_SUPPORTS_ICMP,
     DOMAIN,
     ChannelIdentity,
@@ -373,6 +374,7 @@ def _build_status_card_yaml(
     system_info: dict[str, Any],
     *,
     has_icmp: bool,
+    has_head: bool,
 ) -> list[str]:
     """Build YAML for the status entities card.
 
@@ -384,6 +386,8 @@ def _build_status_card_yaml(
         entity_prefix: Entity ID prefix (e.g., "cable_modem").
         system_info: The system_info dict from modem data.
         has_icmp: Whether ICMP ping latency entity exists.
+        has_head: Whether the HTTP HEAD latency entity exists
+            (only created on supports_head=True modems).
     """
     lines = [
         "  - type: entities",
@@ -402,11 +406,19 @@ def _build_status_card_yaml(
         lines.append("        name: Ping")
     lines.extend(
         [
-            f"      - entity: sensor.{entity_prefix}_http_latency",
-            "        name: HTTP",
-            "        icon: mdi:speedometer",
+            f"      - entity: sensor.{entity_prefix}_tcp_latency",
+            "        name: TCP",
+            "        icon: mdi:transit-connection-variant",
         ]
     )
+    if has_head:
+        lines.extend(
+            [
+                f"      - entity: sensor.{entity_prefix}_http_latency",
+                "        name: HTTP",
+                "        icon: mdi:speedometer",
+            ]
+        )
     if "docsis_status" in system_info:
         lines.append(f"      - entity: sensor.{entity_prefix}_docsis_status")
         lines.append("        name: Modem Status")
@@ -506,8 +518,17 @@ def _build_error_graphs_yaml(entity_prefix: str, titles: dict[str, str]) -> list
     ]
 
 
-def _build_latency_graph_yaml(entity_prefix: str, *, has_icmp: bool) -> list[str]:
-    """Build YAML for the latency history graph."""
+def _build_latency_graph_yaml(
+    entity_prefix: str,
+    *,
+    has_icmp: bool,
+    has_head: bool,
+) -> list[str]:
+    """Build YAML for the latency history graph.
+
+    Always graphs TCP latency (the L4 reachability signal). Adds Ping
+    and HTTP HEAD lines only when those entities exist for this modem.
+    """
     lines = [
         "  - type: history-graph",
         "    title: Latency",
@@ -517,8 +538,11 @@ def _build_latency_graph_yaml(entity_prefix: str, *, has_icmp: bool) -> list[str
     if has_icmp:
         lines.append(f"      - entity: sensor.{entity_prefix}_ping_latency")
         lines.append("        name: Ping")
-    lines.append(f"      - entity: sensor.{entity_prefix}_http_latency")
-    lines.append("        name: HTTP")
+    lines.append(f"      - entity: sensor.{entity_prefix}_tcp_latency")
+    lines.append("        name: TCP")
+    if has_head:
+        lines.append(f"      - entity: sensor.{entity_prefix}_http_latency")
+        lines.append("        name: HTTP")
     return lines
 
 
@@ -659,6 +683,7 @@ def create_generate_dashboard_handler(
 
         entity_prefix = _get_entity_prefix(entry)
         has_icmp = bool(entry.data.get(CONF_SUPPORTS_ICMP, False))
+        has_head = bool(entry.data.get(CONF_SUPPORTS_HEAD, False))
         has_restart = entry.runtime_data.orchestrator.supports_restart
         system_info = modem_data.get("system_info", {})
 
@@ -694,6 +719,7 @@ def create_generate_dashboard_handler(
                     entity_prefix,
                     system_info,
                     has_icmp=has_icmp,
+                    has_head=has_head,
                 )
             )
 
@@ -724,7 +750,13 @@ def create_generate_dashboard_handler(
             yaml_parts.extend(_build_error_graphs_yaml(entity_prefix, titles))
 
         if opts["latency"]:
-            yaml_parts.extend(_build_latency_graph_yaml(entity_prefix, has_icmp=has_icmp))
+            yaml_parts.extend(
+                _build_latency_graph_yaml(
+                    entity_prefix,
+                    has_icmp=has_icmp,
+                    has_head=has_head,
+                )
+            )
 
         _LOGGER.info(
             "Generated dashboard: %d DS channels, %d US channels, prefix=%s",

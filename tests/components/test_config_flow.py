@@ -22,7 +22,7 @@ from custom_components.cable_modem_monitor.config_flow import (
     _seconds_to_duration,
     _ValidationProgress,
 )
-from custom_components.cable_modem_monitor.const import DOMAIN
+from custom_components.cable_modem_monitor.const import DOMAIN, EntityPrefix
 
 from .conftest import (
     FAKE_CATALOG,
@@ -425,8 +425,13 @@ async def test_full_flow_creates_entry(hass: HomeAssistant):
     assert result["data"]["health_check_interval"] == 30
 
 
-async def test_full_flow_get_only_modem_defaults_to_60s(hass: HomeAssistant):
-    """GET-only modems (no ICMP, no HEAD) get the slower 60s default at setup."""
+async def test_full_flow_get_only_modem_uses_default_cadence(hass: HomeAssistant):
+    """GET-only modems (no ICMP, no HEAD) use the same default cadence.
+
+    The per-capability cadence differentiation was removed when fast-poll
+    HTTP GET was dropped — TCP and ICMP probes are lightweight, so a
+    single 30s default applies regardless of HEAD support.
+    """
     get_only_validation = {
         **MOCK_VALIDATION_RESULT,
         "supports_icmp": False,
@@ -469,7 +474,7 @@ async def test_full_flow_get_only_modem_defaults_to_60s(hass: HomeAssistant):
             result = await hass.config_entries.flow.async_configure(result["flow_id"])
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"]["health_check_interval"] == 60
+    assert result["data"]["health_check_interval"] == 30
 
 
 # -----------------------------------------------------------------------
@@ -820,13 +825,72 @@ async def test_reauth_failure_shows_error(hass: HomeAssistant):
 # -----------------------------------------------------------------------
 
 
-async def test_duplicate_host_aborts(hass: HomeAssistant):
-    """Duplicate hostname aborts with already_configured."""
+async def test_duplicate_entity_prefix_aborts(hass: HomeAssistant):
+    """A new entry with the same entity_prefix as an existing entry aborts.
+
+    Deduplication keys on entity_prefix because the prefix controls
+    every entity_id this integration creates — two entries claiming
+    the same prefix would collide regardless of host or model.
+    """
     existing = MockConfigEntry(
         domain=DOMAIN,
         version=2,
         data=MOCK_ENTRY_DATA,
-        unique_id="192.168.100.1",
+        unique_id=str(EntityPrefix.MODEL),
+    )
+    existing.add_to_hass(hass)
+
+    with (
+        patch("custom_components.cable_modem_monitor.async_setup_entry", return_value=True),
+        patch(
+            "custom_components.cable_modem_monitor.config_flow.load_modem_catalog",
+            return_value=MOCK_SUMMARIES,
+        ),
+        patch(
+            "custom_components.cable_modem_monitor.config_flow.load_variant_list",
+            return_value=MOCK_SINGLE_VARIANT,
+        ),
+        patch(
+            "custom_components.cable_modem_monitor.config_flow.validate_connection",
+            return_value=MOCK_VALIDATION_RESULT,
+        ),
+        patch(_PATCH_CATALOG_PATH, FAKE_CATALOG),
+    ):
+        await hass.config_entries.async_setup(existing.entry_id)
+
+        result: Any = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={"manufacturer": "__all__"},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={"model": "Solent Labs/TPS-2000", "entity_prefix": str(EntityPrefix.MODEL)},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={"host": "192.168.100.1"},
+        )
+
+        while result["type"] in (FlowResultType.SHOW_PROGRESS, FlowResultType.SHOW_PROGRESS_DONE):
+            result = await hass.config_entries.flow.async_configure(result["flow_id"])
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_different_entity_prefix_at_same_host_succeeds(hass: HomeAssistant):
+    """Same hostname with a different entity_prefix is allowed.
+
+    Supports the swap-modem and multi-view workflows (e.g. testing a
+    different modem on the same default IP, or running two dashboards
+    against the same modem with different entity prefixes).
+    """
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        data=MOCK_ENTRY_DATA,
+        unique_id="other_prefix",  # different from what the new flow will use
     )
     existing.add_to_hass(hass)
 
@@ -865,5 +929,4 @@ async def test_duplicate_host_aborts(hass: HomeAssistant):
         while result["type"] in (FlowResultType.SHOW_PROGRESS, FlowResultType.SHOW_PROGRESS_DONE):
             result = await hass.config_entries.flow.async_configure(result["flow_id"])
 
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "already_configured"
+    assert result["type"] is FlowResultType.CREATE_ENTRY

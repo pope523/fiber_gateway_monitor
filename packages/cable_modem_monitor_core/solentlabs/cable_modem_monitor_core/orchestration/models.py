@@ -116,14 +116,21 @@ class HealthInfo:
             collection evidence.
         icmp_latency_ms: Round-trip time in milliseconds. None if
             ICMP failed, not supported, or not attempted.
+        tcp_latency_ms: TCP handshake time in milliseconds to the
+            modem's web port. Probes L4 reachability and the modem's
+            TCP listen/accept path. None if the TCP probe failed or
+            was not attempted.
         http_latency_ms: HTTP server response time in milliseconds,
-            excluding TCP connection setup overhead. Reflects modem
-            web-server load. None if HTTP failed, not attempted, or
-            suppressed by collection evidence.
+            excluding TCP connection setup overhead. Populated only
+            on modems where ``supports_head=True`` (HEAD bypasses the
+            handler and gives a clean unimodal signal). None on
+            GET-only modems, HTTP failure, or when suppressed by
+            collection evidence.
     """
 
     health_status: HealthStatus
     icmp_latency_ms: float | None = None
+    tcp_latency_ms: float | None = None
     http_latency_ms: float | None = None
 
 

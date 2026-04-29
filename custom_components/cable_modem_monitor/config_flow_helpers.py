@@ -48,7 +48,6 @@ from solentlabs.cable_modem_monitor_core.test_harness.runner import (
 
 from .const import (
     DEFAULT_HEALTH_CHECK_INTERVAL,
-    DEFAULT_HEALTH_CHECK_INTERVAL_GET_ONLY,
 )
 from .lib.host_validation import parse_host_input
 
@@ -204,14 +203,14 @@ def classify_error(error: str | None, signal: CollectorSignal | None = None) -> 
 
 
 def default_health_check_interval(supports_icmp: bool, supports_head: bool) -> int:
-    """Pick the initial health-check interval from detected probe capabilities.
+    """Pick the initial health-check interval.
 
-    GET-only modems (no ICMP, no HEAD) get a slower default because the
-    remaining probe is a full page fetch. Modems with either lightweight
-    probe available keep the standard cadence.
+    All probes (ICMP, TCP, HEAD) are lightweight and run independently —
+    HEAD is skipped on GET-only modems rather than falling back to a
+    full-page GET. The single default cadence applies regardless of
+    detected capabilities. Both arguments are accepted for API
+    compatibility but no longer affect the result.
     """
-    if not supports_icmp and not supports_head:
-        return DEFAULT_HEALTH_CHECK_INTERVAL_GET_ONLY
     return DEFAULT_HEALTH_CHECK_INTERVAL
 
 

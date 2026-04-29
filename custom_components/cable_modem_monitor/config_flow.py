@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -77,6 +78,15 @@ _ALL_MANUFACTURERS = "__all__"
 # Sentinel value for the default variant (modem.yaml, name=None).
 # HA's SelectSelector rejects empty-string option values.
 _DEFAULT_VARIANT = "__default__"
+
+# Cooloff window before options-flow validation re-auths the modem.
+# Some modems (e.g. MB7621) only allow one logged-in session and
+# silently invalidate older sessions when overlapping auths arrive.
+# Wait until no collection is in flight and a quiet window has
+# elapsed since the last successful collection.
+_COOLOFF_QUIET_SECONDS = 5.0
+_COOLOFF_POLL_SECONDS = 0.5
+_COOLOFF_TIMEOUT_SECONDS = 30.0
 
 
 # =============================================================================
@@ -466,9 +476,16 @@ class CableModemMonitorConfigFlow(config_entries.ConfigFlow):
         conn = self._connection_input
         self._progress.reset()
 
-        # Deduplicate by hostname
+        # Deduplicate by entity_prefix — the prefix is by design the
+        # per-entry disambiguator (it controls every entity_id this
+        # integration creates), so two entries claiming the same
+        # prefix would collide regardless of host or model. Any other
+        # combination — different prefix at same host, same prefix
+        # across host changes, etc. — is the user's intent and
+        # should not be blocked.
         hostname, _ = parse_host_input(conn[CONF_HOST])
-        await self.async_set_unique_id(hostname)
+        entity_prefix = conn.get(CONF_ENTITY_PREFIX, EntityPrefix.NONE)
+        await self.async_set_unique_id(str(entity_prefix))
         self._abort_if_unique_id_configured()
 
         display_name = build_model_display_name(summary)
@@ -716,8 +733,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             self._progress.start(
                 self.hass,
-                validate_connection(
-                    self.hass,
+                self._validate_with_cooloff(
+                    entry,
                     host=self._user_input[CONF_HOST],
                     username=self._user_input.get(CONF_USERNAME, ""),
                     password=self._user_input.get(CONF_PASSWORD, ""),
@@ -737,6 +754,72 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if success:
             return self.async_show_progress_done(next_step_id="options_success")
         return self.async_show_progress_done(next_step_id="options_with_errors")
+
+    async def _validate_with_cooloff(
+        self,
+        entry: config_entries.ConfigEntry,
+        *,
+        host: str,
+        username: str,
+        password: str,
+        modem_dir: Any,
+        variant: str | None,
+    ) -> dict[str, Any]:
+        """Wait for the modem to be quiet, then run validation.
+
+        Some modems (e.g. Motorola MB7621) only allow one logged-in
+        session at a time. Overlapping auth attempts — e.g. options-
+        flow validation racing with a regular poll or a recent manual
+        refresh — cause the modem to silently invalidate one session
+        and serve subsequent requests as the login page, surfacing
+        as a spurious "auth failed" error to the user.
+
+        Read collection state from the HealthMonitor (notified by the
+        orchestrator) and wait until no collection is active and at
+        least ``_COOLOFF_QUIET_SECONDS`` has elapsed since the last
+        successful collection.
+        """
+        await self._wait_for_quiet_modem(entry)
+        return await validate_connection(
+            self.hass,
+            host=host,
+            username=username,
+            password=password,
+            modem_dir=modem_dir,
+            variant=variant,
+        )
+
+    async def _wait_for_quiet_modem(
+        self,
+        entry: config_entries.ConfigEntry,
+    ) -> None:
+        """Block until the modem is quiet enough for a fresh auth."""
+        runtime = getattr(entry, "runtime_data", None)
+        health = getattr(runtime, "health_monitor", None) if runtime else None
+        if health is None:
+            return
+
+        deadline = time.monotonic() + _COOLOFF_TIMEOUT_SECONDS
+        waited = False
+        while time.monotonic() < deadline:
+            if health.collection_active:
+                await asyncio.sleep(_COOLOFF_POLL_SECONDS)
+                waited = True
+                continue
+
+            last_success = health.last_collection_success_at
+            if last_success is None:
+                break
+
+            elapsed = time.monotonic() - last_success
+            if elapsed >= _COOLOFF_QUIET_SECONDS:
+                break
+
+            await asyncio.sleep(_COOLOFF_QUIET_SECONDS - elapsed)
+            waited = True
+
+        if waited:
+            _LOGGER.debug("Options-flow validation: waited for modem to settle")
 
     async def async_step_options_success(
         self,

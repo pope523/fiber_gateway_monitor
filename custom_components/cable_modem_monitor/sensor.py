@@ -49,6 +49,7 @@ from solentlabs.cable_modem_monitor_core.orchestration.signals import (
 from .const import (
     CONF_CHANNEL_IDENTITY,
     CONF_ENTITY_PREFIX,
+    CONF_SUPPORTS_HEAD,
     CONF_SUPPORTS_ICMP,
     DOMAIN,
     ChannelIdentity,
@@ -799,11 +800,15 @@ class PingLatencySensor(HealthSensorBase):
         return self._last_value
 
 
-class HttpLatencySensor(HealthSensorBase):
-    """HTTP latency sensor.
+class TcpLatencySensor(HealthSensorBase):
+    """TCP latency sensor — modem L4 reachability.
 
-    Always created when health coordinator exists.  Caches last known
-    value to avoid flicker when the HTTP probe intermittently fails.
+    Created whenever the health coordinator runs the TCP probe (i.e.
+    HTTP probe is enabled in modem.yaml). Independent of HEAD support;
+    GET-only modems still get this clean L4 signal.
+
+    Caches last known value to avoid flicker when the TCP probe
+    intermittently fails.
     """
 
     def __init__(
@@ -811,7 +816,47 @@ class HttpLatencySensor(HealthSensorBase):
         coordinator: DataUpdateCoordinator[HealthInfo],
         entry: CableModemConfigEntry,
     ) -> None:
-        """Initialize the HTTP latency sensor."""
+        """Initialize the TCP latency sensor."""
+        super().__init__(coordinator, entry)
+        self._attr_name = "TCP Latency"
+        self._attr_unique_id = f"{entry.entry_id}_cable_modem_tcp_latency"
+        self._attr_native_unit_of_measurement = "ms"
+        self._attr_icon = "mdi:transit-connection-variant"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._last_value: int | None = None
+
+    @functools.cached_property
+    def native_value(self) -> int | None:
+        """Return TCP handshake latency in milliseconds.
+
+        Caches last known value to avoid flicker when a probe
+        intermittently returns None.
+        """
+        latency = self._health_info.tcp_latency_ms
+        if latency is not None:
+            self._last_value = int(round(latency))
+        return self._last_value
+
+
+class HttpLatencySensor(HealthSensorBase):
+    """HTTP HEAD latency sensor — modem application-layer responsiveness.
+
+    Only created when the modem advertises ``supports_head=True``. HEAD
+    bypasses the modem's CGI handler and gives a clean unimodal latency
+    signal. Modems without HEAD support skip this sensor entirely
+    because the GET fallback is bimodal (cold vs warm cache paths) and
+    would corrupt the metric.
+
+    Caches last known value to avoid flicker when the HTTP probe
+    intermittently fails.
+    """
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator[HealthInfo],
+        entry: CableModemConfigEntry,
+    ) -> None:
+        """Initialize the HTTP HEAD latency sensor."""
         super().__init__(coordinator, entry)
         self._attr_name = "HTTP Latency"
         self._attr_unique_id = f"{entry.entry_id}_cable_modem_http_latency"
@@ -822,7 +867,7 @@ class HttpLatencySensor(HealthSensorBase):
 
     @functools.cached_property
     def native_value(self) -> int | None:
-        """Return HTTP latency in milliseconds.
+        """Return HTTP HEAD latency in milliseconds (server response time).
 
         Caches last known value to avoid flicker when a probe
         intermittently returns None.
@@ -1059,9 +1104,11 @@ async def async_setup_entry(
 
     # -- Health sensors (from health coordinator) --
     if health_coord is not None:
-        entities.append(HttpLatencySensor(health_coord, entry))
+        entities.append(TcpLatencySensor(health_coord, entry))
         if entry.data.get(CONF_SUPPORTS_ICMP, False):
             entities.append(PingLatencySensor(health_coord, entry))
+        if entry.data.get(CONF_SUPPORTS_HEAD, False):
+            entities.append(HttpLatencySensor(health_coord, entry))
 
     # -- Data-dependent sensors (require modem_data from first poll) --
     modem_data = snapshot.modem_data if snapshot else None

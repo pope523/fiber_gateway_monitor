@@ -882,7 +882,8 @@ they are Core parser output, not HA-layer evaluations.
 |-------|------|--------|
 | `health_status` | string | Health probe result (`"none"` if unavailable) |
 | `icmp_latency_ms` | float or null | ICMP round-trip (null if not supported) |
-| `http_latency_ms` | float or null | HTTP response time (null if not attempted) |
+| `tcp_latency_ms` | float or null | TCP handshake to web port (null if HTTP probe disabled or skipped) |
+| `http_latency_ms` | float or null | HTTP HEAD server response time (null if `supports_head=False`, HEAD failed, or skipped) |
 
 ### `system_info` — Parser Output
 

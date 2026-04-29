@@ -822,24 +822,50 @@ No LOAD_AUTH step needed. Both paths are valid.
 
 ## Health
 
-### UC-50: Normal health check — both probes
+### UC-50: Normal health check — all probes on a HEAD-capable modem
 
-**Preconditions:** Both ICMP and HTTP HEAD enabled.
+**Preconditions:** ICMP enabled, HTTP probe enabled, supports_head=True.
 
 | Step | Action | State change | Observable |
 |------|--------|-------------|------------|
 | 1 | Consumer calls `ping()` | | |
 | 2 | HM: ICMP ping → success (4ms) | | |
-| 3 | HM: HTTP HEAD → success (12ms) | | |
-| 4 | HM: derive status → RESPONSIVE | | |
-| 5 | HM: store as .latest | | |
-| 6 | Return `HealthInfo(RESPONSIVE, icmp_latency_ms=4, http_latency_ms=12)` | | |
+| 3 | HM: HTTP HEAD → success (12ms elapsed) | | |
+| 4 | HM: TCP connect → success (2ms) | | |
+| 5 | HM: server response time = 12 − 2 = 10ms | | |
+| 6 | HM: derive status from ICMP + TCP → RESPONSIVE | | |
+| 7 | HM: store as .latest | | |
+| 8 | Return `HealthInfo(RESPONSIVE, icmp_latency_ms=4, tcp_latency_ms=2, http_latency_ms=10)` | | |
 
 **Assertions:**
 
-- Both probes run regardless of each other's result
-- Order: ICMP first (lightest), then HTTP HEAD
-- INFO log: "Health check: responsive (icmp 4ms, HTTP 12ms)"
+- ICMP, HEAD, and TCP all run when conditions are met
+- Order: ICMP first, then HEAD (uncontested connection), then TCP
+- Status derives from ICMP + TCP only — HEAD is latency-only
+- DEBUG log: "Health check: responsive (ICMP 4ms, TCP 2ms, HTTP HEAD 10ms, 0 bytes)"
+
+---
+
+### UC-50a: Normal health check — GET-only modem
+
+**Preconditions:** ICMP enabled, HTTP probe enabled, supports_head=False.
+
+| Step | Action | State change | Observable |
+|------|--------|-------------|------------|
+| 1 | Consumer calls `ping()` | | |
+| 2 | HM: ICMP ping → success (4ms) | | |
+| 3 | HM: HEAD probe **skipped** (supports_head=False, no GET fallback) | | |
+| 4 | HM: TCP connect → success (2ms) | | |
+| 5 | HM: derive status from ICMP + TCP → RESPONSIVE | | |
+| 6 | Return `HealthInfo(RESPONSIVE, icmp_latency_ms=4, tcp_latency_ms=2, http_latency_ms=None)` | | |
+
+**Assertions:**
+
+- HEAD probe is never called on supports_head=False modems
+- TCP probe still runs (independent of HEAD)
+- `http_latency_ms` stays None — populating it via GET fallback would
+  produce bimodal cold/warm corrupted data
+- Status remains RESPONSIVE based on ICMP + TCP
 
 ---
 
@@ -851,14 +877,16 @@ No LOAD_AUTH step needed. Both paths are valid.
 |------|--------|-------------|------------|
 | 1 | Data poll completes successfully | | ONLINE |
 | 2 | Health timer fires (independent cadence) | | |
-| 3 | HM: run ICMP + HTTP HEAD probes | | |
-| 4 | Return `HealthInfo(RESPONSIVE, icmp_latency_ms=4, http_latency_ms=12)` | | |
+| 3 | HM: run ICMP + TCP (+ HEAD if supported) probes | | |
+| 4 | Return `HealthInfo(RESPONSIVE, ...)` | | |
 
 **Assertions:**
 
 - Health checks and data collection run independently on their own cadences
-- Health probes always run their full set (ICMP + HTTP HEAD) regardless of collection state
-- No coupling between the two pipelines — neither suppresses the other
+- Health probes always run their full set (subject to capability flags)
+  regardless of collection state, except when collection evidence
+  suppresses TCP/HEAD (UC-58, UC-59)
+- No coupling between the two pipelines — neither blocks the other
 - Health provides fast outage detection; collection provides modem data
 
 ---
@@ -872,7 +900,7 @@ Health checks still running on their own cadence.
 |------|--------|-------------|------------|
 | 1 | No data collection runs (disabled or failed) | | |
 | 2 | Health timer fires | | |
-| 3 | HM: run ICMP + HTTP HEAD probes | | |
+| 3 | HM: run ICMP + TCP (+ HEAD if supported) probes | | |
 | 4 | Return `HealthInfo(...)` | | |
 
 **Assertions:**
@@ -917,33 +945,36 @@ yet known to be blocked).
 |------|--------|-------------|------------|
 | 1 | Consumer calls `ping()` | | |
 | 2 | HM: ICMP → fail (blocked) | | |
-| 3 | HM: HTTP HEAD → success | | |
+| 3 | HM: TCP connect → success | | |
 | 4 | Return `HealthInfo(ICMP_BLOCKED)` | | |
 
 **Assertions:**
 
 - `health_status == ICMP_BLOCKED`
-- Modem IS responsive (HTTP works) — ICMP failure is network, not modem
+- Modem IS reachable at L4 — ICMP failure is network, not modem
 - Consumer may choose to disable ICMP after seeing persistent ICMP_BLOCKED
 
 ---
 
-### UC-55: Degraded — HTTP fails, ping succeeds
+### UC-55: Degraded — TCP fails, ping succeeds
 
-**Preconditions:** Modem's web server is hung but network stack responds.
+**Preconditions:** Modem's L4 stack is hung but network stack
+responds at L3.
 
 | Step | Action | State change | Observable |
 |------|--------|-------------|------------|
 | 1 | Consumer calls `ping()` | | |
 | 2 | HM: ICMP → success | | |
-| 3 | HM: HTTP HEAD → timeout | | |
+| 3 | HM: TCP connect → timeout / refused | | |
 | 4 | Return `HealthInfo(DEGRADED)` | | |
 
 **Assertions:**
 
 - `health_status == DEGRADED`
-- Modem is network-reachable but web UI is unresponsive
-- WARNING log: "Health check: degraded (ping OK, HTTP timeout)"
+- Modem is network-reachable but TCP listen path is unhappy
+- WARNING log: "Health check: degraded (ICMP OK, TCP timeout)"
+- HEAD failure alone (when TCP succeeds) does **not** produce DEGRADED
+  — application-layer issues surface via the next slow-poll instead
 
 ---
 
@@ -994,7 +1025,7 @@ yet known to be blocked).
 
 ---
 
-### UC-58: HTTP probe skipped during active collection
+### UC-58: TCP/HEAD probes skipped during active collection
 
 **Preconditions:** Health checks and data polling both running.
 Poll and health check fire at overlapping times (e.g., after HA
@@ -1005,24 +1036,25 @@ reload both coordinators start from the same instant).
 | 1 | Orchestrator calls `record_collection_start()` | `_collection_active = True` | |
 | 2 | `collector.execute()` begins (auth, fetch, parse) | | Modem web server busy |
 | 3 | Health timer fires → `ping()` | | |
-| 4 | `_should_skip_http_probe()` → True (active) | HTTP probe not called | |
+| 4 | `_should_skip_probes()` → True (active) | TCP and HEAD not called | |
 | 5 | ICMP runs normally | | ICMP latency measured |
-| 6 | Status derived: ICMP pass + evidence → RESPONSIVE | | `http_latency_ms = None` |
-| 7 | Log: `"responsive (ICMP 1.5ms, HTTP skipped (collection active))"` | | |
+| 6 | Status derived: ICMP pass + evidence → RESPONSIVE | | `tcp_latency_ms = None`, `http_latency_ms = None` |
+| 7 | Log: `"responsive (ICMP 1.5ms, TCP/HEAD skipped (collection active))"` | | |
 | 8 | Collection completes → `record_collection_end(True)` | `_collection_active = False`, `_last_collection_success` set | |
 
 **Assertions:**
 
-- HTTP session.head/get is never called during active collection
+- Neither `socket.create_connection` nor `session.head` is called
+  during active collection
 - ICMP probe runs regardless of collection state
-- `http_latency_ms` is None (not measured, not fabricated)
-- `health_status` is RESPONSIVE (collection evidence = http_ok)
+- `tcp_latency_ms` and `http_latency_ms` are None (not measured)
+- `health_status` is RESPONSIVE (collection evidence = tcp_ok)
 - If ICMP fails during active collection, status is ICMP_BLOCKED
 - No contention on the modem's web server
 
 ---
 
-### UC-59: HTTP probe skipped after recent successful collection
+### UC-59: TCP/HEAD probes skipped after recent successful collection
 
 **Preconditions:** Data poll completed successfully. Next health
 check fires before another poll starts.
@@ -1032,18 +1064,19 @@ check fires before another poll starts.
 | 1 | Previous `ping()` completed | `_last_ping_time` set | |
 | 2 | `record_collection_end(True)` | `_last_collection_success` > `_last_ping_time` | |
 | 3 | Health timer fires → `ping()` | | |
-| 4 | `_should_skip_http_probe()` → True (recent success) | HTTP probe not called | |
-| 5 | Status derived with evidence → RESPONSIVE | | `http_latency_ms = None` |
+| 4 | `_should_skip_probes()` → True (recent success) | TCP and HEAD not called | |
+| 5 | Status derived with evidence → RESPONSIVE | | `tcp_latency_ms = None`, `http_latency_ms = None` |
 | 6 | `_last_ping_time` updated at end of `ping()` | Evidence consumed | |
-| 7 | Next `ping()` → `_last_collection_success` < `_last_ping_time` | HTTP probe runs normally | |
+| 7 | Next `ping()` → `_last_collection_success` < `_last_ping_time` | TCP and HEAD run normally | |
 
 **Assertions:**
 
 - Collection evidence is consumed once (first ping after collection)
-- Second ping after collection runs HTTP probe normally
+- Second ping after collection runs TCP and HEAD probes normally
 - Failed collection (`record_collection_end(False)`) does not
-  suppress HTTP probe
-- `http_probe=False` modems are unaffected (HTTP already disabled)
+  suppress probes
+- `http_probe=False` modems are unaffected (TCP and HEAD already
+  disabled at config level)
 
 ---
 

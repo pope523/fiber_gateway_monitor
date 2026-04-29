@@ -203,10 +203,13 @@ def test_build_status_card_yaml_full():
         "cable_modem",
         system_info,
         has_icmp=True,
+        has_head=True,
     )
     yaml = "\n".join(lines)
     assert "sensor.cable_modem_status" in yaml
     assert "sensor.cable_modem_ping_latency" in yaml
+    assert "sensor.cable_modem_tcp_latency" in yaml
+    assert "sensor.cable_modem_http_latency" in yaml
     assert "sensor.cable_modem_software_version" in yaml
     assert "sensor.cable_modem_system_uptime" in yaml
     assert "sensor.cable_modem_last_boot_time" in yaml
@@ -216,18 +219,20 @@ def test_build_status_card_yaml_full():
 
 
 def test_build_status_card_yaml_minimal():
-    """Status card omits entities when modem data is sparse."""
+    """Status card omits entities when modem data is sparse and HEAD unsupported."""
     system_info = {}
     lines = _build_status_card_yaml(
         "cable_modem",
         system_info,
         has_icmp=False,
+        has_head=False,
     )
     yaml = "\n".join(lines)
     assert "sensor.cable_modem_status" in yaml
-    assert "sensor.cable_modem_http_latency" in yaml
+    assert "sensor.cable_modem_tcp_latency" in yaml
     assert "ds_channel_count" in yaml
     assert "ping_latency" not in yaml
+    assert "http_latency" not in yaml
     assert "software_version" not in yaml
     assert "system_uptime" not in yaml
     assert "last_boot_time" not in yaml
@@ -275,20 +280,31 @@ def test_build_error_graphs_yaml():
     assert "sensor.cm_total_uncorrected_errors" in yaml
 
 
-def test_build_latency_graph_yaml_with_icmp():
-    """Latency graph includes ICMP when available."""
-    lines = _build_latency_graph_yaml("cm", has_icmp=True)
+def test_build_latency_graph_yaml_with_icmp_and_head():
+    """Latency graph includes Ping, TCP, and HTTP HEAD when all available."""
+    lines = _build_latency_graph_yaml("cm", has_icmp=True, has_head=True)
     yaml = "\n".join(lines)
     assert "sensor.cm_ping_latency" in yaml
+    assert "sensor.cm_tcp_latency" in yaml
     assert "sensor.cm_http_latency" in yaml
 
 
-def test_build_latency_graph_yaml_no_icmp():
-    """Latency graph omits ICMP when unavailable."""
-    lines = _build_latency_graph_yaml("cm", has_icmp=False)
+def test_build_latency_graph_yaml_no_icmp_no_head():
+    """Latency graph omits Ping and HTTP when unavailable; TCP always present."""
+    lines = _build_latency_graph_yaml("cm", has_icmp=False, has_head=False)
     yaml = "\n".join(lines)
     assert "ping_latency" not in yaml
-    assert "sensor.cm_http_latency" in yaml
+    assert "sensor.cm_tcp_latency" in yaml
+    assert "http_latency" not in yaml
+
+
+def test_build_latency_graph_yaml_icmp_only():
+    """Latency graph: ICMP supported but HEAD not — no HTTP line."""
+    lines = _build_latency_graph_yaml("cm", has_icmp=True, has_head=False)
+    yaml = "\n".join(lines)
+    assert "sensor.cm_ping_latency" in yaml
+    assert "sensor.cm_tcp_latency" in yaml
+    assert "http_latency" not in yaml
 
 
 # -----------------------------------------------------------------------
@@ -783,6 +799,7 @@ def test_generate_dashboard_handler(
         "entity_prefix": "none",
         "host": "192.168.100.1",
         "supports_icmp": True,
+        "supports_head": True,
     }
 
     hass = MagicMock()
@@ -814,6 +831,7 @@ def test_generate_dashboard_handler(
     assert "sensor.cable_modem_ds_ofdm_ch_2_power" in yaml
     assert "sensor.cable_modem_us_atdma_ch_1_power" in yaml
     assert "sensor.cable_modem_total_corrected_errors" in yaml
+    assert "sensor.cable_modem_tcp_latency" in yaml
     assert "sensor.cable_modem_http_latency" in yaml
     assert "entity: button.cable_modem_restart_modem" in yaml
 

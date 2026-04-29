@@ -347,6 +347,7 @@ def _build_diagnostics_dict(
             "collector_signal": snapshot.collector_signal.value,
             "health_status": (health_info.health_status.value if health_info else "none"),
             "icmp_latency_ms": (health_info.icmp_latency_ms if health_info else None),
+            "tcp_latency_ms": (health_info.tcp_latency_ms if health_info else None),
             "http_latency_ms": (health_info.http_latency_ms if health_info else None),
             "error": snapshot.error or "",
         }

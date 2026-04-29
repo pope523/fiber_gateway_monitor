@@ -1,16 +1,21 @@
 """Tests for HealthMonitor — lightweight modem probes.
 
-Covers ICMP + HTTP probes, probe configurations, status derivation,
-logging, and collection evidence (HTTP probe suppression).
+Covers ICMP + TCP + HTTP HEAD probes, probe configurations, status
+derivation, logging, and collection evidence (TCP/HEAD probe
+suppression). Status derivation uses ICMP + TCP. HEAD is a
+latency-only signal that populates http_latency_ms only when the
+modem advertises supports_head=True; GET-only modems skip the HEAD
+probe entirely (no fallback to GET — its bimodal cold/warm timing
+would corrupt the metric).
 
 Use case coverage:
 - UC-50: Normal health check — both probes
 - UC-53: Outage detection between data polls
 - UC-54: ICMP blocked network
-- UC-55: Degraded — HTTP fails, ICMP succeeds
+- UC-55: Degraded — TCP fails, ICMP succeeds
 - UC-56: Both probes disabled
 - UC-57: Health during restart — independent
-- Collection evidence: HTTP probe skipped during/after data collection
+- Collection evidence: TCP/HEAD skipped during/after data collection
 """
 
 from __future__ import annotations
@@ -319,17 +324,24 @@ class TestUC50BothProbes:
         assert monitor.latest.health_status == HealthStatus.UNKNOWN
 
     @patch(f"{_MODULE}.subprocess.run")
-    def test_http_uses_get_when_head_unsupported(self, mock_run: MagicMock) -> None:
-        """supports_head=False → uses GET instead of HEAD."""
+    def test_no_head_probe_when_unsupported(self, mock_run: MagicMock) -> None:
+        """supports_head=False → HEAD is skipped entirely (no GET fallback).
+
+        TCP probe still runs as the L4 reachability signal, and status
+        derivation succeeds via ICMP + TCP. http_latency_ms remains None
+        because GET timing is bimodal on most embedded modems and would
+        corrupt the metric.
+        """
         mock_run.return_value = _mock_ping_success()
 
         monitor, session = _make_monitor(supports_head=False)
-        session.get.return_value = _mock_http_response()
         info = monitor.ping()
 
-        session.get.assert_called_once()
         session.head.assert_not_called()
+        session.get.assert_not_called()
         assert info.health_status == HealthStatus.RESPONSIVE
+        assert info.http_latency_ms is None
+        assert info.tcp_latency_ms is not None
 
     @patch(f"{_MODULE}.subprocess.run")
     def test_http_probe_does_not_follow_redirects(self, mock_run: MagicMock) -> None:
@@ -362,15 +374,20 @@ class TestUC53OutageDetection:
 
     @patch(f"{_MODULE}.subprocess.run")
     def test_detects_modem_down(self, mock_run: MagicMock) -> None:
-        """Both probes fail → UNRESPONSIVE."""
+        """ICMP + TCP both fail → UNRESPONSIVE."""
         mock_run.return_value = _mock_ping_failure()
 
         monitor, session = _make_monitor()
         session.head.side_effect = requests.ConnectionError("refused")
-        info = monitor.ping()
+        with patch(
+            f"{_MODULE}.socket.create_connection",
+            side_effect=OSError("refused"),
+        ):
+            info = monitor.ping()
 
         assert info.health_status == HealthStatus.UNRESPONSIVE
         assert info.icmp_latency_ms is None
+        assert info.tcp_latency_ms is None
         assert info.http_latency_ms is None
 
 
@@ -380,11 +397,11 @@ class TestUC53OutageDetection:
 
 
 class TestUC54ICMPBlocked:
-    """Network blocks ICMP but HTTP works."""
+    """Network blocks ICMP but TCP works."""
 
     @patch(f"{_MODULE}.subprocess.run")
-    def test_icmp_fail_http_pass(self, mock_run: MagicMock) -> None:
-        """ICMP fails + HTTP succeeds → ICMP_BLOCKED."""
+    def test_icmp_fail_tcp_pass(self, mock_run: MagicMock) -> None:
+        """ICMP fails + TCP succeeds → ICMP_BLOCKED."""
         mock_run.return_value = _mock_ping_failure()
 
         monitor, session = _make_monitor()
@@ -395,25 +412,34 @@ class TestUC54ICMPBlocked:
 
 
 # ------------------------------------------------------------------
-# UC-55: Degraded — HTTP fails, ICMP succeeds
+# UC-55: Degraded — TCP fails, ICMP succeeds
 # ------------------------------------------------------------------
 
 
 class TestUC55Degraded:
-    """ICMP works but HTTP fails (web server hung)."""
+    """ICMP works but TCP fails (modem L4 stack not accepting).
+
+    HTTP failures alone no longer affect status — the slow poll catches
+    application-layer issues. DEGRADED specifically means L3 reachable
+    but L4 unreachable.
+    """
 
     @patch(f"{_MODULE}.subprocess.run")
-    def test_icmp_pass_http_fail(self, mock_run: MagicMock) -> None:
-        """ICMP succeeds + HTTP fails → DEGRADED."""
+    def test_icmp_pass_tcp_fail(self, mock_run: MagicMock) -> None:
+        """ICMP succeeds + TCP fails → DEGRADED."""
         mock_run.return_value = _mock_ping_success(4.0)
 
         monitor, session = _make_monitor()
-        session.head.side_effect = requests.Timeout("timeout")
-        info = monitor.ping()
+        session.head.return_value = _mock_http_response()
+        with patch(
+            f"{_MODULE}.socket.create_connection",
+            side_effect=OSError("refused"),
+        ):
+            info = monitor.ping()
 
         assert info.health_status == HealthStatus.DEGRADED
         assert info.icmp_latency_ms == 4.0
-        assert info.http_latency_ms is None
+        assert info.tcp_latency_ms is None
 
 
 # ------------------------------------------------------------------
@@ -449,34 +475,47 @@ class TestUC57HealthDuringRestart:
 
         monitor, session = _make_monitor()
         session.head.side_effect = requests.ConnectionError("refused")
-        info = monitor.ping()
+        with patch(
+            f"{_MODULE}.socket.create_connection",
+            side_effect=OSError("refused"),
+        ):
+            info = monitor.ping()
 
         assert info.health_status == HealthStatus.UNRESPONSIVE
 
 
 # ------------------------------------------------------------------
-# HTTP-only mode (supports_icmp=False)
+# TCP-only mode (supports_icmp=False)
 # ------------------------------------------------------------------
 
 
-class TestHTTPOnlyMode:
-    """Only HTTP probe runs when ICMP is not supported."""
+class TestTCPOnlyMode:
+    """Only TCP probe runs for L4 reachability when ICMP is not supported.
+
+    HTTP HEAD may also run as a latency-only signal but does not affect
+    status derivation.
+    """
 
     @patch(f"{_MODULE}.subprocess.run")
-    def test_http_pass(self, mock_run: MagicMock) -> None:
-        """HTTP only, passes → RESPONSIVE."""
+    def test_tcp_pass(self, mock_run: MagicMock) -> None:
+        """TCP succeeds (ICMP disabled) → RESPONSIVE."""
         monitor, session = _make_monitor(supports_icmp=False)
         session.head.return_value = _mock_http_response()
         info = monitor.ping()
 
         mock_run.assert_not_called()
         assert info.health_status == HealthStatus.RESPONSIVE
+        assert info.tcp_latency_ms is not None
 
-    def test_http_fail(self) -> None:
-        """HTTP only, fails → UNRESPONSIVE."""
+    def test_tcp_fail(self) -> None:
+        """TCP fails (ICMP disabled) → UNRESPONSIVE."""
         monitor, session = _make_monitor(supports_icmp=False)
         session.head.side_effect = requests.Timeout("timeout")
-        info = monitor.ping()
+        with patch(
+            f"{_MODULE}.socket.create_connection",
+            side_effect=OSError("refused"),
+        ):
+            info = monitor.ping()
 
         assert info.health_status == HealthStatus.UNRESPONSIVE
 
@@ -610,12 +649,18 @@ class TestHealthLogging:
         mock_run: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """DEGRADED logs at WARNING level."""
+        """DEGRADED logs at WARNING level (ICMP ok, TCP fails)."""
         mock_run.return_value = _mock_ping_success()
 
         monitor, session = _make_monitor()
-        session.head.side_effect = requests.Timeout("timeout")
-        with caplog.at_level("WARNING"):
+        session.head.return_value = _mock_http_response()
+        with (
+            patch(
+                f"{_MODULE}.socket.create_connection",
+                side_effect=OSError("refused"),
+            ),
+            caplog.at_level("WARNING"),
+        ):
             monitor.ping()
 
         assert "Health check [T100]: degraded" in caplog.text
@@ -626,12 +671,18 @@ class TestHealthLogging:
         mock_run: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """UNRESPONSIVE logs at WARNING level."""
+        """UNRESPONSIVE logs at WARNING level (ICMP and TCP both fail)."""
         mock_run.return_value = _mock_ping_failure()
 
         monitor, session = _make_monitor()
         session.head.side_effect = requests.ConnectionError("refused")
-        with caplog.at_level("WARNING"):
+        with (
+            patch(
+                f"{_MODULE}.socket.create_connection",
+                side_effect=OSError("refused"),
+            ),
+            caplog.at_level("WARNING"),
+        ):
             monitor.ping()
 
         assert "Health check [T100]: unresponsive" in caplog.text
@@ -818,12 +869,12 @@ class TestCollectionEvidenceBehavior:
         assert info.http_latency_ms is not None
 
     @patch(f"{_MODULE}.subprocess.run")
-    def test_logs_http_skipped(
+    def test_logs_skipped_active(
         self,
         mock_run: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Log detail shows 'HTTP skipped' when collection suppresses probe."""
+        """Log detail shows 'TCP/HEAD skipped' when collection suppresses probes."""
         mock_run.return_value = _mock_ping_success(1.5)
 
         monitor, session = _make_monitor()
@@ -837,10 +888,10 @@ class TestCollectionEvidenceBehavior:
         with caplog.at_level("DEBUG"):
             monitor.ping()
 
-        assert "HTTP skipped (collection active)" in caplog.text
+        assert "TCP/HEAD skipped (collection active)" in caplog.text
 
     @patch(f"{_MODULE}.subprocess.run")
-    def test_logs_http_skipped_recent_collection(
+    def test_logs_skipped_recent_collection(
         self,
         mock_run: MagicMock,
         caplog: pytest.LogCaptureFixture,
@@ -861,7 +912,7 @@ class TestCollectionEvidenceBehavior:
         with caplog.at_level("DEBUG"):
             monitor.ping()
 
-        assert "HTTP skipped (recent collection)" in caplog.text
+        assert "TCP/HEAD skipped (recent collection)" in caplog.text
 
 
 # ------------------------------------------------------------------
@@ -890,12 +941,16 @@ class TestTCPConnectProbe:
         assert "TCP " in caplog.text
 
     @patch(f"{_MODULE}.subprocess.run")
-    def test_tcp_failure_omitted_from_log(
+    def test_tcp_failure_logs_timeout(
         self,
         mock_run: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Log omits TCP entry when TCP probe fails."""
+        """Log shows 'TCP timeout' when TCP probe fails (status: DEGRADED).
+
+        TCP is now the primary L4 signal, so its failure is logged
+        explicitly rather than silently omitted.
+        """
         mock_run.return_value = _mock_ping_success(3.0)
 
         monitor, session = _make_monitor()
@@ -906,11 +961,13 @@ class TestTCPConnectProbe:
                 f"{_MODULE}.socket.create_connection",
                 side_effect=OSError("refused"),
             ),
-            caplog.at_level("INFO"),
+            caplog.at_level("WARNING"),
         ):
             info = monitor.ping()
 
-        assert "TCP " not in caplog.text
+        assert "TCP timeout" in caplog.text
+        assert info.health_status == HealthStatus.DEGRADED
+        assert info.tcp_latency_ms is None
         # http_latency_ms uses full elapsed when TCP is unavailable
         assert info.http_latency_ms is not None
 
@@ -947,7 +1004,13 @@ class TestTCPConnectProbe:
 
     @patch(f"{_MODULE}.subprocess.run")
     def test_tcp_logged_http_failed(self, mock_run: MagicMock) -> None:
-        """TCP is measured even when HTTP request fails."""
+        """TCP runs even when HEAD fails — HEAD failure no longer affects status.
+
+        ICMP + TCP both succeed → RESPONSIVE. HEAD timeout means
+        http_latency_ms is None, but the modem is still considered
+        reachable at L3 and L4. Application-layer issues surface via
+        slow-poll instead.
+        """
         mock_run.return_value = _mock_ping_success(3.0)
 
         monitor, session = _make_monitor()
@@ -956,12 +1019,13 @@ class TestTCPConnectProbe:
         with patch.object(monitor, "_measure_tcp_connect", return_value=2.0):
             info = monitor.ping()
 
-        assert info.health_status == HealthStatus.DEGRADED
+        assert info.health_status == HealthStatus.RESPONSIVE
+        assert info.tcp_latency_ms == 2.0
         assert info.http_latency_ms is None
 
     @patch(f"{_MODULE}.subprocess.run")
     def test_http_ok_no_latency_detail(self, mock_run: MagicMock) -> None:
-        """Probe detail shows 'HTTP OK' when success but no latency."""
+        """Probe detail shows 'HTTP HEAD OK' when success but no latency."""
         mock_run.return_value = _mock_ping_success(3.0)
 
         monitor, session = _make_monitor()
@@ -970,17 +1034,18 @@ class TestTCPConnectProbe:
         detail = monitor._probe_detail(
             info,
             icmp_ok=True,
+            tcp_ok=True,
             http_ok=True,
         )
         assert "HTTP HEAD OK" in detail
 
     @patch(f"{_MODULE}.subprocess.run")
-    def test_no_tcp_when_http_skipped(
+    def test_no_tcp_when_probes_skipped(
         self,
         mock_run: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """TCP probe does not run when HTTP is skipped by evidence."""
+        """TCP probe does not run when collection evidence skips probes."""
         mock_run.return_value = _mock_ping_success(1.5)
 
         monitor, session = _make_monitor()
@@ -997,4 +1062,4 @@ class TestTCPConnectProbe:
             monitor.ping()
 
         assert "TCP " not in caplog.text
-        assert "HTTP skipped" in caplog.text
+        assert "TCP/HEAD skipped" in caplog.text

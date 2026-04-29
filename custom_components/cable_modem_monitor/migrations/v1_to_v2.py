@@ -22,7 +22,7 @@ from homeassistant.core import HomeAssistant
 from solentlabs.cable_modem_monitor_catalog import CATALOG_PATH
 from solentlabs.cable_modem_monitor_core.catalog_manager import list_modems, list_variants
 
-from ..const import DEFAULT_HEALTH_CHECK_INTERVAL_GET_ONLY
+from ..const import DEFAULT_HEALTH_CHECK_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -105,9 +105,7 @@ async def async_migrate(
         # v1 values are stale one-shot detections that may be wrong.
         # Omitting lets modem.yaml HealthConfig defaults apply at startup.
         "scan_interval": old_data.get("scan_interval", 600),
-        # Migrated entries have no fresh probe data, so default to the
-        # safer GET-only cadence. Users can lower it in options.
-        "health_check_interval": DEFAULT_HEALTH_CHECK_INTERVAL_GET_ONLY,
+        "health_check_interval": DEFAULT_HEALTH_CHECK_INTERVAL,
     }
 
     hass.config_entries.async_update_entry(entry, data=new_data, version=2)

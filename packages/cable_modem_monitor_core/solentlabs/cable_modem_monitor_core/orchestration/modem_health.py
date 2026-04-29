@@ -1,10 +1,23 @@
 """HealthMonitor — lightweight probes for modem reachability.
 
-Runs ICMP ping and HTTP HEAD/GET probes independently on their own
-cadence. The orchestrator notifies the HealthMonitor when data
-collections start and end — the HTTP probe is skipped when a
-collection is active (avoids contention) or recently succeeded
-(redundant).
+Runs three independent probes on a fast cadence:
+
+- **ICMP** — pure L3 reachability. Runs when ``supports_icmp`` is true.
+- **TCP** — L4 reachability via a handshake to the modem's web port.
+  Always runs when the HTTP probe is enabled. Independent of
+  ``supports_head``.
+- **HTTP HEAD** — application-layer responsiveness. Only runs when the
+  modem advertises ``supports_head=True``. HEAD bypasses the modem's
+  CGI handler and gives a clean unimodal latency signal. Modems that
+  don't support HEAD properly skip this probe entirely (a fallback to
+  GET would mix cold/warm responses and corrupt the metric).
+
+Status derivation uses ICMP + TCP. HEAD is a latency-only signal that
+populates ``HealthInfo.http_latency_ms`` when available.
+
+The orchestrator notifies the HealthMonitor when data collections
+start and end — TCP and HEAD probes are skipped while a collection
+is active (avoids contention) or recently succeeded (redundant).
 
 Probe capabilities (ICMP, HEAD) are declared in modem.yaml and
 confirmed by auto-detection during setup.
@@ -38,19 +51,26 @@ _PING_TIME_RE = re.compile(r"time[=<](\d+(?:\.\d+)?)\s*ms", re.IGNORECASE)
 class HealthMonitor:
     """Lightweight modem health probes.
 
-    Runs ICMP and HTTP probes to detect modem reachability between data
-    collection cycles. The orchestrator signals collection activity via
-    ``record_collection_start()`` / ``record_collection_end()`` so the
-    HTTP probe can be skipped when redundant or contentious.
+    Runs ICMP, TCP, and (optionally) HTTP HEAD probes to detect modem
+    reachability between data collection cycles. The orchestrator
+    signals collection activity via ``record_collection_start()`` /
+    ``record_collection_end()`` so the TCP and HEAD probes can be
+    skipped when redundant or contentious.
 
     Args:
-        base_url: Modem URL for HTTP probe (e.g., "http://192.168.100.1").
+        base_url: Modem URL for TCP/HTTP probes
+            (e.g., "http://192.168.100.1").
         supports_icmp: Whether ICMP ping works on this network.
             Discovered during setup.
         supports_head: Whether modem handles HTTP HEAD correctly.
-            Discovered during setup. When False, GET is used instead.
-        http_probe: Whether to run HTTP health probes at all. Set to
+            Discovered during setup. When False, the HEAD probe is
+            skipped entirely — the GET fallback is intentionally
+            avoided because GET timing is bimodal on most embedded
+            modems (cold vs warm cache paths) and would corrupt the
+            ``http_latency_ms`` signal.
+        http_probe: Whether to run TCP and HTTP probes at all. Set to
             False for fragile modems via modem.yaml health.http_probe.
+            ICMP still runs when ``supports_icmp`` is True.
         legacy_ssl: Whether HTTPS requires legacy (SECLEVEL=0) ciphers.
             Discovered during config-flow protocol detection.
         timeout: Per-probe timeout in seconds.
@@ -72,8 +92,8 @@ class HealthMonitor:
         self._port = self._extract_port(base_url)
         self._model = model
         self._supports_icmp = supports_icmp
+        self._supports_head = supports_head
         self._http_probe = http_probe
-        self._http_method = "HEAD" if supports_head else "GET"
         self._timeout = timeout
         self._session = create_session(legacy_ssl=legacy_ssl)
 
@@ -82,7 +102,8 @@ class HealthMonitor:
         self._previous_status: HealthStatus = HealthStatus.UNKNOWN
 
         # Collection evidence — orchestrator signals active collections
-        # so the HTTP probe can be skipped when redundant or contentious.
+        # so the TCP/HEAD probes can be skipped when redundant or
+        # contentious. ICMP is unaffected (cheap, distinct layer).
         self._collection_active: bool = False
         self._last_collection_success: float | None = None
         self._last_ping_time: float | None = None
@@ -91,8 +112,8 @@ class HealthMonitor:
         """Signal that a data collection cycle is starting.
 
         Called by the orchestrator before ``collector.execute()``.
-        While active, ``ping()`` skips the HTTP probe to avoid
-        contention on the modem's web server.
+        While active, ``ping()`` skips the TCP and HEAD probes to
+        avoid contention on the modem's web server.
         """
         self._collection_active = True
 
@@ -101,8 +122,8 @@ class HealthMonitor:
 
         Called by the orchestrator after ``collector.execute()``
         completes (success or failure). A successful collection is
-        recorded so the next ``ping()`` can skip the redundant HTTP
-        probe.
+        recorded so the next ``ping()`` can skip the redundant TCP
+        and HEAD probes.
         """
         self._collection_active = False
         if success:
@@ -111,47 +132,84 @@ class HealthMonitor:
     def ping(self) -> HealthInfo:
         """Run health probes and return results.
 
-        ICMP runs first (if supported), then HTTP (if enabled). The
-        HTTP probe is skipped when a data collection is active or
-        recently succeeded — the collection already proves HTTP
-        reachability. See ``record_collection_start`` and
-        ``record_collection_end``.
+        ICMP runs first (if supported), then HEAD (if supported and
+        not skipped), then TCP (if HTTP probe enabled and not skipped).
+        TCP and HEAD share the skip gate — they're skipped when a data
+        collection is active or recently succeeded, since collection
+        already proves L4/HTTP reachability. See
+        ``record_collection_start`` and ``record_collection_end``.
+
+        Status derivation uses ICMP + TCP. ``http_latency_ms`` is a
+        latency-only signal that populates only on HEAD-capable modems.
 
         Returns:
             HealthInfo with probe results and derived status.
         """
-        icmp_ms: float | None = None
-        http_ms: float | None = None
         icmp_ok: bool | None = None
+        icmp_ms: float | None = None
+        tcp_ok: bool | None = None
+        tcp_ms: float | None = None
         http_ok: bool | None = None
+        http_ms: float | None = None
+        http_bytes: int | None = None
 
-        # ICMP probe — always runs (lightweight)
+        # ICMP probe — independent layer, runs regardless of collection state.
         if self._supports_icmp:
             icmp_ok, icmp_ms = self._probe_icmp()
 
-        # HTTP probe — skip when collection evidence makes it redundant
-        http_bytes: int | None = None
-        tcp_ms: float | None = None
-        skip_reason = self._should_skip_http_probe() if self._http_probe else None
+        # TCP and HEAD probes share a skip gate — when collection
+        # evidence supersedes them, neither runs.
+        skip_reason = self._should_skip_probes() if self._http_probe else None
+
         if self._http_probe and skip_reason is None:
-            http_ok, http_ms, http_bytes, tcp_ms = self._probe_http()
+            # HEAD probe runs first (when supported) so the modem's web
+            # server gets an uncontested connection. Embedded modems are
+            # often single-threaded and degrade if a TCP probe is still
+            # being cleaned up. Skipped entirely on GET-only modems —
+            # the bimodal cold/warm GET timing would corrupt the metric.
+            http_elapsed_ms: float | None = None
+            if self._supports_head:
+                http_ok, http_elapsed_ms, http_bytes = self._probe_http_head()
 
-        # For status derivation, treat collection evidence as proof of
-        # HTTP reachability, but don't fabricate measurement values.
-        effective_http_ok = http_ok
+            # TCP probe — measures L4 reachability. Always runs when the
+            # HTTP probe is enabled, independent of HEAD support, so
+            # GET-only modems still get a clean L4 latency signal.
+            tcp_ms = self._measure_tcp_connect()
+            tcp_ok = tcp_ms is not None
+
+            # Server response time = total elapsed minus TCP handshake.
+            # ``response.elapsed`` includes connection-pool setup since
+            # the pool is cold between probes.
+            if http_elapsed_ms is not None:
+                if tcp_ms is not None and tcp_ms < http_elapsed_ms:
+                    http_ms = http_elapsed_ms - tcp_ms
+                else:
+                    http_ms = http_elapsed_ms
+
+        # Status derivation uses ICMP + TCP. Collection evidence is
+        # treated as proof of TCP reachability when probes were skipped.
+        effective_tcp_ok = tcp_ok
         if skip_reason is not None:
-            effective_http_ok = True
+            effective_tcp_ok = True
 
-        health_status = self._derive_status(icmp_ok, effective_http_ok)
+        health_status = self._derive_status(icmp_ok, effective_tcp_ok)
 
         info = HealthInfo(
             health_status=health_status,
             icmp_latency_ms=icmp_ms,
+            tcp_latency_ms=tcp_ms,
             http_latency_ms=http_ms,
         )
         self._latest = info
 
-        self._log_result(info, icmp_ok, http_ok, http_bytes, tcp_connect_ms=tcp_ms, skip_reason=skip_reason)
+        self._log_result(
+            info,
+            icmp_ok=icmp_ok,
+            tcp_ok=tcp_ok,
+            http_ok=http_ok,
+            http_bytes=http_bytes,
+            skip_reason=skip_reason,
+        )
         self._last_ping_time = time.monotonic()
         return info
 
@@ -175,21 +233,50 @@ class HealthMonitor:
         """
         return self._last_ping_time
 
+    @property
+    def collection_active(self) -> bool:
+        """True while a data collection cycle is in progress.
+
+        Set by ``record_collection_start()``; cleared by
+        ``record_collection_end()``. Read by external callers (e.g.
+        the HA options flow) that need to wait for a quiet window
+        before issuing their own auth attempts on session-limited
+        modems.
+        """
+        return self._collection_active
+
+    @property
+    def last_collection_success_at(self) -> float | None:
+        """Monotonic timestamp of the last successful collection,
+        or None if no collection has succeeded since startup.
+
+        Read by external callers (e.g. the HA options flow) that
+        need to gauge how long the modem has been quiet before
+        starting an additional auth attempt. Session-limited modems
+        (e.g. Motorola MB7621) silently invalidate older sessions
+        when overlapping auths arrive, so callers should wait until
+        ``time.monotonic() - last_collection_success_at`` exceeds
+        a small quiet window before re-authing.
+        """
+        return self._last_collection_success
+
     # ------------------------------------------------------------------
     # Internal — collection evidence
     # ------------------------------------------------------------------
 
-    def _should_skip_http_probe(self) -> str | None:
-        """Check if collection activity makes the HTTP probe redundant.
+    def _should_skip_probes(self) -> str | None:
+        """Check if collection activity makes the TCP/HEAD probes redundant.
 
-        Returns a short reason string when the probe should be skipped,
-        or None when it should run:
+        Returns a short reason string when the probes should be skipped,
+        or None when they should run:
 
         - ``"collection active"`` — collection is running right now
         - ``"recent collection"`` — collection succeeded since last ping
 
+        ICMP is unaffected and always runs when supported.
+
         Never skips before the first ping() completes — consumers need
-        at least one real HTTP measurement to establish a baseline.
+        at least one real measurement to establish a baseline.
         """
         if self._last_ping_time is None:
             return None
@@ -254,63 +341,37 @@ class HealthMonitor:
         except OSError:
             return None
 
-    def _probe_http(self) -> tuple[bool, float | None, int | None, float | None]:
-        """Run an HTTP HEAD or GET probe.
+    def _probe_http_head(self) -> tuple[bool, float | None, int | None]:
+        """Run an HTTP HEAD probe.
 
-        Measures TCP connection setup separately from HTTP server
-        response time. The HTTP request runs first so the modem's
-        web server gets an uncontested connection — embedded modems
-        are often single-threaded and degrade if a prior TCP probe
-        is still being cleaned up. The TCP probe runs after the HTTP
-        request to measure current network overhead.
+        Only called on modems with ``supports_head=True`` (verified at
+        install time). HEAD bypasses the modem's CGI handler on
+        properly-implementing webservers, giving a clean unimodal
+        latency signal — unlike GET, which on most embedded modems is
+        bimodal (cold compute path vs warm cached path) and would
+        corrupt the metric.
 
-        When both measurements are available, the returned latency
-        reflects server response time (elapsed minus TCP overhead).
-        The session's connection pool is typically cold between
-        probes (health checks run every few minutes, past any HTTP
-        keep-alive timeout), so ``response.elapsed`` includes TCP
-        handshake time.
+        Returned ``elapsed_ms`` is the full request elapsed time
+        including TCP handshake. The caller subtracts the TCP probe's
+        measurement to isolate server response time.
 
         Returns:
-            Tuple of (success, server_latency_ms, response_bytes,
-            tcp_connect_ms). server_latency_ms and response_bytes
-            are None on HTTP failure. tcp_connect_ms is None if the
-            TCP probe failed.
+            Tuple of (success, elapsed_ms, response_bytes). All
+            measurement fields are None on HTTP failure.
         """
         try:
-            if self._http_method == "HEAD":
-                response = self._session.head(
-                    self._base_url,
-                    timeout=self._timeout,
-                    allow_redirects=False,
-                )
-            else:
-                response = self._session.get(
-                    self._base_url,
-                    timeout=self._timeout,
-                    allow_redirects=False,
-                )
-
+            response = self._session.head(
+                self._base_url,
+                timeout=self._timeout,
+                allow_redirects=False,
+            )
             elapsed_ms = max(0.0, response.elapsed.total_seconds() * 1000)
             http_bytes = len(response.content)
-
         except requests.RequestException as exc:
-            _logger.debug("HTTP %s probe [%s] failed: %s", self._http_method, self._model, exc)
-            return False, None, None, self._measure_tcp_connect()
+            _logger.debug("HTTP HEAD probe [%s] failed: %s", self._model, exc)
+            return False, None, None
 
-        # TCP probe runs after HTTP to avoid contention on the
-        # modem's web server. Measures current network overhead.
-        tcp_ms = self._measure_tcp_connect()
-
-        # Isolate server response time by subtracting TCP overhead.
-        # response.elapsed includes connection-pool setup (TCP
-        # handshake) when the pool is cold between probes.
-        if tcp_ms is not None and tcp_ms < elapsed_ms:
-            server_ms = elapsed_ms - tcp_ms
-        else:
-            server_ms = elapsed_ms
-
-        return True, server_ms, http_bytes, tcp_ms
+        return True, elapsed_ms, http_bytes
 
     # ------------------------------------------------------------------
     # Internal — status derivation
@@ -319,37 +380,39 @@ class HealthMonitor:
     def _derive_status(
         self,
         icmp_ok: bool | None,
-        http_ok: bool | None,
+        tcp_ok: bool | None,
     ) -> HealthStatus:
         """Derive health status from probe results.
 
-        None means the probe was not run (disabled or unsupported).
+        Uses ICMP (L3) and TCP (L4) reachability signals. HEAD timing
+        is a latency-only metric and does not affect status. None
+        means the probe was not run (disabled or unsupported).
 
         See ORCHESTRATION_SPEC.md § Probe Configurations Matrix.
         """
         # Neither probe ran
-        if icmp_ok is None and http_ok is None:
+        if icmp_ok is None and tcp_ok is None:
             return HealthStatus.UNKNOWN
 
         # Both probes ran
-        if icmp_ok is not None and http_ok is not None:
-            return self._derive_both_probes(icmp_ok, http_ok)
+        if icmp_ok is not None and tcp_ok is not None:
+            return self._derive_both_probes(icmp_ok, tcp_ok)
 
-        # HTTP only (ICMP not supported)
+        # TCP only (ICMP not supported)
         if icmp_ok is None:
-            return HealthStatus.RESPONSIVE if http_ok else HealthStatus.UNRESPONSIVE
+            return HealthStatus.RESPONSIVE if tcp_ok else HealthStatus.UNRESPONSIVE
 
-        # ICMP only (HTTP disabled)
+        # ICMP only (HTTP probe disabled)
         return HealthStatus.RESPONSIVE if icmp_ok else HealthStatus.UNRESPONSIVE
 
     @staticmethod
-    def _derive_both_probes(icmp_ok: bool, http_ok: bool) -> HealthStatus:
-        """Derive status from both probe results."""
-        if icmp_ok and http_ok:
+    def _derive_both_probes(icmp_ok: bool, tcp_ok: bool) -> HealthStatus:
+        """Derive status from both reachability probe results."""
+        if icmp_ok and tcp_ok:
             return HealthStatus.RESPONSIVE
         if icmp_ok:
             return HealthStatus.DEGRADED
-        if http_ok:
+        if tcp_ok:
             return HealthStatus.ICMP_BLOCKED
         return HealthStatus.UNRESPONSIVE
 
@@ -408,11 +471,11 @@ class HealthMonitor:
     def _log_result(
         self,
         info: HealthInfo,
+        *,
         icmp_ok: bool | None,
+        tcp_ok: bool | None,
         http_ok: bool | None,
         http_bytes: int | None = None,
-        *,
-        tcp_connect_ms: float | None = None,
         skip_reason: str | None = None,
     ) -> None:
         """Log the health check result.
@@ -424,10 +487,10 @@ class HealthMonitor:
         """
         detail = self._probe_detail(
             info,
-            icmp_ok,
-            http_ok,
-            http_bytes,
-            tcp_connect_ms=tcp_connect_ms,
+            icmp_ok=icmp_ok,
+            tcp_ok=tcp_ok,
+            http_ok=http_ok,
+            http_bytes=http_bytes,
             skip_reason=skip_reason,
         )
         status = info.health_status.value
@@ -447,35 +510,45 @@ class HealthMonitor:
     def _probe_detail(
         self,
         info: HealthInfo,
+        *,
         icmp_ok: bool | None,
+        tcp_ok: bool | None,
         http_ok: bool | None,
         http_bytes: int | None = None,
-        *,
-        tcp_connect_ms: float | None = None,
         skip_reason: str | None = None,
     ) -> str:
         """Build human-readable probe detail string for log messages."""
         parts: list[str] = []
 
-        if icmp_ok is not None:
-            if info.icmp_latency_ms is not None:
-                parts.append(f"ICMP {info.icmp_latency_ms:.1f}ms")
-            elif icmp_ok:
-                parts.append("ICMP OK")
-            else:
-                parts.append("ICMP timeout")
+        if icmp_part := _format_probe("ICMP", icmp_ok, info.icmp_latency_ms):
+            parts.append(icmp_part)
 
         if skip_reason is not None:
-            parts.append(f"HTTP skipped ({skip_reason})")
-        elif http_ok is not None:
-            if tcp_connect_ms is not None:
-                parts.append(f"TCP {tcp_connect_ms:.1f}ms")
-            if info.http_latency_ms is not None:
-                size = f", {http_bytes} bytes" if http_bytes else ""
-                parts.append(f"HTTP {self._http_method} {info.http_latency_ms:.1f}ms{size}")
-            elif http_ok:
-                parts.append(f"HTTP {self._http_method} OK")
-            else:
-                parts.append(f"HTTP {self._http_method} timeout")
+            parts.append(f"TCP/HEAD skipped ({skip_reason})")
+            return ", ".join(parts) if parts else "no probes"
+
+        if tcp_part := _format_probe("TCP", tcp_ok, info.tcp_latency_ms):
+            parts.append(tcp_part)
+
+        if http_part := _format_probe("HTTP HEAD", http_ok, info.http_latency_ms, http_bytes):
+            parts.append(http_part)
 
         return ", ".join(parts) if parts else "no probes"
+
+
+def _format_probe(
+    label: str,
+    ok: bool | None,
+    latency_ms: float | None,
+    response_bytes: int | None = None,
+) -> str:
+    """Format a single probe's contribution to the log detail string.
+
+    Returns an empty string when the probe was not run (``ok is None``).
+    """
+    if ok is None:
+        return ""
+    if latency_ms is not None:
+        size = f", {response_bytes} bytes" if response_bytes else ""
+        return f"{label} {latency_ms:.1f}ms{size}"
+    return f"{label} OK" if ok else f"{label} timeout"

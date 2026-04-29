@@ -92,7 +92,8 @@ parser output → no entity created.
 | Entity | unique_id suffix | State | device_class | state_class | Unit | Condition |
 |--------|-----------------|-------|--------------|-------------|------|-----------|
 | Ping Latency | `_ping_latency` | float | — | MEASUREMENT | ms | `supports_icmp = True` |
-| HTTP Latency | `_http_latency` | float | — | MEASUREMENT | ms | Always created |
+| TCP Latency | `_tcp_latency` | float | — | MEASUREMENT | ms | Health coordinator exists (HTTP probe enabled) |
+| HTTP Latency | `_http_latency` | float | — | MEASUREMENT | ms | `supports_head = True` (HEAD-only — no GET fallback for bimodal-corrupted data) |
 
 ### Per-Channel Downstream Sensors
 

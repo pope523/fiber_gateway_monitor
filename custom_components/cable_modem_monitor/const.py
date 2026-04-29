@@ -49,10 +49,6 @@ MAX_SCAN_INTERVAL = 86400  # 24 hours
 
 # Defaults — health checks
 DEFAULT_HEALTH_CHECK_INTERVAL = 30
-# Used when the modem supports neither ICMP nor HTTP HEAD: the only
-# remaining probe is a full GET, so the cadence is slowed to reduce
-# load on modems with weak web servers.
-DEFAULT_HEALTH_CHECK_INTERVAL_GET_ONLY = 60
 MIN_HEALTH_CHECK_INTERVAL = 10
 MAX_HEALTH_CHECK_INTERVAL = 86400  # 24 hours
 

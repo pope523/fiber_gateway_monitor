@@ -44,6 +44,7 @@ from custom_components.cable_modem_monitor.sensor import (
     ModemSystemUptimeSensor,
     PingLatencySensor,
     SystemInfoFieldSensor,
+    TcpLatencySensor,
     _create_channel_sensors,
     _create_lan_sensors,
     _humanize_field_name,
@@ -417,6 +418,27 @@ def test_health_sensor_http_latency(mock_runtime_data):
 
     sensor = HttpLatencySensor(coord, entry)
     assert sensor.native_value == 15  # rounded from 14.8
+
+
+def test_health_sensor_tcp_latency(mock_runtime_data):
+    """TCP latency sensor reads from health coordinator."""
+    health_info = HealthInfo(
+        health_status=HealthStatus.RESPONSIVE,
+        icmp_latency_ms=2.5,
+        tcp_latency_ms=1.6,
+        http_latency_ms=14.8,
+    )
+    coord = MagicMock()
+    coord.data = health_info
+    coord.last_update_success = True
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    entry.data = MOCK_ENTRY_DATA
+    entry.runtime_data = mock_runtime_data
+
+    sensor = TcpLatencySensor(coord, entry)
+    assert sensor.native_value == 2  # rounded from 1.6
 
 
 def test_ping_latency_caches_last_value(mock_runtime_data):

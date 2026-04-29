@@ -311,23 +311,28 @@ class TestDetectProbes:
 
 
 # =====================================================================
-# default_health_check_interval — capability-based default selection
+# default_health_check_interval — single default cadence
 # =====================================================================
 
 
 @pytest.mark.parametrize(
-    "supports_icmp,supports_head,expected,desc",
+    "supports_icmp,supports_head,desc",
     [
-        (True, True, 30, "icmp_and_head"),
-        (True, False, 30, "icmp_only"),
-        (False, True, 30, "head_only"),
-        (False, False, 60, "get_only"),
+        (True, True, "icmp_and_head"),
+        (True, False, "icmp_only"),
+        (False, True, "head_only"),
+        (False, False, "get_only"),
     ],
     ids=lambda v: v if isinstance(v, str) else "",
 )
-def test_default_health_check_interval(supports_icmp, supports_head, expected, desc):
-    """GET-only modems (no ICMP, no HEAD) get the slower 60s default."""
-    assert default_health_check_interval(supports_icmp, supports_head) == expected
+def test_default_health_check_interval(supports_icmp, supports_head, desc):
+    """Single 30s default applies regardless of probe capabilities.
+
+    All probes (ICMP, TCP, HEAD) are lightweight and the GET fallback
+    is no longer used at fast cadence, so the per-capability cadence
+    differentiation is gone.
+    """
+    assert default_health_check_interval(supports_icmp, supports_head) == 30
 
 
 # =====================================================================

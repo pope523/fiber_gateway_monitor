@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Health probes split: ICMP (L3), TCP (L4), HEAD (latency-only).**
+  Status derivation now uses ICMP + TCP only — TCP handshake to the
+  modem's web port is the L4 reachability signal. HEAD timing is
+  exposed as `http_latency_ms` for diagnostic value but does not
+  affect status. Application-layer issues surface via slow-poll.
+- **No GET fallback at fast cadence.** When a modem doesn't support
+  HEAD (`supports_head=False`), the HEAD probe is skipped entirely
+  rather than falling back to GET. GET timing on most embedded
+  modems is bimodal (cold compute path vs warm cached path) and
+  produced misleading bimodal data in the previous `HTTP Latency`
+  sensor. GET-only modems now show only Ping + TCP latency sensors;
+  the `HTTP Latency` sensor only appears when HEAD is verified at
+  install time.
+- **New `TCP Latency` sensor** (`_tcp_latency`). Always created when
+  the HTTP probe is enabled, regardless of HEAD support. Replaces
+  the conflated TCP-handshake-plus-HTTP-server-time number that the
+  old HTTP Latency sensor exposed.
+- **Single default health-check interval (30s).** The slower
+  `DEFAULT_HEALTH_CHECK_INTERVAL_GET_ONLY = 60` was removed — all
+  three probes (ICMP, TCP, HEAD) are lightweight, so the per-
+  capability cadence differentiation is no longer needed.
+
+### Added
+
+- `HealthInfo.tcp_latency_ms` field exposed in core orchestration,
+  HA diagnostics, and the new `TCP Latency` sensor.
+
 ## [3.14.0-beta.1] - 2026-04-28
 
 First public beta of v3.14. The cumulative v3.14 changeset is
