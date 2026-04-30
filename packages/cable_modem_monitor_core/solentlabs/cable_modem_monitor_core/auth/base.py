@@ -107,3 +107,14 @@ class BaseAuthManager(abc.ABC):
             session_headers: Headers from ``session.headers`` in modem.yaml.
         """
         session.headers.update(session_headers)
+
+    def headers(self) -> frozenset[str]:
+        """Lowercase names of headers this strategy puts on the wire.
+
+        Loader diagnostics treat these as redaction targets in failure
+        logs (so logs confirm presence without leaking token values).
+        Each strategy declares the headers IT introduces; ``cookie`` is
+        included by default because almost every auth strategy ends up
+        with a session cookie on the wire.
+        """
+        return frozenset({"cookie"})

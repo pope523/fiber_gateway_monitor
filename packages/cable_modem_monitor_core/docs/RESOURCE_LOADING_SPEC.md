@@ -314,6 +314,15 @@ policy (see Signal and Policy Separation in `ARCHITECTURE.md`).
 | Empty response body | Empty parsed result | Parser handles gracefully |
 | SSL handshake failure | `SSLError` | Check `legacy_ssl` flag |
 
+On any 4xx/5xx response, the loader's exception message includes the
+outgoing request shape (method, full URL with query string, and
+headers actually sent). Header values whose names are declared by
+the active auth strategy via `BaseAuthManager.headers()` are replaced
+with `<set, len=N>` so logs confirm session-token presence without
+leaking the value. Shared formatter:
+`loaders.diagnostics.describe_request`. See ARCHITECTURE_DECISIONS.md
+"Resource-load failure detail via request-shape log."
+
 ---
 
 ## HNAP Header Parsing Warning Suppression

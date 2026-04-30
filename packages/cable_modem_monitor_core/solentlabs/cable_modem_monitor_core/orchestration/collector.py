@@ -306,7 +306,7 @@ class ModemDataCollector:
         session = create_session(legacy_ssl=self._legacy_ssl)
         session_headers: dict[str, str] = {}
         if self._modem_config.session and self._modem_config.session.headers:
-            session_headers = dict(self._modem_config.session.headers)
+            session_headers = self._modem_config.session.resolved_headers(base_url=self._base_url)
         self._auth_manager.configure_session(session, session_headers)
         return session
 
@@ -403,6 +403,7 @@ class ModemDataCollector:
             detect_login_pages=self._detect_login_pages,
             model=self._modem_config.model,
             query_params=query_params,
+            headers=self._auth_manager.headers(),
         )
 
         # On session reuse, don't pass auth_result — there's no
@@ -429,6 +430,7 @@ class ModemDataCollector:
             private_key=private_key,
             hmac_algorithm=hmac_algorithm,
             timeout=self._modem_config.timeout,
+            headers=self._auth_manager.headers(),
         )
         resources = loader.fetch(self._parser_config)
         return resources, _to_resource_fetches(loader.resource_fetches)
@@ -454,6 +456,7 @@ class ModemDataCollector:
             session_cookie_name=auth.session_cookie_name,
             timeout=self._modem_config.timeout,
             model=self._modem_config.model,
+            headers=self._auth_manager.headers(),
         )
         resources = loader.fetch(targets)
         return resources, _to_resource_fetches(loader.resource_fetches)

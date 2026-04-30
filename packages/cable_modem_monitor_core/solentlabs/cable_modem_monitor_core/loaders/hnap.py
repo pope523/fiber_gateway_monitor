@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import requests
 
 from ..protocol.hnap import HNAP_ENDPOINT, HNAP_NAMESPACE, compute_auth_header
+from .diagnostics import describe_request
 
 if TYPE_CHECKING:
     from ..models.parser_config import ParserConfig
@@ -52,12 +53,14 @@ class HNAPLoader:
         private_key: str,
         hmac_algorithm: str = "md5",
         timeout: int = 10,
+        headers: frozenset[str] = frozenset(),
     ) -> None:
         self._session = session
         self._url = f"{base_url.rstrip('/')}{HNAP_ENDPOINT}"
         self._private_key = private_key
         self._hmac_algorithm = hmac_algorithm
         self._timeout = timeout
+        self._headers = headers
         self.resource_fetches: list[tuple[str, float, int, int, str]] = []
 
     def fetch(self, parser_config: ParserConfig) -> dict[str, Any]:
@@ -131,13 +134,15 @@ class HNAPLoader:
 
         if response.status_code == 401:
             raise HNAPLoadError(
-                "HNAP request returned 401 Unauthorized " "(session may have expired)",
+                "HNAP request returned 401 Unauthorized (session may have expired)"
+                f"\n  request: {describe_request(response.request, headers=self._headers)}",
                 status_code=401,
             )
 
         if response.status_code >= 400:
             raise HNAPLoadError(
-                f"HNAP request returned HTTP {response.status_code}",
+                f"HNAP request returned HTTP {response.status_code}"
+                f"\n  request: {describe_request(response.request, headers=self._headers)}",
                 status_code=response.status_code,
             )
 

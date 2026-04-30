@@ -19,6 +19,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from ..auth.base import AuthResult
+from .diagnostics import describe_request
 from .fetch_list import ResourceTarget
 
 _logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ class HTTPResourceLoader:
         detect_login_pages: bool = False,
         model: str = "",
         query_params: dict[str, str] | None = None,
+        headers: frozenset[str] = frozenset(),
     ) -> None:
         self._session = session
         self._base_url = base_url.rstrip("/")
@@ -72,6 +74,7 @@ class HTTPResourceLoader:
         self._detect_login_pages = detect_login_pages
         self._model = model
         self._query_params = query_params or {}
+        self._headers = headers
         self.resource_fetches: list[tuple[str, float, int, int, str]] = []
 
     def fetch(
@@ -155,14 +158,16 @@ class HTTPResourceLoader:
 
             if response.status_code in (401, 403):
                 raise ResourceLoadError(
-                    f"HTTP {response.status_code} on {target.path}" " — session likely expired",
+                    f"HTTP {response.status_code} on {target.path} — session likely expired"
+                    f"\n  request: {describe_request(response.request, headers=self._headers)}",
                     status_code=response.status_code,
                     path=target.path,
                 )
 
             if response.status_code >= 400:
                 raise ResourceLoadError(
-                    f"HTTP {response.status_code} fetching {target.path}",
+                    f"HTTP {response.status_code} fetching {target.path}"
+                    f"\n  request: {describe_request(response.request, headers=self._headers)}",
                     status_code=response.status_code,
                     path=target.path,
                 )

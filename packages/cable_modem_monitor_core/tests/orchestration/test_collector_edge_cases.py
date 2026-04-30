@@ -24,6 +24,7 @@ from solentlabs.cable_modem_monitor_core.models.modem_config.auth import (
     HnapAuth,
     NoneAuth,
 )
+from solentlabs.cable_modem_monitor_core.models.modem_config.session import SessionConfig
 from solentlabs.cable_modem_monitor_core.orchestration.collector import (
     ModemDataCollector,
 )
@@ -99,15 +100,12 @@ class TestSessionHeaders:
         config.transport = "http"
         config.timeout = 10
         config.auth = NoneAuth(strategy="none")
-        config.session = MagicMock()
-        config.session.max_concurrent = 0
-        config.session.headers = {"X-Custom": "value"}
+        config.session = SessionConfig(headers={"X-Custom": "value", "Referer": "{base_url}/"})
         config.actions = None
 
         collector = ModemDataCollector(config, None, None, "http://localhost", "", "")
-        # The headers should have been applied during __init__
-        # Verify by checking the session has the custom header
         assert collector._session.headers.get("X-Custom") == "value"
+        assert collector._session.headers.get("Referer") == "http://localhost/"
 
 
 # ------------------------------------------------------------------
@@ -233,6 +231,7 @@ class TestHnapResourceLoading:
             private_key="test_private_key",
             hmac_algorithm="md5",
             timeout=10,
+            headers=frozenset({"cookie", "hnap_auth"}),
         )
         assert resources == {"hnap_data": "ok"}
         assert len(fetches) == 1

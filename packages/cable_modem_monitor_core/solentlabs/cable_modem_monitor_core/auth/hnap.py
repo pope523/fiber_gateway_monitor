@@ -58,6 +58,10 @@ class HnapAuthManager(BaseAuthManager):
     def __init__(self, config: HnapAuth) -> None:
         self._hmac_algorithm = config.hmac_algorithm
 
+    def headers(self) -> frozenset[str]:
+        # HNAP_AUTH carries an HMAC signed with the per-session PrivateKey.
+        return frozenset({"cookie", "hnap_auth"})
+
     def authenticate(
         self,
         session: requests.Session,

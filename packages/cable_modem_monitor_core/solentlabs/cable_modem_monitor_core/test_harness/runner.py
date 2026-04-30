@@ -321,7 +321,7 @@ def _run_pipeline(
         auth_manager = create_auth_manager(modem_config)
         session_headers: dict[str, str] = {}
         if modem_config.session and modem_config.session.headers:
-            session_headers = dict(modem_config.session.headers)
+            session_headers = modem_config.session.resolved_headers(base_url=base_url)
         auth_manager.configure_session(
             session,
             session_headers,

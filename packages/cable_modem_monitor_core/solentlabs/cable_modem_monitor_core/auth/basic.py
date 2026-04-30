@@ -32,6 +32,9 @@ class BasicAuthManager(BaseAuthManager):
     def __init__(self, config: BasicAuth) -> None:
         self._challenge_cookie = config.challenge_cookie
 
+    def headers(self) -> frozenset[str]:
+        return frozenset({"cookie", "authorization"})
+
     def authenticate(
         self,
         session: requests.Session,

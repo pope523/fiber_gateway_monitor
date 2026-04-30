@@ -19,6 +19,7 @@ import pytest
 from pydantic import ValidationError
 from solentlabs.cable_modem_monitor_core.models.modem_config import ModemConfig
 from solentlabs.cable_modem_monitor_core.models.modem_config.actions import CbnAction, HttpAction
+from solentlabs.cable_modem_monitor_core.models.modem_config.session import SessionConfig
 
 from tests._helpers import collect_fixtures, load_fixture
 
@@ -205,3 +206,31 @@ class TestRelationships:
         assert config.actions.logout.fun == 16
         assert isinstance(config.actions.restart, CbnAction)
         assert config.actions.restart.fun == 8
+
+
+# Each row: (input headers, base_url, expected output, description-id)
+_RESOLVED_HEADERS_CASES: list[tuple[dict[str, str], str, dict[str, str], str]] = [
+    (
+        {"Referer": "{base_url}/", "Origin": "{base_url}"},
+        "http://192.168.0.1",
+        {"Referer": "http://192.168.0.1/", "Origin": "http://192.168.0.1"},
+        "substitutes {base_url}",
+    ),
+    (
+        {"X-Requested-With": "XMLHttpRequest"},
+        "http://192.168.0.1",
+        {"X-Requested-With": "XMLHttpRequest"},
+        "passes through static values",
+    ),
+    ({}, "http://x", {}, "empty headers"),
+]
+
+
+@pytest.mark.parametrize(
+    "headers,base_url,expected,desc",
+    _RESOLVED_HEADERS_CASES,
+    ids=[c[3] for c in _RESOLVED_HEADERS_CASES],
+)
+def test_session_resolved_headers(headers: dict[str, str], base_url: str, expected: dict[str, str], desc: str) -> None:
+    """SessionConfig.resolved_headers substitutes {base_url}; static values pass through."""
+    assert SessionConfig(headers=headers).resolved_headers(base_url=base_url) == expected

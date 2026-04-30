@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Arris TG3442DE (Vodafone DE) data fetch returned HTTP 400.**
+  Modem firmware enforces a `Referer` header on AJAX endpoints —
+  every working browser request in the user-supplied HAR carried it,
+  but the catalog entry didn't replay it. Adds `Referer: "{base_url}/"`
+  to the modem.yaml. Issue #86.
+
+### Added
+
+- **`{base_url}` placeholder in `session.headers`.** Header values
+  resolve at session-build time, so per-deployment URLs (different
+  user IPs) work for `Referer`/`Origin` headers that some modems
+  validate against their own origin. See MODEM_YAML_SPEC.md.
+- **Loader failure messages include outgoing request shape.** When
+  `HTTPResourceLoader`, `HNAPLoader`, or `CBNLoader` hits a 4xx/5xx,
+  the exception/warning includes method + full URL + headers sent,
+  with session-token values redacted (`<set, len=N>`). Auth strategies
+  declare their token-bearing headers via the new
+  `BaseAuthManager.headers()` method — `Basic` adds `authorization`,
+  `HNAP` adds `hnap_auth`, `form_sjcl`/`form_pbkdf2` add the
+  configured `csrf_header`, default is `cookie`. Eliminates the
+  N-round-trip "ship a theory, user retries, fail, repeat" loop
+  that #86 spent four alphas on. See ARCHITECTURE_DECISIONS.md
+  "Resource-load failure detail via request-shape log."
+
 ### Changed
 
 - **Health probes split: ICMP (L3), TCP (L4), HEAD (latency-only).**

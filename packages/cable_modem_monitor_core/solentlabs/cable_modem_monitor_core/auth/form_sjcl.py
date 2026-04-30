@@ -66,6 +66,12 @@ class FormSjclAuthManager(BaseAuthManager):
     def __init__(self, config: FormSjclAuth) -> None:
         self._config = config
 
+    def headers(self) -> frozenset[str]:
+        names = {"cookie"}
+        if self._config.csrf_header:
+            names.add(self._config.csrf_header.lower())
+        return frozenset(names)
+
     def authenticate(
         self,
         session: requests.Session,

@@ -24,6 +24,10 @@ session:
   headers:
     X-Requested-With: "XMLHttpRequest"
     csrfNonce: "undefined"
+    # Modem rejects AJAX requests without a Referer matching its own
+    # origin — HTTP 400 on data fetches. {base_url} resolves at session
+    # build time to handle per-deployment host differences. See #86.
+    Referer: "{base_url}/"
   # Arris firmware's base.js adds _n=<random> to every AJAX request
   # via $.ajaxPrefilter. Server returns 400 without it. Value is a
   # client-side cache-buster — server checks presence, not content.

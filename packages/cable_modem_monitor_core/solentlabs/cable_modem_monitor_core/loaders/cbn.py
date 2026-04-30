@@ -23,6 +23,7 @@ from xml.etree.ElementTree import Element, ParseError
 import defusedxml.ElementTree as DefusedET
 import requests
 
+from .diagnostics import describe_request
 from .fetch_list import ResourceTarget
 
 _logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class CBNLoader:
         session_cookie_name: str,
         timeout: int,
         model: str,
+        headers: frozenset[str] = frozenset(),
     ) -> None:
         self._session = session
         self._base_url = base_url
@@ -59,6 +61,7 @@ class CBNLoader:
         self._cookie_name = session_cookie_name
         self._timeout = timeout
         self._model = model
+        self._headers = headers
         self.resource_fetches: list[tuple[str, float, int, int, str]] = []
 
     def fetch(
@@ -124,10 +127,11 @@ class CBNLoader:
 
         if not response.ok:
             _logger.warning(
-                "CBN fetch HTTP %d for fun=%s [%s]",
+                "CBN fetch HTTP %d for fun=%s [%s]\n  request: %s",
                 response.status_code,
                 fun,
                 self._model,
+                describe_request(response.request, headers=self._headers),
             )
             return None
 

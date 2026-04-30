@@ -295,6 +295,39 @@ left intact in the snippet — they are protocol-shaped, not the
 user's secret, and they're often the diagnostic signal a
 maintainer needs to confirm the strategy ran.
 
+### Resource-load failure detail via request-shape log
+
+**Decision:** When a loader (HTTP, HNAP, CBN) raises or warns on a
+4xx/5xx response, the failure message includes the actual outgoing
+request shape — method, full URL with query string, and headers
+sent. Header values whose lowercase name is declared by the active
+auth strategy via ``BaseAuthManager.headers()`` are replaced with
+``<set, len=N>``; everything else is verbatim. Implemented as a
+shared ``loaders.diagnostics.describe_request`` helper consumed by
+all three loader modules.
+
+**Rationale:** Auth-phase failures already had detail (see prior
+decision). Resource-phase failures didn't — the message was
+``"HTTP 400 fetching /php/status_docsis_data.php"``. Issue #86
+spent four alpha cycles on a TG3442DE 400 because each iteration
+shipped a theory ("must be ``_n`` cache-buster", "must be
+``ajaxSet_Session``"), the modem rejected the next attempt, and
+nothing in the user's log told us *what we actually sent vs what
+the browser sends*. The browser's HAR was ground truth; our side
+had no symmetric artifact. Including the request shape in the
+loader's exception message means the contributor's first failure
+log paste IS the diff input.
+
+**Constrains:** Auth strategies own which header names carry
+session tokens — they declare them via ``BaseAuthManager.headers()``
+(default ``frozenset({"cookie"})``; ``Basic`` adds
+``authorization``; ``HNAP`` adds ``hnap_auth``; ``form_sjcl`` /
+``form_pbkdf2`` add the configured ``csrf_header``). Loaders treat
+this set as opaque — a Core-layer ``headers`` parameter, no
+"sensitive" qualifier in the loader API. The wire request is never
+modified; redaction only applies when ``describe_request`` formats
+the failure log line.
+
 ---
 
 ## Parsing Architecture

@@ -21,3 +21,13 @@ class SessionConfig(BaseModel):
     max_concurrent: int = 0
     headers: dict[str, str] = Field(default_factory=dict)
     query_params: dict[str, str] = Field(default_factory=dict)
+
+    def resolved_headers(self, *, base_url: str) -> dict[str, str]:
+        """Return headers with ``{base_url}`` placeholder substituted.
+
+        Some modems' AJAX endpoints validate Referer/Origin against the
+        modem's own URL. Since base_url is per-deployment (each user has
+        a different host), the YAML uses ``{base_url}`` as a placeholder
+        that resolves at session-build time.
+        """
+        return {k: v.replace("{base_url}", base_url) for k, v in self.headers.items()}

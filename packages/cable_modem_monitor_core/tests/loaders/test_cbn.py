@@ -64,6 +64,7 @@ def _mock_response(
     resp.content = content or text.encode()
     resp.ok = ok if ok is not None else (200 <= status_code < 400)
     resp.headers = {"Content-Type": "text/xml"}
+    resp.request = None
     return resp
 
 
