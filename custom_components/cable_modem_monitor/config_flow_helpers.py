@@ -393,18 +393,20 @@ def _run_validation(
     """Execute the full validation pipeline (sync — runs in executor).
 
     Pipeline:
-        1. Protocol detection (HTTP/HTTPS/legacy SSL)
+        1. Protocol detection (TCP probe :80 and :443; TLS handshake
+           on :443 picks ``legacy_ssl`` from the negotiated version)
         2. Load modem + parser config from catalog
         2a. Detect form_nonce credential encoding (pre-fetch)
         3. Test data collection (one poll)
-        3a. Protocol retry (UC-85) if auth fails on HTTP
         4. Health-probe discovery (ICMP, HTTP HEAD)
         5. Build and return config entry dict
 
-    On auth failure, the collector emits a single sanitized WARNING
-    with the modem's response — that's the diagnostic surface for
-    "stuck-in-setup" users. Reauth and options flows run through
-    this same pipeline and benefit from the same log.
+    Authentication runs exactly once. If it fails, the collector's
+    sanitized WARNING records the modem's response and the failure
+    is surfaced to the user — there is no protocol-retry chain
+    (see UC-86: credential failure means immediate stop). Reauth
+    and options flows run through this same pipeline and benefit
+    from the same log.
 
     Args:
         host: Bare hostname/IP (no protocol prefix).
@@ -423,21 +425,18 @@ def _run_validation(
         RuntimeError: Parse/collection failed.
     """
     # -- Step 1: Protocol detection -------------------------------------------
-    auto_detected_http = False
-    if protocol:
-        # User specified protocol — skip detection
-        base_url = f"{protocol}://{host}"
-        legacy_ssl = False
-        _LOGGER.info("Using user-specified protocol: %s", protocol)
-    else:
-        conn: ConnectivityResult = detect_protocol(host)
-        if not conn.success:
-            raise ConnectionError(conn.error or f"Cannot connect to {host}")
-        base_url = conn.working_url or f"http://{host}"
-        protocol = conn.protocol or "http"
-        legacy_ssl = conn.legacy_ssl
-        auto_detected_http = protocol == "http"
-        _LOGGER.info("Protocol detected: %s (legacy_ssl=%s)", protocol, legacy_ssl)
+    # Probe both ports; let detect_protocol's TLS handshake observe
+    # whether the modem speaks legacy TLS. User-specified protocols
+    # restrict the probe to that transport but still drive the same
+    # legacy_ssl observation when HTTPS is chosen.
+    probe_input = f"{protocol}://{host}" if protocol else host
+    conn: ConnectivityResult = detect_protocol(probe_input)
+    if not conn.success:
+        raise ConnectionError(conn.error or f"Cannot connect to {host}")
+    base_url = conn.working_url or f"http://{host}"
+    protocol = conn.protocol or "http"
+    legacy_ssl = conn.legacy_ssl
+    _LOGGER.info("Protocol detected: %s (legacy_ssl=%s)", protocol, legacy_ssl)
 
     # -- Step 2: Load config from catalog -------------------------------------
     modem_yaml = (modem_dir / f"modem-{variant}.yaml") if variant else (modem_dir / "modem.yaml")
@@ -454,6 +453,11 @@ def _run_validation(
     )
 
     # -- Step 3: Test data collection -----------------------------------------
+    # Single attempt against the chosen transport. UC-86: if the modem
+    # rejects credentials, surface the real error immediately — never
+    # retry, since retries on single-session firmware would collide
+    # with our own previous attempt and obscure the original failure.
+    auth_signals = (CollectorSignal.AUTH_FAILED, CollectorSignal.AUTH_LOCKOUT, CollectorSignal.LOAD_AUTH)
     result = _attempt_validation(
         modem_config=modem_config,
         parser_config=parser_config,
@@ -463,45 +467,6 @@ def _run_validation(
         password=password,
         legacy_ssl=legacy_ssl,
     )
-
-    # -- Step 3a: Protocol retry (UC-85) --------------------------------------
-    # Some modems respond on HTTP (port 80) but only authenticate over HTTPS.
-    # If auth failed on auto-detected HTTP, retry with HTTPS before giving up.
-    auth_signals = (CollectorSignal.AUTH_FAILED, CollectorSignal.AUTH_LOCKOUT, CollectorSignal.LOAD_AUTH)
-    if not result.success and auto_detected_http and result.signal in auth_signals:
-        _LOGGER.info("Auth failed on auto-detected HTTP — retrying with HTTPS")
-        http_result = result  # preserve the original auth error for fallback
-        https_url = f"https://{host}"
-        result = _attempt_validation(
-            modem_config=modem_config,
-            parser_config=parser_config,
-            post_processor=post_processor,
-            base_url=https_url,
-            username=username,
-            password=password,
-            legacy_ssl=False,
-        )
-        if result.success:
-            base_url, protocol, legacy_ssl = https_url, "https", False
-        elif result.signal in auth_signals:
-            # HTTPS with modern ciphers also failed — try legacy SSL
-            _LOGGER.info("HTTPS also failed — retrying with legacy SSL ciphers")
-            result = _attempt_validation(
-                modem_config=modem_config,
-                parser_config=parser_config,
-                post_processor=post_processor,
-                base_url=https_url,
-                username=username,
-                password=password,
-                legacy_ssl=True,
-            )
-            if result.success:
-                base_url, protocol, legacy_ssl = https_url, "https", True
-        elif result.signal == CollectorSignal.CONNECTIVITY:
-            # HTTPS not available — restore the original HTTP auth error
-            # so the user sees "Login failed" instead of "Modem not responding"
-            _LOGGER.info("HTTPS not available — using original HTTP auth result")
-            result = http_result
 
     if not result.success:
         _raise_validation_failure(result, auth_signals)

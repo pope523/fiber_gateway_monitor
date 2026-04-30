@@ -15,6 +15,7 @@ See CONFIG_FLOW_SPEC.md § Step 4 for the validation pipeline.
 from __future__ import annotations
 
 import logging
+import socket
 import ssl
 import subprocess
 from dataclasses import dataclass
@@ -123,6 +124,11 @@ def create_session(*, legacy_ssl: bool = False) -> requests.Session:
 # Protocol detection
 # ---------------------------------------------------------------------------
 
+# TLS protocol versions classed as "legacy" — the modem's stack is old
+# enough that runtime sessions need ``LegacySSLAdapter`` mounted.
+# ``sock.version()`` returns one of these literal strings.
+_LEGACY_TLS_VERSIONS = frozenset({"SSLv2", "SSLv3", "TLSv1", "TLSv1.1"})
+
 
 @dataclass
 class ConnectivityResult:
@@ -131,7 +137,9 @@ class ConnectivityResult:
     Attributes:
         success: True if the modem responded to at least one probe.
         protocol: ``"http"`` or ``"https"`` — whichever worked first.
-        legacy_ssl: True if HTTPS required ``SECLEVEL=0`` ciphers.
+        legacy_ssl: True if the modem negotiated TLS 1.1 or older —
+            runtime callers must mount :class:`LegacySSLAdapter` so
+            HTTPS sessions allow the same ciphers.
         working_url: Full URL that responded (e.g. ``https://192.168.100.1``).
         error: Human-readable message when ``success`` is False.
     """
@@ -143,6 +151,107 @@ class ConnectivityResult:
     error: str | None = None
 
 
+def _tcp_probe(host: str, port: int, timeout: float) -> bool:
+    """Return True if ``host:port`` accepts a TCP connection.
+
+    Pinned to IPv4 — most consumer cable modems are IPv4-only on the
+    LAN side, and a dual-stack ``getaddrinfo`` may otherwise return
+    IPv6 first and false-fail the probe before falling back to v4.
+    """
+    try:
+        infos = socket.getaddrinfo(host, port, family=socket.AF_INET, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        _logger.debug("TCP probe %s:%d — address resolution failed: %s", host, port, exc)
+        return False
+
+    for family, socktype, proto, _canon, sockaddr in infos:
+        sock = socket.socket(family, socktype, proto)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(sockaddr)
+            return True
+        except (OSError, TimeoutError) as exc:
+            _logger.debug("TCP probe %s:%d failed: %s", host, port, exc)
+        finally:
+            sock.close()
+    return False
+
+
+def _tls_handshake(host: str, port: int, timeout: float) -> tuple[bool, bool]:
+    """Open a TLS connection with broad ciphers and report what got negotiated.
+
+    Uses a ``SECLEVEL=0`` cipher context so the handshake succeeds
+    regardless of the modem's TLS age — the runtime adapter decision
+    is driven by the *negotiated* protocol version, not by what we
+    tried first.
+
+    Returns:
+        ``(handshake_ok, legacy_negotiated)``. ``legacy_negotiated``
+        is True when the modem chose TLS 1.1 or older.
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.set_ciphers(LEGACY_CIPHERS)
+
+    try:
+        with (
+            socket.create_connection((host, port), timeout=timeout) as raw_sock,
+            context.wrap_socket(raw_sock, server_hostname=host) as tls_sock,
+        ):
+            version = tls_sock.version() or ""
+            legacy = version in _LEGACY_TLS_VERSIONS
+            _logger.info(
+                "TLS probe %s:%d — negotiated %s%s",
+                host,
+                port,
+                version or "unknown",
+                " (legacy)" if legacy else "",
+            )
+            return (True, legacy)
+    except (ssl.SSLError, OSError, TimeoutError) as exc:
+        _logger.debug("TLS handshake to %s:%d failed: %s", host, port, exc)
+        return (False, False)
+
+
+def _strip_protocol(host: str) -> tuple[str | None, str]:
+    """Split an optional protocol prefix from a host string.
+
+    Returns ``(protocol, bare_host)``. ``protocol`` is ``"http"`` or
+    ``"https"`` if the input had a prefix, else None. ``bare_host``
+    may still include a ``:port`` suffix.
+    """
+    for prefix, name in (("http://", "http"), ("https://", "https")):
+        if host.startswith(prefix):
+            bare = host[len(prefix) :].split("/", 1)[0]
+            return (name, bare)
+    return (None, host.split("/", 1)[0])
+
+
+def _split_host_port(host: str) -> tuple[str, int | None]:
+    """Split ``host:port`` into ``(hostname, port)``.
+
+    Returns ``(host, None)`` when the input has no port suffix.
+    Bracketed IPv6 literals (``[::1]:8080``) are handled — the
+    bracket form is the only safe way to disambiguate IPv6 from a
+    bare ``host:port`` colon.
+    """
+    if host.startswith("["):
+        end = host.find("]")
+        if end == -1:
+            return (host, None)
+        hostname = host[1:end]
+        tail = host[end + 1 :]
+        if tail.startswith(":") and tail[1:].isdigit():
+            return (hostname, int(tail[1:]))
+        return (hostname, None)
+    if ":" in host:
+        head, _, tail = host.rpartition(":")
+        if tail.isdigit():
+            return (head, int(tail))
+    return (host, None)
+
+
 def detect_protocol(
     host: str,
     *,
@@ -150,70 +259,83 @@ def detect_protocol(
 ) -> ConnectivityResult:
     """Detect the working protocol for a modem.
 
-    Tries HTTP first (most cable modems are HTTP-only), then HTTPS,
-    then HTTPS with legacy SSL ciphers (``SECLEVEL=0``).  Any HTTP
-    response — even 401 or 403 — counts as "reachable".
+    Probes TCP ``:80`` and ``:443``. If ``:443`` accepts connections
+    *and* completes a TLS handshake, prefers HTTPS — modems that
+    expose both ports almost always intend HTTPS for authenticated
+    traffic, and ``:80`` is typically a redirect or legacy stub.
+
+    Sets ``legacy_ssl`` from the negotiated TLS protocol version
+    rather than from a failed-and-retried-with-weaker-ciphers
+    inference. The runtime ``LegacySSLAdapter`` decision is driven
+    by what the modem actually picked.
 
     If *host* already includes a protocol prefix (``http://`` or
-    ``https://``), only that protocol is tried.
+    ``https://``), only that transport is probed — the user has
+    explicitly chosen.
 
     Args:
         host: IP address, hostname, or full URL.
-        timeout: Per-request timeout in seconds.
+        timeout: Per-probe timeout in seconds (applied to each TCP
+            probe and the TLS handshake separately).
 
     Returns:
-        :class:`ConnectivityResult` with the first working protocol.
+        :class:`ConnectivityResult` describing the chosen transport.
     """
-    if host.startswith(("http://", "https://")):
-        urls = [host]
-    else:
-        urls = [f"http://{host}", f"https://{host}"]
+    explicit_protocol, bare_host = _strip_protocol(host)
+    hostname, port_override = _split_host_port(bare_host)
+    http_port = port_override or 80
+    https_port = port_override or 443
+    url_host = bare_host  # preserves any user-supplied :port
 
-    _logger.info("Protocol detection: trying %s", urls)
+    _logger.info(
+        "Protocol detection: probing %s%s",
+        url_host,
+        f" (user-specified {explicit_protocol})" if explicit_protocol else "",
+    )
 
-    for url in urls:
-        protocol = "https" if url.startswith("https://") else "http"
+    http_open = False
+    if explicit_protocol in (None, "http"):
+        http_open = _tcp_probe(hostname, http_port, timeout)
 
-        # -- Normal attempt ---------------------------------------------------
-        try:
-            session = create_session()
-            try:
-                session.head(url, timeout=timeout, allow_redirects=True)
-            except requests.exceptions.SSLError:
-                raise  # Let outer handler attempt legacy SSL fallback
-            except requests.RequestException:
-                session.get(url, timeout=timeout, allow_redirects=True)
+    https_open = False
+    legacy_ssl = False
+    if explicit_protocol in (None, "https") and _tcp_probe(hostname, https_port, timeout):
+        https_open, legacy_ssl = _tls_handshake(hostname, https_port, timeout)
 
-            _logger.info("Protocol detection: %s reachable", url)
-            return ConnectivityResult(
-                success=True,
-                protocol=protocol,
-                working_url=url,
-            )
+    if https_open:
+        url = f"https://{url_host}"
+        _logger.info(
+            "Protocol detection: HTTPS reachable%s — using %s",
+            " (legacy TLS)" if legacy_ssl else "",
+            url,
+        )
+        return ConnectivityResult(
+            success=True,
+            protocol="https",
+            legacy_ssl=legacy_ssl,
+            working_url=url,
+        )
+    if http_open:
+        url = f"http://{url_host}"
+        _logger.info("Protocol detection: HTTP reachable — using %s", url)
+        return ConnectivityResult(
+            success=True,
+            protocol="http",
+            working_url=url,
+        )
 
-        except requests.exceptions.SSLError:
-            # -- Legacy SSL fallback ------------------------------------------
-            if protocol == "https":
-                try:
-                    legacy = create_session(legacy_ssl=True)
-                    legacy.get(url, timeout=timeout, allow_redirects=True)
-                    _logger.info("Protocol detection: %s reachable (legacy SSL)", url)
-                    return ConnectivityResult(
-                        success=True,
-                        protocol=protocol,
-                        legacy_ssl=True,
-                        working_url=url,
-                    )
-                except (requests.RequestException, OSError) as exc:
-                    _logger.debug("Legacy SSL also failed for %s: %s", url, exc)
-
-        except (requests.RequestException, OSError) as exc:
-            _logger.debug("Protocol detection: %s failed: %s", url, exc)
-            continue
-
+    tried = (
+        f"TCP {hostname}:{http_port}"
+        if explicit_protocol == "http"
+        else (
+            f"TCP {hostname}:{https_port} (TLS handshake)"
+            if explicit_protocol == "https"
+            else f"TCP {hostname}:{http_port} and {hostname}:{https_port}"
+        )
+    )
     return ConnectivityResult(
         success=False,
-        error=f"Cannot connect to modem at {host}. Tried: {', '.join(urls)}",
+        error=f"Cannot connect to modem at {url_host}. Tried: {tried}.",
     )
 
 

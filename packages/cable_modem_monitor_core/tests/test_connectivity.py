@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 import requests
 
 # Alias to avoid pytest collecting these as test functions
@@ -16,131 +17,302 @@ from solentlabs.cable_modem_monitor_core.connectivity import (
     test_icmp as probe_icmp,
 )
 
+_MODULE = "solentlabs.cable_modem_monitor_core.connectivity"
+
 # =====================================================================
 # detect_protocol()
 # =====================================================================
-
-# ┌──────────────────────┬──────────────┬───────────┬────────────────────┐
-# │ scenario             │ http resp    │ https     │ expected           │
-# ├──────────────────────┼──────────────┼───────────┼────────────────────┤
-# │ http_works           │ 200          │ —         │ http, no legacy    │
-# │ http_401             │ 401          │ —         │ http, no legacy    │
-# │ https_only           │ ConnErr      │ 200       │ https, no legacy   │
-# │ https_legacy         │ ConnErr      │ SSLError  │ https, legacy=True │
-# │ all_fail             │ ConnErr      │ ConnErr   │ success=False      │
-# │ explicit_https       │ —            │ 200       │ https, no legacy   │
-# └──────────────────────┴──────────────┴───────────┴────────────────────┘
+#
+# Protocol detection probes TCP :80 and :443. If :443 accepts a TCP
+# connection AND completes a TLS handshake, HTTPS wins — modems that
+# expose both ports almost always intend HTTPS for authenticated
+# traffic. ``legacy_ssl`` is set from the negotiated TLS version, not
+# from a failed-and-retried inference.
+#
+# Scenario list lives in ``DETECT_PROTOCOL_CASES`` below — adding a
+# row adds a test.
 
 
+# Each row drives one full detect_protocol() invocation. ``tls_outcome``
+# is None when the TLS handshake is not expected to run (either because
+# :443 was closed or the user pinned http://…). When set, it's the
+# ``(handshake_ok, legacy_negotiated)`` tuple ``_tls_handshake`` returns.
+_DetectCase = tuple[
+    str,  # description
+    str,  # input host
+    bool,  # :80 open?
+    bool,  # :443 open?
+    tuple[bool, bool] | None,  # _tls_handshake mock return; None if not called
+    bool,  # expected success
+    str | None,  # expected protocol
+    bool,  # expected legacy_ssl
+    str | None,  # expected working_url ("…" or None)
+    list[int],  # expected ports passed to _tcp_probe
+]
+
+# fmt: off
+DETECT_PROTOCOL_CASES: list[_DetectCase] = [
+    ("http_only",
+     "192.168.100.1",  True,  False, None,
+     True,  "http",  False, "http://192.168.100.1",  [80, 443]),
+    ("https_modern_preferred",
+     "192.168.100.1",  True,  True,  (True, False),
+     True,  "https", False, "https://192.168.100.1", [80, 443]),
+    ("https_legacy_negotiated",
+     "192.168.100.1",  False, True,  (True, True),
+     True,  "https", True,  "https://192.168.100.1", [80, 443]),
+    ("https_handshake_fails_falls_back_to_http",
+     "192.168.100.1",  True,  True,  (False, False),
+     True,  "http",  False, "http://192.168.100.1",  [80, 443]),
+    ("https_only",
+     "192.168.100.1",  False, True,  (True, False),
+     True,  "https", False, "https://192.168.100.1", [80, 443]),
+    ("https_open_but_handshake_fails_no_http",
+     "192.168.100.1",  False, True,  (False, False),
+     False, None,    False, None,                     [80, 443]),
+    ("both_ports_closed",
+     "192.168.100.1",  False, False, None,
+     False, None,    False, None,                     [80, 443]),
+    ("explicit_http_skips_tls_probe",
+     "http://192.168.100.1", True, True, None,
+     True,  "http",  False, "http://192.168.100.1",  [80]),
+    ("explicit_https_skips_http_probe",
+     "https://192.168.100.1", True, True, (True, False),
+     True,  "https", False, "https://192.168.100.1", [443]),
+    ("explicit_http_with_port_probes_only_that_port",
+     "http://127.0.0.1:36771", True, False, None,
+     True,  "http",  False, "http://127.0.0.1:36771", [36771]),
+    ("explicit_https_with_port_probes_only_that_port",
+     "https://127.0.0.1:8443", False, True, (True, False),
+     True,  "https", False, "https://127.0.0.1:8443", [8443]),
+]
+# fmt: on
+
+
+@pytest.mark.parametrize(
+    "description, host, port_80_open, port_443_open, tls_outcome, "
+    "expected_success, expected_protocol, expected_legacy_ssl, "
+    "expected_working_url, expected_tcp_ports",
+    DETECT_PROTOCOL_CASES,
+    ids=[c[0] for c in DETECT_PROTOCOL_CASES],
+)
 class TestDetectProtocol:
-    """Protocol detection with mocked network I/O."""
+    """Protocol detection — one row per scenario in DETECT_PROTOCOL_CASES."""
 
-    def _mock_session(self, head_effect: object = None, get_effect: object = None) -> MagicMock:
-        """Create a mock session with configurable head/get behavior."""
-        session = MagicMock()
-        session.verify = False
+    def test_detection_outcome(
+        self,
+        description: str,
+        host: str,
+        port_80_open: bool,
+        port_443_open: bool,
+        tls_outcome: tuple[bool, bool] | None,
+        expected_success: bool,
+        expected_protocol: str | None,
+        expected_legacy_ssl: bool,
+        expected_working_url: str | None,
+        expected_tcp_ports: list[int],
+    ) -> None:
+        """One detect_protocol() invocation per row."""
+        tcp_calls: list[int] = []
 
-        if head_effect is not None:
-            if isinstance(head_effect, Exception):
-                session.head.side_effect = head_effect
-            else:
-                resp = MagicMock()
-                resp.status_code = head_effect
-                session.head.return_value = resp
+        def tcp_side_effect(host: str, port: int, timeout: float) -> bool:
+            tcp_calls.append(port)
+            # When user provides a custom port, both http_port and
+            # https_port collapse to it. The row's port_80_open /
+            # port_443_open booleans then map by *intent*: for an
+            # http://-prefixed input, port_80_open governs the user
+            # port; for an https://-prefixed input, port_443_open
+            # governs it. detect_protocol only probes one port in
+            # the explicit-prefix case, so this disambiguates cleanly.
+            if port == 80:
+                return port_80_open
+            if port == 443:
+                return port_443_open
+            # Custom (non-default) port — return whichever side is
+            # marked open in the row. The cases that exercise this
+            # path always set exactly one side True.
+            return port_443_open if port_443_open else port_80_open
 
-        if get_effect is not None:
-            if isinstance(get_effect, Exception):
-                session.get.side_effect = get_effect
-            else:
-                resp = MagicMock()
-                resp.status_code = get_effect
-                session.get.return_value = resp
-
-        return session
-
-    @patch("solentlabs.cable_modem_monitor_core.connectivity.create_session")
-    def test_http_works(self, mock_create: MagicMock) -> None:
-        """HTTP 200 response detected as http protocol."""
-        mock_create.return_value = self._mock_session(head_effect=200)
-
-        result = detect_protocol("192.168.100.1")
-
-        assert result.success is True
-        assert result.protocol == "http"
-        assert result.legacy_ssl is False
-        assert result.working_url == "http://192.168.100.1"
-
-    @patch("solentlabs.cable_modem_monitor_core.connectivity.create_session")
-    def test_http_401_is_reachable(self, mock_create: MagicMock) -> None:
-        """HTTP 401 counts as reachable (auth required, but modem is up)."""
-        mock_create.return_value = self._mock_session(head_effect=401)
-
-        result = detect_protocol("192.168.100.1")
-
-        assert result.success is True
-        assert result.protocol == "http"
-
-    @patch("solentlabs.cable_modem_monitor_core.connectivity.create_session")
-    def test_https_fallback(self, mock_create: MagicMock) -> None:
-        """When HTTP fails, HTTPS fallback works."""
-        http_session = self._mock_session(
-            head_effect=requests.exceptions.ConnectionError(),
-            get_effect=requests.exceptions.ConnectionError(),
+        tls_patch = (
+            patch(f"{_MODULE}._tls_handshake", return_value=tls_outcome)
+            if tls_outcome is not None
+            else patch(f"{_MODULE}._tls_handshake")
         )
-        https_session = self._mock_session(head_effect=200)
-        mock_create.side_effect = [http_session, https_session]
+        with (
+            patch(f"{_MODULE}._tcp_probe", side_effect=tcp_side_effect),
+            tls_patch as tls,
+        ):
+            result = detect_protocol(host)
 
-        result = detect_protocol("192.168.100.1")
+        assert result.success is expected_success, description
+        assert result.protocol == expected_protocol, description
+        assert result.legacy_ssl is expected_legacy_ssl, description
+        if expected_working_url is None:
+            assert result.working_url is None, description
+            assert result.error is not None, description
+        else:
+            assert result.working_url == expected_working_url, description
 
-        assert result.success is True
-        assert result.protocol == "https"
-        assert result.legacy_ssl is False
+        assert tcp_calls == expected_tcp_ports, description
 
-    @patch("solentlabs.cable_modem_monitor_core.connectivity.create_session")
-    def test_https_legacy_ssl(self, mock_create: MagicMock) -> None:
-        """Legacy SSL fallback when HTTPS with modern ciphers fails."""
-        http_session = self._mock_session(
-            head_effect=requests.exceptions.ConnectionError(),
-            get_effect=requests.exceptions.ConnectionError(),
-        )
-        https_session = self._mock_session(
-            head_effect=requests.exceptions.SSLError("handshake failure"),
-        )
-        legacy_session = self._mock_session(get_effect=200)
-        mock_create.side_effect = [http_session, https_session, legacy_session]
+        if tls_outcome is None:
+            tls.assert_not_called()
+        else:
+            tls.assert_called_once()
 
-        result = detect_protocol("192.168.100.1")
 
-        assert result.success is True
-        assert result.protocol == "https"
-        assert result.legacy_ssl is True
+# =====================================================================
+# _strip_protocol() — pure helper, exhaustive table
+# =====================================================================
 
-    @patch("solentlabs.cable_modem_monitor_core.connectivity.create_session")
-    def test_all_fail(self, mock_create: MagicMock) -> None:
-        """All protocols fail returns success=False."""
-        fail_session = self._mock_session(
-            head_effect=requests.exceptions.ConnectionError(),
-            get_effect=requests.exceptions.ConnectionError(),
-        )
-        mock_create.return_value = fail_session
+# fmt: off
+_STRIP_PROTOCOL_CASES = [
+    ("bare_ip",                   "192.168.100.1",            (None,    "192.168.100.1")),
+    ("bare_hostname",             "modem.local",              (None,    "modem.local")),
+    ("http_prefix",               "http://192.168.100.1",     ("http",  "192.168.100.1")),
+    ("https_prefix",              "https://192.168.100.1",    ("https", "192.168.100.1")),
+    ("http_with_path",            "http://192.168.100.1/x",   ("http",  "192.168.100.1")),
+    ("https_with_path_and_query", "https://m.local/a?b=1",    ("https", "m.local")),
+    ("bare_ip_with_path",         "192.168.100.1/login",      (None,    "192.168.100.1")),
+    ("http_with_port",            "http://192.168.100.1:8080", ("http", "192.168.100.1:8080")),
+]
+# fmt: on
 
-        result = detect_protocol("192.168.100.1")
 
-        assert result.success is False
-        assert result.error is not None
-        assert "192.168.100.1" in result.error
+@pytest.mark.parametrize(
+    "description, host, expected",
+    _STRIP_PROTOCOL_CASES,
+    ids=[c[0] for c in _STRIP_PROTOCOL_CASES],
+)
+def test_strip_protocol(description: str, host: str, expected: tuple[str | None, str]) -> None:
+    """_strip_protocol returns (protocol, bare_host_with_optional_port)."""
+    from solentlabs.cable_modem_monitor_core.connectivity import _strip_protocol
 
-    @patch("solentlabs.cable_modem_monitor_core.connectivity.create_session")
-    def test_explicit_protocol_skips_detection(self, mock_create: MagicMock) -> None:
-        """User-specified protocol prefix — only that protocol is tried."""
-        mock_create.return_value = self._mock_session(head_effect=200)
+    assert _strip_protocol(host) == expected, description
 
-        result = detect_protocol("https://192.168.100.1")
 
-        assert result.success is True
-        assert result.protocol == "https"
-        # Only one session created (not two for http + https)
-        assert mock_create.call_count == 1
+# =====================================================================
+# _split_host_port() — pure helper, exhaustive table
+# =====================================================================
+
+# fmt: off
+_SPLIT_HOST_PORT_CASES = [
+    ("ipv4_no_port",             "192.168.100.1",        ("192.168.100.1", None)),
+    ("ipv4_with_port",           "192.168.100.1:8080",   ("192.168.100.1", 8080)),
+    ("hostname_no_port",         "modem.local",          ("modem.local",   None)),
+    ("hostname_with_port",       "modem.local:8443",     ("modem.local",   8443)),
+    ("loopback_with_high_port",  "127.0.0.1:36771",      ("127.0.0.1",     36771)),
+    ("ipv6_bracketed_no_port",   "[::1]",                ("::1",           None)),
+    ("ipv6_bracketed_with_port", "[::1]:8080",           ("::1",           8080)),
+    ("ipv6_bracketed_partial",   "[::1",                 ("[::1",          None)),  # malformed — pass through
+    ("trailing_colon_no_port",   "host:",                ("host:",         None)),  # not a digit suffix
+]
+# fmt: on
+
+
+@pytest.mark.parametrize(
+    "description, host, expected",
+    _SPLIT_HOST_PORT_CASES,
+    ids=[c[0] for c in _SPLIT_HOST_PORT_CASES],
+)
+def test_split_host_port(description: str, host: str, expected: tuple[str, int | None]) -> None:
+    """_split_host_port returns (hostname, port|None) preserving IPv6 bracket form."""
+    from solentlabs.cable_modem_monitor_core.connectivity import _split_host_port
+
+    assert _split_host_port(host) == expected, description
+
+
+class TestTcpProbe:
+    """Direct tests for _tcp_probe — covers IPv4 pinning and timeout."""
+
+    @patch(f"{_MODULE}.socket.getaddrinfo")
+    def test_resolution_failure_returns_false(self, mock_gai: MagicMock) -> None:
+        from solentlabs.cable_modem_monitor_core.connectivity import _tcp_probe
+
+        mock_gai.side_effect = OSError("name not known")
+        assert _tcp_probe("nope.invalid", 80, timeout=1.0) is False
+
+    @patch(f"{_MODULE}.socket.socket")
+    @patch(f"{_MODULE}.socket.getaddrinfo")
+    def test_pins_to_ipv4(self, mock_gai: MagicMock, mock_socket: MagicMock) -> None:
+        """getaddrinfo is called with AF_INET — never IPv6."""
+        import socket as _socket
+
+        from solentlabs.cable_modem_monitor_core.connectivity import _tcp_probe
+
+        mock_gai.return_value = [
+            (
+                _socket.AF_INET,
+                _socket.SOCK_STREAM,
+                0,
+                "",
+                ("192.168.100.1", 80),
+            )
+        ]
+        # Avoid touching the real network
+        mock_socket.return_value.connect.return_value = None
+
+        _tcp_probe("192.168.100.1", 80, timeout=1.0)
+
+        mock_gai.assert_called_once()
+        call_kwargs = mock_gai.call_args.kwargs
+        assert call_kwargs.get("family") == _socket.AF_INET
+
+
+class TestTlsHandshake:
+    """Direct tests for _tls_handshake — TLS version classification."""
+
+    @pytest.mark.parametrize(
+        "negotiated_version,expected_legacy",
+        [
+            ("TLSv1.3", False),
+            ("TLSv1.2", False),
+            ("TLSv1.1", True),
+            ("TLSv1", True),
+            ("SSLv3", True),
+        ],
+    )
+    @patch(f"{_MODULE}.socket.create_connection")
+    @patch(f"{_MODULE}.ssl.SSLContext")
+    def test_version_classification(
+        self,
+        mock_context_cls: MagicMock,
+        mock_create_conn: MagicMock,
+        negotiated_version: str,
+        expected_legacy: bool,
+    ) -> None:
+        from solentlabs.cable_modem_monitor_core.connectivity import _tls_handshake
+
+        # ``with create_connection(...) as raw_sock``
+        raw_sock = MagicMock()
+        mock_create_conn.return_value.__enter__.return_value = raw_sock
+
+        # ``with context.wrap_socket(...) as tls_sock``
+        tls_sock = MagicMock()
+        tls_sock.version.return_value = negotiated_version
+        ctx = mock_context_cls.return_value
+        ctx.wrap_socket.return_value.__enter__.return_value = tls_sock
+
+        ok, legacy = _tls_handshake("192.168.100.1", 443, timeout=2.0)
+
+        assert ok is True
+        assert legacy is expected_legacy
+
+    @patch(f"{_MODULE}.socket.create_connection")
+    def test_handshake_failure_returns_false_false(
+        self,
+        mock_create_conn: MagicMock,
+    ) -> None:
+        import ssl as _ssl
+
+        from solentlabs.cable_modem_monitor_core.connectivity import _tls_handshake
+
+        mock_create_conn.side_effect = _ssl.SSLError("handshake failure")
+
+        ok, legacy = _tls_handshake("192.168.100.1", 443, timeout=2.0)
+
+        assert ok is False
+        assert legacy is False
 
 
 # =====================================================================

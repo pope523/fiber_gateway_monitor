@@ -177,28 +177,28 @@ Runs in an executor thread to avoid blocking the HA event loop.
 
 **Validation pipeline:**
 
-1. **Protocol detection** — if the user entered a bare IP/hostname (no
-   `http://` or `https://` prefix), try HTTP first (most cable modems are
-   HTTP-only), then HTTPS. For HTTPS, handle legacy SSL ciphers
-   (`SECLEVEL=0`) required by older modem firmware with weak TLS. Any HTTP
-   response (even 401/403) confirms the modem is reachable. Records
-   `working_url`, `protocol`, and `legacy_ssl` flag for runtime. If the
-   user explicitly included a protocol prefix, respect it and skip
-   detection.
+1. **Protocol detection** — if the user entered a bare IP/hostname
+   (no `http://` or `https://` prefix), TCP-probe ports 80 and 443.
+   When 443 accepts a connection *and* completes a TLS handshake (using
+   a `SECLEVEL=0` cipher context that admits both modern and legacy
+   suites), prefer HTTPS — modems that expose both ports almost always
+   intend HTTPS for authenticated traffic. The negotiated TLS protocol
+   version drives `legacy_ssl`: TLS 1.1 or older is observed-legacy.
+   When 443 is closed or its handshake fails, fall back to HTTP if
+   port 80 is open. The probe never sends an HTTP request — only a
+   TCP connect plus, on 443, a TLS handshake. Records `working_url`,
+   `protocol`, and `legacy_ssl` for runtime. If the user explicitly
+   included a protocol prefix, respect it and probe only that
+   transport.
 2. **Authenticate + Parse** — load modem config from the catalog, create
    a `ModemDataCollector`, and run `execute()`. This single call
    authenticates with the variant's auth strategy, fetches data pages,
-   and runs the parser. Confirm non-empty output.
-3. **Protocol retry** — if authentication failed and the protocol was
-   auto-detected as HTTP, retry the authenticate + parse step with HTTPS
-   (then HTTPS + legacy SSL if needed). Some modems respond on HTTP port
-   80 (e.g., serving an HTML landing page) but only support authenticated
-   endpoints over HTTPS. The retry is scoped to auth failures only —
-   connectivity failures (modem unreachable) and parse errors are not
-   retried because the modem responded on the detected protocol. User-
-   specified protocols are never retried — that is an explicit choice.
-   See ORCHESTRATION_USE_CASES.md UC-85 for the full scenario.
-4. **Health probes** — test ICMP ping and HTTP HEAD support for the
+   and runs the parser. Confirm non-empty output. Authentication
+   runs exactly once: a structured rejection (UC-86) is surfaced
+   directly to the user; protocol-retry loops are explicitly avoided
+   because they collide with single-session firmware and obscure the
+   real failure.
+3. **Health probes** — test ICMP ping and HTTP HEAD support for the
    health monitoring pipeline.
 
 **Implementation — Core API call sequence:**
@@ -212,7 +212,9 @@ config_flow_helpers.validate_connection(hass, host, user, pass, modem_dir, varia
  └─ _run_validation(...)                      [executor thread]
       │
       ├─ 1. detect_protocol(hostname)         [Core connectivity]
-      │     Try HTTP → HTTPS → HTTPS+SECLEVEL=0
+      │     TCP probe :80 and :443; TLS handshake on :443 with
+      │     SECLEVEL=0 cipher context; legacy_ssl set from the
+      │     negotiated TLS version (TLSv1.1 or older → legacy)
       │     → ConnectivityResult(protocol, legacy_ssl, working_url)
       │
       ├─ 2. load_modem_config(modem.yaml)     [Core config_loader]
@@ -223,12 +225,7 @@ config_flow_helpers.validate_connection(hass, host, user, pass, modem_dir, varia
       │     .execute()
       │     Auth → Fetch pages → Parse → Logout
       │     → ModemResult(success, modem_data, signal, error)
-      │
-      ├─ 3a. If AUTH_FAILED and auto-detected HTTP:
-      │       Retry with https://{host} (legacy_ssl=False)
-      │       If still AUTH_FAILED:
-      │         Retry with https://{host} (legacy_ssl=True)
-      │       Update protocol, base_url, legacy_ssl on success
+      │     Single attempt — no retry chain (UC-86)
       │
       ├─ 4. test_icmp(hostname)               [Core connectivity]
       │     → bool (supports ICMP ping)

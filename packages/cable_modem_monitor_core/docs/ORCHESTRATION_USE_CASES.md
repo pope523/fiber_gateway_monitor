@@ -1557,49 +1557,56 @@ with `legacy_ssl=True`.
 
 ---
 
-### UC-85: Protocol fallback — HTTP reachable but auth requires HTTPS
+### UC-85: Protocol detection — TCP probe with HTTPS preference
 
-**Preconditions:** Modem responds on HTTP port 80 (e.g., serves an HTML
-landing page) but its authenticated endpoint (HNAP, form login) only
-works over HTTPS. Protocol detection auto-detected HTTP. User entered a
-bare IP with no protocol prefix.
+**Preconditions:** User entered a bare IP with no protocol prefix.
+The pipeline must pick HTTP or HTTPS up front and observe whether the
+modem's TLS stack is old enough to need ``LegacySSLAdapter`` at
+runtime.
 
 | Step | Action | State change | Observable |
 |------|--------|-------------|------------|
-| 1 | `detect_protocol(host)` → HTTP responds (200) | protocol=http | |
-| 2 | `ModemDataCollector(base_url=http://host)` | | |
-| 3 | `collector.execute()` → auth challenge gets HTML, not JSON | | AUTH_FAILED |
-| 4 | Validation pipeline: auto-detected HTTP + AUTH_FAILED → retry | | |
-| 5 | `ModemDataCollector(base_url=https://host, legacy_ssl=False)` | | |
-| 6 | `collector.execute()` → auth succeeds over HTTPS | protocol=https | OK |
-| 7 | Health probes run against `https://host` | | |
-| 8 | Config entry persists `protocol=https, legacy_ssl=False` | | |
+| 1 | TCP probe ``host:80`` and ``host:443`` (IPv4-pinned) | | |
+| 2 | If 443 open: ``ssl.SSLContext(SECLEVEL=0)`` + ``wrap_socket()`` | | TLS handshake |
+| 3a | Handshake succeeds → read ``sock.version()`` | protocol=https; legacy_ssl from version | |
+| 3b | Handshake fails *and* :80 open → fall back to HTTP | protocol=http | |
+| 4 | Build ``ConnectivityResult(protocol, legacy_ssl, working_url)`` | | |
 
 **Assertions:**
 
-- Retry only happens when protocol was auto-detected (not user-specified)
-- Retry only happens on AUTH_FAILED or LOAD_AUTH — not CONNECTIVITY or PARSE_ERROR
-- If HTTPS also fails auth, try HTTPS + legacy SSL before giving up
-- If all three fail, surface the last AUTH_FAILED error to the user
-- User-specified `http://` is never retried — that is an explicit override
-- Auto-detected HTTPS is never downgraded to HTTP
-- Health probes and config entry use the protocol that succeeded
-- Log at INFO level when protocol retry discovers the correct protocol
+- Detection sends *no* HTTP requests — only TCP connect plus, on
+  :443, a TLS handshake. No session slot consumed, no login counter
+  increment, no risk of single-session-firmware lockout.
+- If TCP :443 accepts and TLS handshake completes, HTTPS is chosen
+  even when :80 also responds — modems that expose both ports almost
+  always intend HTTPS for authenticated traffic.
+- ``legacy_ssl`` is observed from the negotiated TLS protocol
+  version (TLSv1.1 / TLSv1 / SSLv3 → legacy). It is *not* inferred
+  from a failed-and-retried-with-weaker-ciphers attempt.
+- The cipher context is broad (``SECLEVEL=0``) so the handshake
+  succeeds regardless of the modem's age. Runtime sessions remain
+  narrow per the persisted ``legacy_ssl`` flag — modern modems use
+  the default adapter, legacy modems mount ``LegacySSLAdapter``.
+- User-specified protocol prefixes restrict probing to that single
+  transport — auto-detect is bypassed.
+- ``working_url`` preserves a user-supplied ``host:port`` when
+  present.
 
-**Alternative path — HTTPS needs legacy SSL:**
+**Alternative path — modem unreachable:**
 
 | Step | Action | State change | Observable |
 |------|--------|-------------|------------|
-| 5a | HTTPS retry → SSLError or AUTH_FAILED | | |
-| 5b | HTTPS + legacy SSL retry → auth succeeds | | protocol=https, legacy_ssl=True |
+| 1 | TCP probe :80 and :443 → both refused or time out | | |
+| 2 | Return ``ConnectivityResult(success=False, error=...)`` | | |
 
-**Alternative path — all protocols fail:**
-
-| Step | Action | State change | Observable |
-|------|--------|-------------|------------|
-| 5a | HTTPS retry → AUTH_FAILED | | |
-| 5b | HTTPS + legacy SSL → AUTH_FAILED | | |
-| 5c | Surface error to user | | "Login failed" with original error |
+> **Auth-retry chain dissolved.** Earlier revisions of this use case
+> retried authentication across HTTP → HTTPS → HTTPS+legacy when the
+> first attempt returned ``AUTH_FAILED``. That chain produced
+> ``MSG_LOGIN_150``-style "another user logged in" errors on
+> single-session firmware (issue #120) by colliding with our own
+> previous attempt. Protocol selection is now structurally correct
+> via the TCP probe, so the retry is unnecessary; UC-86 governs auth
+> behaviour (single attempt, immediate stop on rejection).
 
 ---
 

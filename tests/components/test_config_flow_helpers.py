@@ -3,7 +3,9 @@
 Tests the _run_validation() function directly (sync, no HA dependency).
 All Core I/O is mocked: detect_protocol, config loaders, ModemDataCollector.
 
-UC-85: Protocol fallback — HTTP reachable but auth requires HTTPS.
+Pipeline behaviour: protocol detection observes the modem's TLS via
+TCP probe + handshake; auth runs exactly once; a structured rejection
+is surfaced to the user (UC-86).
 Pre-fetch encoding detection — connectivity vs non-connectivity error handling.
 """
 
@@ -380,89 +382,76 @@ class TestVariantPath:
 
 
 # =====================================================================
-# Protocol retry — UC-85 scenarios
+# Auth runs exactly once — no retry chain
 # =====================================================================
 #
-# ┌───┬────────────┬──────┬────────────┬──────────┬─────────┬────────────────┐
-# │ # │ user proto │ det  │ first      │ https    │ legacy  │ expected       │
-# ├───┼────────────┼──────┼────────────┼──────────┼─────────┼────────────────┤
-# │ 1 │ auto       │ http │ AUTH_FAIL  │ OK       │ —       │ https, F       │
-# │ 2 │ auto       │ http │ AUTH_FAIL  │ AUTH_FAIL│AUTH_FAIL│ PermError      │
-# │ 3 │ "http"     │ —    │ AUTH_FAIL  │ —        │ —       │ PermError      │
-# │ 4 │ auto       │https │ AUTH_FAIL  │ —        │ —       │ PermError      │
-# │ 5 │ auto       │ http │ CONNECT    │ —        │ —       │ RuntimeError   │
-# │ 6 │ auto       │ http │ AUTH_FAIL  │ AUTH_FAIL│ OK      │ https, T       │
-# │ 7 │ auto       │ http │ LOAD_AUTH  │ OK       │ —       │ https, F       │
-# │ 8 │ auto       │ http │ PARSE_ERR  │ —        │ —       │ RuntimeError   │
-# │ 9 │ auto       │ http │ AUTH_FAIL  │ CONNECT  │ —       │ PermError      │
-# │10 │ auto       │ http │ LOAD_AUTH  │ CONNECT  │ —       │ PermError      │
-# └───┴────────────┴──────┴────────────┴──────────┴─────────┴────────────────┘
+# UC-86: a structured login rejection means stop. The pipeline never
+# retries auth across protocols, never retries with weakened ciphers,
+# and surfaces the first error directly. detect_protocol's TCP probe
+# + TLS handshake choose the transport up front.
+#
+# ┌────────────────────────────────────┬───────────────────┬─────────────────────────┐
+# │ scenario                           │ collector result  │ expected outcome        │
+# ├────────────────────────────────────┼───────────────────┼─────────────────────────┤
+# │ auto-detected http + auth ok       │ _ok_result()      │ http persisted, no exc  │
+# │ auto-detected http + auth fail     │ _auth_failed      │ PermissionError         │
+# │ auto-detected http + load_auth     │ _load_auth        │ PermissionError         │
+# │ auto-detected http + connectivity  │ _connectivity     │ RuntimeError            │
+# │ auto-detected http + parse error   │ _parse_error      │ RuntimeError            │
+# │ user-specified http + auth fail    │ _auth_failed      │ PermissionError         │
+# │ auto-detected https (modern)       │ _ok_result()      │ https / legacy=False    │
+# │ auto-detected https (legacy)       │ _ok_result()      │ https / legacy=True     │
+# └────────────────────────────────────┴───────────────────┴─────────────────────────┘
 
-_RETRY_CASE = tuple[
-    str | None,
-    str,
-    list[ModemResult],
-    type[Exception] | None,
-    str | None,
-    bool | None,
-    str,
+_SINGLE_ATTEMPT_CASE = tuple[
+    str | None,  # user_protocol
+    str,  # detected_protocol
+    bool,  # detected_legacy_ssl
+    ModemResult,  # collector result
+    type[Exception] | None,  # expected exception
+    str | None,  # expected stored protocol
+    bool | None,  # expected stored legacy_ssl
+    str,  # description
 ]
 
 # fmt: off
-PROTOCOL_RETRY_CASES: list[_RETRY_CASE] = [
-    # (user_proto, detected, results, exception, exp_proto, exp_legacy, desc)
-    (None, "http",
-     [_auth_failed_result(), _ok_result()],
-     None, "https", False,
-     "auto HTTP + auth fail -> HTTPS retry succeeds"),
-    (None, "http",
-     [_auth_failed_result(), _auth_failed_result(), _auth_failed_result()],
+SINGLE_ATTEMPT_CASES: list[_SINGLE_ATTEMPT_CASE] = [
+    (None,   "http",  False, _ok_result(),
+     None, "http",  False,
+     "auto HTTP + ok"),
+    (None,   "http",  False, _auth_failed_result(),
      PermissionError, None, None,
-     "auto HTTP + all retries fail -> PermissionError"),
-    ("http", "http",
-     [_auth_failed_result()],
+     "auto HTTP + AUTH_FAILED -> PermissionError"),
+    (None,   "http",  False, _load_auth_result(),
      PermissionError, None, None,
-     "user-specified HTTP + auth fail -> no retry"),
-    (None, "https",
-     [_auth_failed_result()],
-     PermissionError, None, None,
-     "auto HTTPS + auth fail -> no retry"),
-    (None, "http",
-     [_connectivity_result()],
+     "auto HTTP + LOAD_AUTH -> PermissionError"),
+    (None,   "http",  False, _connectivity_result(),
      RuntimeError, None, None,
-     "auto HTTP + connectivity fail -> no retry"),
-    (None, "http",
-     [_auth_failed_result(), _auth_failed_result(), _ok_result()],
+     "auto HTTP + CONNECTIVITY -> RuntimeError"),
+    (None,   "http",  False, _parse_error_result(),
+     RuntimeError, None, None,
+     "auto HTTP + PARSE_ERROR -> RuntimeError"),
+    ("http", "http",  False, _auth_failed_result(),
+     PermissionError, None, None,
+     "user HTTP + AUTH_FAILED -> PermissionError"),
+    (None,   "https", False, _ok_result(),
+     None, "https", False,
+     "auto HTTPS modern -> persisted"),
+    (None,   "https", True,  _ok_result(),
      None, "https", True,
-     "auto HTTP + HTTPS fails + legacy SSL succeeds"),
-    (None, "http",
-     [_load_auth_result(), _ok_result()],
-     None, "https", False,
-     "auto HTTP + LOAD_AUTH -> HTTPS retry succeeds"),
-    (None, "http",
-     [_parse_error_result()],
-     RuntimeError, None, None,
-     "auto HTTP + parse error -> no retry"),
-    (None, "http",
-     [_auth_failed_result(), _connectivity_result()],
-     PermissionError, None, None,
-     "auto HTTP auth fail + HTTPS unreachable -> PermissionError (not RuntimeError)"),
-    (None, "http",
-     [_load_auth_result(), _connectivity_result()],
-     PermissionError, None, None,
-     "auto HTTP login page + HTTPS unreachable -> PermissionError (not RuntimeError)"),
+     "auto HTTPS legacy -> persisted"),
 ]
 # fmt: on
 
 
 @pytest.mark.parametrize(
-    "user_protocol, detected_protocol, collector_results, expected_exception, "
-    "expected_protocol, expected_legacy_ssl, description",
-    PROTOCOL_RETRY_CASES,
-    ids=[c[-1] for c in PROTOCOL_RETRY_CASES],
+    "user_protocol, detected_protocol, detected_legacy_ssl, collector_result, "
+    "expected_exception, expected_protocol, expected_legacy_ssl, description",
+    SINGLE_ATTEMPT_CASES,
+    ids=[c[-1] for c in SINGLE_ATTEMPT_CASES],
 )
-class TestProtocolRetry:
-    """UC-85: Protocol fallback when auth fails on auto-detected HTTP."""
+class TestSingleAttempt:
+    """UC-86: pipeline runs auth once and surfaces the result directly."""
 
     @patch(f"{_MODULE}.detect_probes")
     @patch(f"{_MODULE}._attempt_validation")
@@ -470,44 +459,38 @@ class TestProtocolRetry:
     @patch(f"{_MODULE}.load_parser_config")
     @patch(f"{_MODULE}.load_modem_config")
     @patch(f"{_MODULE}.detect_protocol")
-    def test_protocol_retry(
+    def test_single_attempt_outcome(
         self,
         mock_detect: MagicMock,
         mock_load_modem: MagicMock,
         mock_load_parser: MagicMock,
         mock_load_post: MagicMock,
-        mock_collector_cls: MagicMock,
+        mock_attempt: MagicMock,
         mock_probes: MagicMock,
         tmp_path: Path,
-        # parametrize args
         user_protocol: str | None,
         detected_protocol: str,
-        collector_results: list[ModemResult],
+        detected_legacy_ssl: bool,
+        collector_result: ModemResult,
         expected_exception: type[Exception] | None,
         expected_protocol: str | None,
         expected_legacy_ssl: bool | None,
         description: str,
     ) -> None:
-        """Verify protocol retry behavior for each scenario."""
+        """Each scenario triggers _attempt_validation once and surfaces directly."""
         modem_dir = _setup_modem_dir(tmp_path)
 
-        # Protocol detection — only called when user_protocol is None
         mock_detect.return_value = ConnectivityResult(
             success=True,
             protocol=detected_protocol,
+            legacy_ssl=detected_legacy_ssl,
             working_url=f"{detected_protocol}://192.168.100.1",
         )
-
-        # Config loaders — return mocks (content irrelevant for this test)
         mock_load_modem.return_value = MagicMock()
         mock_load_parser.return_value = MagicMock()
         mock_load_post.return_value = MagicMock()
-
-        # Probes — always succeed (not under test)
         mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
-
-        # Collector — return results in order (one per retry attempt)
-        mock_collector_cls.side_effect = [r for r in collector_results]
+        mock_attempt.return_value = collector_result
 
         if expected_exception is not None:
             with pytest.raises(expected_exception):
@@ -531,52 +514,11 @@ class TestProtocolRetry:
             assert result["protocol"] == expected_protocol
             assert result["legacy_ssl"] == expected_legacy_ssl
 
+        assert mock_attempt.call_count == 1
 
-class TestProtocolRetryCollectorArgs:
-    """Verify the collector is created with correct args on each retry."""
 
-    @patch(f"{_MODULE}.detect_probes")
-    @patch(f"{_MODULE}._attempt_validation")
-    @patch(f"{_MODULE}.load_post_processor")
-    @patch(f"{_MODULE}.load_parser_config")
-    @patch(f"{_MODULE}.load_modem_config")
-    @patch(f"{_MODULE}.detect_protocol")
-    def test_https_retry_uses_correct_base_url(
-        self,
-        mock_detect: MagicMock,
-        mock_load_modem: MagicMock,
-        mock_load_parser: MagicMock,
-        mock_load_post: MagicMock,
-        mock_collector_cls: MagicMock,
-        mock_probes: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """HTTPS retry passes https:// base_url and legacy_ssl=False."""
-        modem_dir = _setup_modem_dir(tmp_path)
-        mock_detect.return_value = ConnectivityResult(success=True, protocol="http", working_url="http://192.168.100.1")
-        mock_config = MagicMock()
-        mock_load_modem.return_value = mock_config
-        mock_load_parser.return_value = MagicMock()
-        mock_load_post.return_value = MagicMock()
-        mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
-
-        # First attempt: auth fails. Second (HTTPS): succeeds.
-        mock_collector_cls.side_effect = [
-            _auth_failed_result(),
-            _ok_result(),
-        ]
-
-        _run_validation("192.168.100.1", None, "admin", "pw", modem_dir, None)
-
-        # First call: HTTP
-        first_call = mock_collector_cls.call_args_list[0]
-        assert first_call.kwargs["base_url"] == "http://192.168.100.1"
-        assert first_call.kwargs["legacy_ssl"] is False
-
-        # Second call: HTTPS
-        second_call = mock_collector_cls.call_args_list[1]
-        assert second_call.kwargs["base_url"] == "https://192.168.100.1"
-        assert second_call.kwargs["legacy_ssl"] is False
+class TestSingleAttemptCollectorArgs:
+    """Verify the single auth attempt receives the detected transport."""
 
     @patch(f"{_MODULE}.detect_probes")
     @patch(f"{_MODULE}._attempt_validation")
@@ -584,109 +526,74 @@ class TestProtocolRetryCollectorArgs:
     @patch(f"{_MODULE}.load_parser_config")
     @patch(f"{_MODULE}.load_modem_config")
     @patch(f"{_MODULE}.detect_protocol")
-    def test_legacy_ssl_retry_uses_correct_args(
+    def test_https_legacy_forwarded_to_attempt(
         self,
         mock_detect: MagicMock,
         mock_load_modem: MagicMock,
         mock_load_parser: MagicMock,
         mock_load_post: MagicMock,
-        mock_collector_cls: MagicMock,
+        mock_attempt: MagicMock,
         mock_probes: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """Legacy SSL retry passes https:// base_url and legacy_ssl=True."""
+        """When detect_protocol observes legacy TLS, _attempt_validation receives legacy_ssl=True."""
         modem_dir = _setup_modem_dir(tmp_path)
-        mock_detect.return_value = ConnectivityResult(success=True, protocol="http", working_url="http://192.168.100.1")
+        mock_detect.return_value = ConnectivityResult(
+            success=True,
+            protocol="https",
+            legacy_ssl=True,
+            working_url="https://192.168.100.1",
+        )
         mock_load_modem.return_value = MagicMock()
         mock_load_parser.return_value = MagicMock()
         mock_load_post.return_value = MagicMock()
         mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
-
-        # All three attempts: HTTP fails, HTTPS fails, legacy SSL succeeds
-        mock_collector_cls.side_effect = [
-            _auth_failed_result(),
-            _auth_failed_result(),
-            _ok_result(),
-        ]
-
-        _run_validation("192.168.100.1", None, "admin", "pw", modem_dir, None)
-
-        # Third call: HTTPS + legacy SSL
-        third_call = mock_collector_cls.call_args_list[2]
-        assert third_call.kwargs["base_url"] == "https://192.168.100.1"
-        assert third_call.kwargs["legacy_ssl"] is True
-
-    @patch(f"{_MODULE}.detect_probes")
-    @patch(f"{_MODULE}._attempt_validation")
-    @patch(f"{_MODULE}.load_post_processor")
-    @patch(f"{_MODULE}.load_parser_config")
-    @patch(f"{_MODULE}.load_modem_config")
-    @patch(f"{_MODULE}.detect_protocol")
-    def test_health_probes_use_successful_protocol(
-        self,
-        mock_detect: MagicMock,
-        mock_load_modem: MagicMock,
-        mock_load_parser: MagicMock,
-        mock_load_post: MagicMock,
-        mock_collector_cls: MagicMock,
-        mock_probes: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Health probes run against the protocol that succeeded, not the original."""
-        modem_dir = _setup_modem_dir(tmp_path)
-        mock_detect.return_value = ConnectivityResult(success=True, protocol="http", working_url="http://192.168.100.1")
-        mock_config = MagicMock()
-        mock_load_modem.return_value = mock_config
-        mock_load_parser.return_value = MagicMock()
-        mock_load_post.return_value = MagicMock()
-        mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
-
-        mock_collector_cls.side_effect = [
-            _auth_failed_result(),
-            _ok_result(),
-        ]
-
-        _run_validation("192.168.100.1", None, "admin", "pw", modem_dir, None)
-
-        # detect_probes called with HTTPS url, not HTTP
-        probe_call = mock_probes.call_args
-        assert probe_call.args[1] == "https://192.168.100.1"
-        assert probe_call.kwargs["legacy_ssl"] is False
-
-
-class TestProtocolRetryNotTriggered:
-    """Verify retry does NOT happen for non-auth failures."""
-
-    @patch(f"{_MODULE}.detect_probes")
-    @patch(f"{_MODULE}._attempt_validation")
-    @patch(f"{_MODULE}.load_post_processor")
-    @patch(f"{_MODULE}.load_parser_config")
-    @patch(f"{_MODULE}.load_modem_config")
-    @patch(f"{_MODULE}.detect_protocol")
-    def test_no_retry_on_success(
-        self,
-        mock_detect: MagicMock,
-        mock_load_modem: MagicMock,
-        mock_load_parser: MagicMock,
-        mock_load_post: MagicMock,
-        mock_collector_cls: MagicMock,
-        mock_probes: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Successful first attempt — no retry, collector created once."""
-        modem_dir = _setup_modem_dir(tmp_path)
-        mock_detect.return_value = ConnectivityResult(success=True, protocol="http", working_url="http://192.168.100.1")
-        mock_load_modem.return_value = MagicMock()
-        mock_load_parser.return_value = MagicMock()
-        mock_load_post.return_value = MagicMock()
-        mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
-
-        mock_collector_cls.return_value = _ok_result()
+        mock_attempt.return_value = _ok_result()
 
         result = _run_validation("192.168.100.1", None, "admin", "pw", modem_dir, None)
 
-        assert result["protocol"] == "http"
-        assert mock_collector_cls.call_count == 1
+        assert mock_attempt.call_count == 1
+        kwargs = mock_attempt.call_args.kwargs
+        assert kwargs["base_url"] == "https://192.168.100.1"
+        assert kwargs["legacy_ssl"] is True
+        assert result["protocol"] == "https"
+        assert result["legacy_ssl"] is True
+
+    @patch(f"{_MODULE}.detect_probes")
+    @patch(f"{_MODULE}._attempt_validation")
+    @patch(f"{_MODULE}.load_post_processor")
+    @patch(f"{_MODULE}.load_parser_config")
+    @patch(f"{_MODULE}.load_modem_config")
+    @patch(f"{_MODULE}.detect_protocol")
+    def test_health_probes_use_detected_protocol(
+        self,
+        mock_detect: MagicMock,
+        mock_load_modem: MagicMock,
+        mock_load_parser: MagicMock,
+        mock_load_post: MagicMock,
+        mock_attempt: MagicMock,
+        mock_probes: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Health probes run against the same transport detect_protocol picked."""
+        modem_dir = _setup_modem_dir(tmp_path)
+        mock_detect.return_value = ConnectivityResult(
+            success=True,
+            protocol="https",
+            legacy_ssl=False,
+            working_url="https://192.168.100.1",
+        )
+        mock_load_modem.return_value = MagicMock()
+        mock_load_parser.return_value = MagicMock()
+        mock_load_post.return_value = MagicMock()
+        mock_probes.return_value = {"supports_icmp": True, "supports_head": True}
+        mock_attempt.return_value = _ok_result()
+
+        _run_validation("192.168.100.1", None, "admin", "pw", modem_dir, None)
+
+        probe_call = mock_probes.call_args
+        assert probe_call.args[1] == "https://192.168.100.1"
+        assert probe_call.kwargs["legacy_ssl"] is False
 
 
 # =====================================================================
@@ -745,10 +652,9 @@ class TestAuthFailureDetailLog:
     ) -> None:
         """401 on the auth POST → ``PermissionError`` + one WARNING with detail.
 
-        Passes ``protocol="http"`` to skip auto-detection and the
-        UC-85 HTTPS-fallback retry — the retry isn't under test
-        here, and letting it fire would attempt a real HTTPS
-        connection against the mock-server host.
+        Passes ``protocol="http"`` to skip auto-detection — the TCP
+        probe and TLS handshake aren't under test here, and the
+        mock-server host isn't reachable on :443.
         """
         import logging
 

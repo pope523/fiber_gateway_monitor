@@ -1265,8 +1265,12 @@ and passes the results to the HealthMonitor constructor.
 
 Discovery sequence (run once during setup):
 
-1. **Protocol** — `detect_protocol()` tries HTTP → HTTPS →
-   HTTPS+SECLEVEL=0. Determines `protocol` and `legacy_ssl`.
+1. **Protocol** — `detect_protocol()` TCP-probes ports 80 and 443
+   and, when 443 is open, performs a TLS handshake using a
+   broad-cipher (`SECLEVEL=0`) context. HTTPS is preferred whenever
+   the handshake completes; `legacy_ssl` is set from the negotiated
+   TLS version (TLSv1.1 or older → True). Determines `protocol` and
+   `legacy_ssl` without sending any HTTP requests.
 2. **ICMP** — ping the modem IP. Success → `supports_icmp=True`.
    Timeout or error → `supports_icmp=False` (network blocks ICMP).
 3. **HTTP HEAD** — HEAD request to `base_url`. Normal response
