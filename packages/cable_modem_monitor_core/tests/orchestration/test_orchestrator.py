@@ -452,10 +452,7 @@ class TestStreakReset:
         )
         orch = _make_orchestrator(collector=collector)
 
-        orch.get_modem_data()  # LOAD_AUTH: streak → 1 (session issue, not credential rejection)
-        assert orch.diagnostics().auth_failure_streak == 1
-
-        orch.get_modem_data()  # success → streak → 0
+        orch.get_modem_data()  # LOAD_AUTH retried in same poll, success keeps streak at 0
         assert orch.diagnostics().auth_failure_streak == 0
         assert orch.diagnostics().circuit_breaker_open is False
 
@@ -527,7 +524,7 @@ class TestCircuitBreaker:
 
     def test_load_auth_uses_threshold(self) -> None:
         """LOAD_AUTH is a session issue — circuit trips at threshold, not immediately."""
-        results = [_fail_result(CollectorSignal.LOAD_AUTH) for _ in range(5)]
+        results = [_fail_result(CollectorSignal.LOAD_AUTH) for _ in range(10)]
         collector = _mock_collector(results)
         orch = _make_orchestrator(collector=collector)
 
@@ -566,7 +563,7 @@ class TestLoadAuth:
     """UC-17/18/19: LOAD_AUTH signal handling."""
 
     def test_load_auth_clears_session(self) -> None:
-        """UC-17: LOAD_AUTH clears session and increments streak."""
+        """UC-17: LOAD_AUTH clears session and increments streak on retry failure."""
         collector = _mock_collector(_fail_result(CollectorSignal.LOAD_AUTH))
         orch = _make_orchestrator(collector=collector)
 
@@ -574,10 +571,11 @@ class TestLoadAuth:
 
         assert snapshot.connection_status == ConnectionStatus.AUTH_FAILED
         assert orch.diagnostics().auth_failure_streak == 1
-        collector.clear_session.assert_called_once()
+        assert collector.execute.call_count == 2
+        collector.clear_session.assert_called()
 
-    def test_load_auth_self_corrects(self) -> None:
-        """UC-18: LOAD_AUTH → fresh login → success."""
+    def test_load_auth_recovers_in_same_poll(self) -> None:
+        """UC-18: LOAD_AUTH retries once immediately and returns success."""
         collector = _mock_collector(
             [
                 _fail_result(CollectorSignal.LOAD_AUTH),
@@ -586,15 +584,33 @@ class TestLoadAuth:
         )
         orch = _make_orchestrator(collector=collector)
 
-        orch.get_modem_data()  # LOAD_AUTH, session cleared
-        snapshot = orch.get_modem_data()  # fresh login → success
+        snapshot = orch.get_modem_data()
+
+        assert snapshot.connection_status == ConnectionStatus.ONLINE
+        assert orch.diagnostics().auth_failure_streak == 0
+        assert collector.execute.call_count == 2
+        collector.clear_session.assert_called_once()
+
+    def test_load_auth_self_corrects(self) -> None:
+        """UC-18: a later successful poll leaves the streak clear."""
+        collector = _mock_collector(
+            [
+                _fail_result(CollectorSignal.LOAD_AUTH),
+                _ok_result(),
+                _ok_result(),
+            ]
+        )
+        orch = _make_orchestrator(collector=collector)
+
+        orch.get_modem_data()  # LOAD_AUTH retried in same poll → success
+        snapshot = orch.get_modem_data()  # steady-state success
 
         assert snapshot.connection_status == ConnectionStatus.ONLINE
         assert orch.diagnostics().auth_failure_streak == 0
 
     def test_load_auth_escalates_to_circuit(self) -> None:
         """Persistent LOAD_AUTH eventually trips circuit breaker."""
-        results = [_fail_result(CollectorSignal.LOAD_AUTH) for _ in range(6)]
+        results = [_fail_result(CollectorSignal.LOAD_AUTH) for _ in range(12)]
         collector = _mock_collector(results)
         orch = _make_orchestrator(collector=collector)
 
@@ -602,6 +618,93 @@ class TestLoadAuth:
             orch.get_modem_data()
 
         assert orch.diagnostics().circuit_breaker_open is True
+
+    def test_load_auth_recovery_streak_resets_on_normal_success(self) -> None:
+        """A normal poll breaks the consecutive stale-session recovery streak."""
+        collector = _mock_collector(
+            [
+                _fail_result(CollectorSignal.LOAD_AUTH),
+                _ok_result(),
+                _ok_result(),
+                _fail_result(CollectorSignal.LOAD_AUTH),
+                _ok_result(),
+            ]
+        )
+        orch = _make_orchestrator(collector=collector)
+
+        orch.get_modem_data()
+        diag = orch.diagnostics()
+        assert diag.stale_session_recovery_streak == 1
+        assert diag.session_reuse_disabled is False
+
+        orch.get_modem_data()
+        diag = orch.diagnostics()
+        assert diag.stale_session_recovery_streak == 0
+        assert diag.session_reuse_disabled is False
+
+        orch.get_modem_data()
+        diag = orch.diagnostics()
+        assert diag.stale_session_recovery_streak == 1
+        assert diag.session_reuse_disabled is False
+
+    def test_load_auth_disables_reuse_after_two_consecutive_recoveries(self) -> None:
+        """Two consecutive stale-session recoveries disable reuse for this runtime."""
+        collector = _mock_collector(
+            [
+                _fail_result(CollectorSignal.LOAD_AUTH),
+                _ok_result(),
+                _fail_result(CollectorSignal.LOAD_AUTH),
+                _ok_result(),
+                _ok_result(),
+            ]
+        )
+        orch = _make_orchestrator(collector=collector)
+
+        orch.get_modem_data()
+        diag = orch.diagnostics()
+        assert diag.stale_session_recovery_streak == 1
+        assert diag.session_reuse_disabled is False
+
+        orch.get_modem_data()
+        diag = orch.diagnostics()
+        assert diag.stale_session_recovery_streak == 2
+        assert diag.session_reuse_disabled is True
+
+        collector.clear_session.reset_mock()
+        orch.get_modem_data()
+
+        assert collector.execute.call_count == 5
+        collector.clear_session.assert_called_once()
+
+    def test_reset_auth_clears_adaptive_reuse_state(self) -> None:
+        """Credential reset re-enables session reuse and clears the counter."""
+        collector = _mock_collector(
+            [
+                _fail_result(CollectorSignal.LOAD_AUTH),
+                _ok_result(),
+                _fail_result(CollectorSignal.LOAD_AUTH),
+                _ok_result(),
+                _fail_result(CollectorSignal.LOAD_AUTH),
+                _ok_result(),
+            ]
+        )
+        orch = _make_orchestrator(collector=collector)
+
+        orch.get_modem_data()
+        orch.get_modem_data()
+        assert orch.diagnostics().session_reuse_disabled is True
+
+        orch.reset_auth()
+
+        diag = orch.diagnostics()
+        assert diag.stale_session_recovery_streak == 0
+        assert diag.session_reuse_disabled is False
+
+        collector.clear_session.reset_mock()
+        orch.get_modem_data()
+
+        assert collector.execute.call_count == 6
+        collector.clear_session.assert_called_once()
 
 
 class TestPasswordChanged:
@@ -1004,7 +1107,7 @@ class TestUnplannedRestart:
     """UC-49: Modem restarted externally — recovery through normal polling."""
 
     def test_outage_and_recovery_sequence(self) -> None:
-        """ONLINE → UNREACHABLE (with backoff) → LOAD_AUTH → ONLINE."""
+        """ONLINE → UNREACHABLE (with backoff) → LOAD_AUTH retry → ONLINE."""
         collector = _mock_collector()
         orch = _make_orchestrator(collector=collector)
 
@@ -1018,19 +1121,16 @@ class TestUnplannedRestart:
         snap = orch.get_modem_data()
         assert snap.connection_status == ConnectionStatus.UNREACHABLE
 
-        # Poll 3: Backoff clears, modem back but stale session — LOAD_AUTH
-        collector.execute.return_value = _fail_result(CollectorSignal.LOAD_AUTH, "401 on data page")
+        # Poll 3: Backoff clears, modem back but stale session — retry succeeds same poll
+        collector.execute.side_effect = [
+            _fail_result(CollectorSignal.LOAD_AUTH, "401 on data page"),
+            _ok_result(),
+        ]
         snap = orch.get_modem_data()
-        assert snap.connection_status == ConnectionStatus.AUTH_FAILED
-        # Session should have been cleared by LOAD_AUTH policy
+        assert snap.connection_status == ConnectionStatus.ONLINE
         collector.clear_session.assert_called()
         # Connectivity cleared because modem responded
         assert orch.diagnostics().connectivity_streak == 0
-
-        # Poll 4: Fresh login succeeds — ONLINE
-        collector.execute.return_value = _ok_result()
-        snap = orch.get_modem_data()
-        assert snap.connection_status == ConnectionStatus.ONLINE
 
     def test_connectivity_never_trips_circuit_breaker(self) -> None:
         """CONNECTIVITY failures never trip the auth circuit breaker."""
@@ -1046,7 +1146,7 @@ class TestUnplannedRestart:
         assert not orch.diagnostics().circuit_breaker_open
 
     def test_stale_session_self_corrects(self, caplog: pytest.LogCaptureFixture) -> None:
-        """LOAD_AUTH clears session, next poll authenticates fresh."""
+        """LOAD_AUTH clears session and recovers within the same poll."""
         collector = _mock_collector()
         orch = _make_orchestrator(collector=collector)
 
@@ -1055,16 +1155,15 @@ class TestUnplannedRestart:
         orch.get_modem_data()
 
         # Stale session detected
-        collector.execute.return_value = _fail_result(CollectorSignal.LOAD_AUTH, "401 on data page")
+        collector.execute.side_effect = [
+            _fail_result(CollectorSignal.LOAD_AUTH, "401 on data page"),
+            _ok_result(),
+        ]
         with caplog.at_level(logging.INFO):
-            orch.get_modem_data()
+            snap = orch.get_modem_data()
 
         assert "LOAD_AUTH" in caplog.text
-        collector.clear_session.assert_called()
-
-        # Fresh login succeeds
-        collector.execute.return_value = _ok_result()
-        snap = orch.get_modem_data()
+        collector.clear_session.assert_called_once()
         assert snap.connection_status == ConnectionStatus.ONLINE
 
 

@@ -195,6 +195,8 @@ class Orchestrator:
             auth_strategy=auth.strategy if auth else "",
             connectivity_streak=self._policy.connectivity_streak,
             connectivity_backoff_remaining=self._policy.connectivity_backoff_remaining,
+            stale_session_recovery_streak=self._policy.stale_session_recovery_streak,
+            session_reuse_disabled=self._policy.session_reuse_disabled,
             resource_fetches=self._collector.last_resource_fetches,
             last_poll_timestamp=self._last_poll_timestamp,
         )
@@ -306,25 +308,66 @@ class Orchestrator:
         # Log poll context — INFO on first poll, DEBUG on steady-state
         self._log_poll_context()
 
+        if not self._policy.should_attempt_session_reuse() and self._collector.session_is_valid:
+            _logger.debug(
+                "Session reuse disabled [%s] — clearing session before poll",
+                self._modem_config.model,
+            )
+            self._collector.clear_session()
+
         # Notify health monitor — avoids redundant HTTP probe during collection
         if self._health_monitor is not None:
             self._health_monitor.record_collection_start()
 
         collection_success = False
+        load_auth_recovered = False
         try:
             result = self._collector.execute()
             collection_success = result.success
 
+            if not result.success and result.signal is CollectorSignal.LOAD_AUTH:
+                result = self._retry_load_auth_once()
+                collection_success = result.success
+                load_auth_recovered = result.success
+
             if not result.success:
+                self._policy.reset_stale_session_recovery_streak()
                 self._log_poll_result(result)
                 return self._handle_failure(result)
 
-            self._first_poll_complete = True
+            if not load_auth_recovered:
+                self._policy.reset_stale_session_recovery_streak()
+
             self._log_poll_result(result)
+            self._first_poll_complete = True
             return self._handle_success(result)
         finally:
             if self._health_monitor is not None:
                 self._health_monitor.record_collection_end(collection_success)
+
+    def _retry_load_auth_once(self) -> ModemResult:
+        """Retry one LOAD_AUTH failure immediately with a fresh session.
+
+        LOAD_AUTH represents session expiry or stale auth state, not
+        credential rejection. Clear the current session and allow one
+        fresh collection attempt in the same poll to smooth over HNAP
+        session expiry without falling back to the next scheduled poll.
+        """
+        _logger.info(
+            "LOAD_AUTH [%s] — clearing session and retrying once in same poll",
+            self._modem_config.model,
+        )
+        self._collector.clear_session()
+
+        retry_result = self._collector.execute()
+        if retry_result.success:
+            self._policy.record_stale_session_recovery()
+            _logger.info(
+                "LOAD_AUTH recovered [%s] — fresh login succeeded in same poll",
+                self._modem_config.model,
+            )
+
+        return retry_result
 
     def _handle_failure(self, result: ModemResult) -> ModemSnapshot:
         """Apply signal policy for a failed collection."""
@@ -459,7 +502,7 @@ class Orchestrator:
         )
 
     def _log_poll_result(self, result: ModemResult) -> None:
-        """Log poll outcome. Parse line at INFO always. Failure at WARNING."""
+        """Log poll outcome. First success at INFO, steady-state at DEBUG."""
         model = self._modem_config.model
 
         if not result.success:
@@ -474,7 +517,8 @@ class Orchestrator:
         ds = len(result.modem_data.get("downstream", [])) if result.modem_data else 0
         us = len(result.modem_data.get("upstream", [])) if result.modem_data else 0
 
-        _logger.info(
+        log = _logger.info if not self._first_poll_complete else _logger.debug
+        log(
             "Parse complete [%s]: %d DS, %d US channels",
             model,
             ds,

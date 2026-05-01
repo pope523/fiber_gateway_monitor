@@ -223,10 +223,14 @@ Example — successful collection with no channels:
 
 | Tier | Level | When | Purpose |
 |------|-------|------|---------|
-| Pulse | INFO always | Every successful poll | `"Parse complete [MODEL]: 24 DS, 4 US"` — heartbeat showing the modem is alive and parsing |
+| Pulse | INFO first poll, DEBUG after | Successful poll summaries | `"Parse complete [MODEL]: 24 DS, 4 US"` — visible at INFO for first-poll confirmation, then DEBUG in steady-state to keep success-path logs quiet |
 | Auth/resource | INFO first poll, DEBUG after | Steady-state noise reduction | Auth strategy, session state, resource loading. Visible at INFO for first-poll diagnostics, drops to DEBUG after to avoid flooding multi-modem logs |
 | Failures | WARNING/ERROR always | Never demoted | Auth failures, connectivity errors, parse errors. Always visible regardless of poll count |
 | Wire data | DEBUG always | Troubleshooting only | Request/response details, parsing internals |
+
+Status transitions and adaptive-reuse state changes stay at INFO even
+after the first poll. These are operator-relevant events, not
+steady-state heartbeat logs.
 
 ### Auth Log Level
 
@@ -779,6 +783,13 @@ class OrchestratorDiagnostics:
             reachable.
         connectivity_backoff_remaining: Polls to skip before next
             connection attempt. 0 when no backoff active.
+        stale_session_recovery_streak: Consecutive recovered stale-
+            session events. Increments when a LOAD_AUTH same-poll
+            retry succeeds and resets on an intervening normal success
+            or unrecovered failure.
+        session_reuse_disabled: Whether the orchestrator has disabled
+            cached-session reuse for the rest of this runtime after
+            repeated consecutive stale-session recoveries.
         resource_fetches: Per-resource timing and size from the last
             successful collection. Empty list if never polled or
             collection failed before resource loading. Consumers
@@ -799,6 +810,8 @@ class OrchestratorDiagnostics:
     auth_strategy: str = ""
     connectivity_streak: int = 0
     connectivity_backoff_remaining: int = 0
+    stale_session_recovery_streak: int = 0
+    session_reuse_disabled: bool = False
     resource_fetches: list[ResourceFetch] = field(default_factory=list)
     last_poll_timestamp: float | None = None
 
