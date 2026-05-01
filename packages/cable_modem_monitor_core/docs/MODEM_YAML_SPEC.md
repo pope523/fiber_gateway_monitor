@@ -34,9 +34,14 @@ directory layout and multi-variant assembly contract.
 
 ## Schema Overview
 
+> **Manufacturer is stored as the modem reports it / as the
+> manufacturer styles their brand.** Don't pre-normalize case here.
+> Display layers handle normalization for readability. The example
+> below uses `ARRIS` because that's how the SB8200 self-identifies.
+
 ```yaml
 # Identity
-manufacturer: "Arris"
+manufacturer: "ARRIS"
 model: "SB8200"
 model_aliases:                    # optional — search matching only (not shown in UI)
   - "CommScope SB8200"
