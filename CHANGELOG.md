@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`verify_diagnostics` catalog tool.** Pure function plus thin CLI
+  in `cable_modem_monitor_catalog_tools` that takes an HA diagnostics
+  JSON and a release tag and produces a properly-shaped
+  `verified.json` fixture (HA wrapper unwrapped, integration extras
+  stripped, `verified_at`/`version` prepended, channel arrays
+  rendered compact, multi-variant paths resolved). Replaces the
+  hand-rolled python heredoc previously used at confirmation time
+  with a deterministic, tested transform. Imports
+  `SYSTEM_INFO_FIELDS` and `canonicalize_channel_keys` from the
+  core registry to keep the field-list and channel-key-order
+  truth in one place. Maintainer-facing; no end-user impact. See
+  `MODEM_INTAKE_WORKFLOW.md` § Confirmation Phase.
+
 ### Changed
 
 - **`load_post_processor` moved out of `core.test_harness.runner`** to
@@ -17,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test runner was the first caller; HA picked up the same import path
   when it needed the function later. Internal-only change — no behavior
   change for end users.
+- **Orchestrator diagnostic field renamed: `last_poll_timestamp` →
+  `last_poll_at`.** The old field stored `time.monotonic()` under
+  a name that strongly implied wall-clock time but is actually
+  process-uptime seconds — useless for "when did the user test"
+  inspection of archived diagnostics. New field stores
+  `datetime.now(UTC).isoformat()` and means what its name implies.
+  Visible in `core_diagnostics` of HA diagnostics downloads. Zero
+  consumers of the old field existed, so this is a clean rename.
+  Existing committed `verified.json` fixtures retain the old name
+  by the point-in-time-snapshot rule; new confirmations get
+  `last_poll_at`.
 
 ## [3.14.0-beta.2] - 2026-04-29
 
