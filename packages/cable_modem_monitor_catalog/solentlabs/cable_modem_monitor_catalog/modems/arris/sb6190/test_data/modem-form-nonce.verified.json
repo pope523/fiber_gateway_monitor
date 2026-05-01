@@ -30,7 +30,8 @@
         "status_code": 200,
         "content_type": "text/html"
       }
-    ]
+    ],
+    "last_poll_timestamp": 86150.375128837
   },
   "data_coordinator": {
     "last_update_success": true,
