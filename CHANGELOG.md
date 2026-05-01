@@ -21,6 +21,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   core registry to keep the field-list and channel-key-order
   truth in one place. Maintainer-facing; no end-user impact. See
   `MODEM_INTAKE_WORKFLOW.md` § Confirmation Phase.
+- **`json_transposed` parser format.** New format for modems that
+  expose channel data as transposed JSON tables (rows are fields,
+  columns are channels). Lives in `core/parsers/formats/` alongside
+  the existing `html_table`, `xml`, and `json_table` formats and
+  registers through the centralized format registry so new formats
+  compose in additively. Surfaces to contributors via modem.yaml
+  `format:` selection.
+
+### Fixed
+
+- **Stale HNAP sessions now recover within the same poll.** When a
+  cached HNAP session is rejected by the server (LOAD_AUTH on
+  HTTP 401/404), the orchestrator clears the cached session and
+  retries collection once in the same poll instead of surfacing a
+  transient `auth_failed` state. Affects modems whose firmware
+  expires sessions faster than the configured poll interval (e.g.,
+  Arris S33 with sub-10-minute auth timeout). Related to #140.
+- **Adaptive session reuse disable for chronically short-TTL
+  firmware.** After 2 consecutive recovered same-poll LOAD_AUTH
+  events, the orchestrator stops attempting cached-session reuse for
+  the rest of the runtime and starts each poll with a fresh login.
+  An intervening normal successful poll resets the recovery streak.
+  Runtime-only — `reset_auth()` or process restart re-enables reuse.
+  Surfaces in diagnostics as `stale_session_recovery_streak` and
+  `session_reuse_disabled`. Strategy is intentionally not exposed
+  as a per-modem yaml field (per the "no per-modem recovery tuning"
+  principle).
 
 ### Changed
 
@@ -43,6 +70,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Existing committed `verified.json` fixtures retain the old name
   by the point-in-time-snapshot rule; new confirmations get
   `last_poll_at`.
+- **Logging contract: quiet on success.** Parse-complete and other
+  success-path orchestration logs fire at INFO on the first poll
+  (fresh install, reconfigure, HA restart, reauth) and drop to DEBUG
+  in steady-state. Operator-relevant transitions (status changes,
+  adaptive-reuse state changes, counter resets) stay at INFO
+  regardless of poll count. The integration's startup INFO line tells
+  users where to enable DEBUG logging for per-poll detail. Liveness
+  can be confirmed without DEBUG via the Diagnostics download
+  (includes `last_poll_at`, streak counters, reuse state) or the
+  integration page activity log. Multi-modem setups previously
+  produced 144 INFO lines/day per modem; now produce one verbose
+  startup block plus transitions.
+- **Catalog chipset metadata filled** for Hitron CODA56 (Broadcom
+  BCM3390) and Compal CH7465MT (Intel Puma DHCE2652, MTAT ISP).
+  Affects badge rendering in the catalog README.
+
+### Confirmed
+
+- **Hitron CODA56** — BCM3390, form auth, Comcast/Xfinity. Closes #89.
+- **Netgear CM1200 (basic-auth variant).** The form-auth variant
+  remains awaiting verification (different contributor, different
+  conditions).
 
 ## [3.14.0-beta.2] - 2026-04-29
 
