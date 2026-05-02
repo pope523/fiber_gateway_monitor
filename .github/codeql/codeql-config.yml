@@ -41,6 +41,27 @@ query-filters:
       # verify=False is required for connectivity checks and data fetching from cable modems.
       # This is acceptable because: (1) modems don't offer CA-signed certs, (2) private LAN only,
       # (3) MITM risk is acceptable in home network context, (4) encryption still provided.
+  - exclude:
+      id: py/insecure-protocol
+      # Rationale: Cable Modem Monitor connects to a fleet of consumer cable
+      # modems, many of which run old firmware that only negotiates TLSv1.0
+      # or TLSv1.1. Refusing those versions outright would make a sizeable
+      # portion of the supported catalog unmonitorable.
+      #
+      # The project's posture: probe-time tolerance, runtime correctness.
+      # connectivity._tls_handshake() (~line 180-214) accepts any TLS
+      # version on the *detection* path so we can observe what the modem
+      # actually speaks. The negotiated protocol version is then surfaced
+      # via the `legacy_ssl` flag on `ConnectivityResult`. At runtime, the
+      # data-fetch path applies `LegacySSLAdapter` only when `legacy_ssl=True`
+      # — modems that negotiated TLSv1.2+ get the strict requests/urllib3
+      # default. Modems that need legacy ciphers get them, but only because
+      # the probe confirmed that's what the firmware speaks.
+      #
+      # This is a documented architectural decision, not a security oversight.
+      # Same family as the existing `py/request-without-cert-validation`
+      # exclusion: connecting to LAN-side embedded devices that don't offer
+      # CA-signed certs or modern TLS is the project's defining constraint.
 
   # --- False positive exclusions (CodeQL limitations) ---
   - exclude:

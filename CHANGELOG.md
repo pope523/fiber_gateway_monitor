@@ -33,6 +33,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CodeQL `py/insecure-protocol` alert (high severity)** on
+  `connectivity._tls_handshake` — suppressed via
+  `codeql-config.yml` query-filter with rationale. The TLS
+  handshake accepts legacy protocol versions on the *probe* path
+  to detect what older modem firmware speaks; the runtime
+  data-fetch path uses the legacy adapter only when the probe
+  negotiated legacy. Documented architectural decision, same
+  family as the existing `py/request-without-cert-validation`
+  exclusion.
+- **CodeQL `py/bad-tag-filter` alert (high severity)** on
+  `catalog_tools/analysis/js_endpoints.py` — regex tightened
+  from `</script\s*>` to `</script\b[^>]*>` so HTML5 end-tag
+  variants (`</script foo>`, `</script/>`,
+  `</script\t\n bar>`) match correctly. Module docstring
+  documents the regex-vs-`bs4+lxml` tradeoff and the residual
+  blindspots accepted as tech debt (unterminated tags, literal
+  `</script>` in JS strings, CDATA wrapping, HTML-commented
+  scripts).
+- **Redundant `import logging`** removed from
+  `tests/components/test_log_buffer.py` (already imported at
+  module top). Closes CodeQL `py/repeated-import` alert.
 - **Auth failure logs now surface response detail across all
   strategies.** `_log_auth_failure_detail` (collector.py) reads
   `auth_result.response` to emit sanitized request line + response

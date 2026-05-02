@@ -12,6 +12,38 @@ only fire under specific conditions (stale session state, keepalive
 timers, conditional UI paths).  These endpoints can be critical to
 the auth or session flow but invisible in the HAR.
 
+**Implementation note — parser approach:** Inline ``<script>`` blocks
+are extracted with a regex (``_SCRIPT_BLOCK`` below), HTML5-aware for
+the common end-tag variants (``</script>``, ``</script foo>``,
+``</script/>``, ``</script\\t\\n bar>``).  The "right tool" answer
+would be ``BeautifulSoup`` with the ``lxml`` parser, which handles
+every variant and edge case correctly.  We don't use it: ``lxml`` is
+a 2MB+ C extension and ``catalog_tools`` is a maintainer-only package
+(``Private :: Do Not Upload``) where additional install requirements
+add contributor-onboarding friction.  The regex closes the specific
+HTML5 end-tag gaps CodeQL ``py/bad-tag-filter`` flagged; the residual
+blindspots below are accepted tech debt.
+
+**Accepted blindspots** (regex-inherent — would be fixed by
+``bs4 + lxml``):
+
+- Unterminated ``<script>`` blocks (no closing tag) are silently
+  dropped.  Browsers would treat the rest of the document as script
+  body; we don't.
+- Literal ``</script>`` inside JS string content
+  (e.g., ``var x = "</script>";``) causes early termination of the
+  captured block.  This matches HTML5 spec parsing but can split a
+  single logical script into two extracted halves.
+- ``<![CDATA[...]]>`` wrapping is treated as part of the JS body.
+  AJAX patterns inside still match, so practical impact is low.
+- HTML-commented scripts (``<!-- <script>...</script> -->``) match
+  even though browsers wouldn't execute them — possible
+  false-positive endpoints.
+
+Revisit if real-world firmware HTML produces one of these shapes
+and breaks intake.  Until then the warnings are advisory and the
+impact of a miss is low.
+
 See ONBOARDING_SPEC.md "Post-Analysis: JS Endpoint Discovery".
 """
 
@@ -83,10 +115,12 @@ _URL_GROUP: dict[re.Pattern[str], int] = {
     _JQUERY_SHORTHAND: 2,
 }
 
-# Inline <script> block extraction.  Allow whitespace before the
-# closing > of the end tag (HTML allows </script > and similar).
+# Inline <script> block extraction.  HTML5 lets </script> carry trailing
+# whitespace, attribute-like text, or "/>" before the closing > — match
+# any non-> chars after </script and require a word boundary so that
+# unrelated tags like </scripted> are not treated as script end tags.
 _SCRIPT_BLOCK = re.compile(
-    r"<script[^>]*>(.*?)</script\s*>",
+    r"<script[^>]*>(.*?)</script\b[^>]*>",
     re.DOTALL | re.IGNORECASE,
 )
 

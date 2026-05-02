@@ -331,8 +331,6 @@ def test_log_buffer_clear_removes_all_entries() -> None:
 
 def test_buffering_handler_swallows_format_errors() -> None:
     """A formatter that raises is caught by handleError, not propagated."""
-    import logging
-
     buf = LogBuffer()
     handler = BufferingHandler(buf)
 
