@@ -216,6 +216,45 @@ a hotfix into an older release line) — cherry-pick is fine there.
 - Child branches rebase cleanly without "skipped commit" noise.
 - Shows clear release boundaries in `git log`.
 
+### Beta → main merges are contributor-onboarding-driven
+
+Whether to open a beta-to-main merge PR after each beta tag turns
+on **contributor-onboarding pressure**, not a blanket "always
+merge" rule. The default GitHub view of the repo shows `main`;
+contributors landing on the catalog README, contributor docs, or
+intake tooling see whatever is on `main`. When the canonical view
+is stale relative to current pipeline reality, contributors start
+on outdated docs and friction accumulates.
+
+**Merge a given beta to main when:** the beta contains
+contributor-facing doc or tool changes that should be visible at
+the canonical GitHub URL. Examples:
+
+- Catalog README updates (new confirmed modems, chipset metadata,
+  badge changes)
+- `cable_modem_monitor_catalog_tools/` workflow changes
+  (intake/confirmation tooling, MCP tool additions)
+- Contributor-onboarding docs (CONTRIBUTING, INTAKE_PIPELINE,
+  MODEM_INTAKE_WORKFLOW, AUTHORING guides)
+- Dev tooling that contributors use (`make` targets, pre-commit
+  hooks, local CI mirror commands)
+
+**Defer the merge when:** the beta is mostly runtime-code changes,
+internal refactors, or test/spec updates with no user- or
+contributor-facing surface change. The merge can wait until the
+next beta with contributor-facing changes, or until stable cut.
+
+**HACS note:** `main` being on a beta version string is acceptable
+here. HACS users who haven't opted into the beta channel install
+the latest *stable tag*, not the default branch — so a beta version
+string on `main` doesn't break stable installs. Beta-channel users
+opt in separately. Don't argue against the merge on HACS grounds.
+
+**Original driver:** the v3.14 architecture moved to `main` early
+because contributors were starting on the wrong branch — a major
+operational headache. With v3.14 on `main`, that acute pressure is
+reduced; later beta merges become more situational.
+
 ### Small single-feature/fix PRs: squash merge is fine
 
 Creates one clean commit on main.

@@ -264,6 +264,31 @@ config: `username_field`, `password_field` entries, and
 Both are optional; if both present, both must pass. If `success` is
 omitted, any response with HTTP status < 400 is treated as success.
 
+**When to leave `success` omitted:** Many modems return 200 plus the
+login page body when credentials are rejected (e.g., MB7621 returns
+a 200 redirect chain ending at `/login.asp`). The loose check above
+classifies this as auth success; the loader's `Data page X appears
+to be a login page` detection then catches the mismatch on the next
+fetch and surfaces it as `LOAD_AUTH`. That defense-in-depth is the
+intended backstop and works correctly in practice.
+
+Tightening via `success.redirect` to "fix" this class of modem
+behavior is a rejected pattern. Post-auth landing URLs are
+firmware-version-coupled — new firmware that lands on a different
+page (firmware-update prompt, change-password flow, captive state)
+breaks auth where it didn't before. A prior alpha cycle hit this
+from the other direction: a `Login redirect mismatch: expected
+path containing '/DocsisStatus.htm', got '/ErrorMsg.htm'` error
+looked like a regression and a softening fix was drafted, but the
+strict check was correctly identifying a real auth failure that
+softening would have masked. The principle runs both directions —
+don't tighten via redirect when the loose check is fine; don't
+soften the redirect check when it's catching real failures.
+Configure `success.redirect` only when the modem has a stable,
+well-known post-auth landing path that doesn't drift across
+firmware updates and the loose check produces an unacceptable
+failure mode for that specific modem.
+
 Evidence: modems with HTML login forms. Encoding, field names, and
 success indicators vary by manufacturer. Both `goform` and `cgi-bin`
 style endpoints are common.

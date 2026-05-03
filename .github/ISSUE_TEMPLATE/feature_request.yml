@@ -8,7 +8,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for suggesting a new feature! Please fill out this form as completely as possible.
+        **Before filing:** for new sensors, architecture changes, or anything spanning multiple files, please [open a Discussion](https://github.com/solentlabs/cable_modem_monitor/discussions/new?category=ideas) first. Issues are for features whose shape is already clear — Discussions are for shaping the idea.
+
+        Keep this form short. You don't need to commit to a design to file an idea.
 
         Before submitting, please check:
         - [ ] You've searched existing issues to avoid duplicates
@@ -41,11 +43,12 @@ body:
   - type: textarea
     id: solution
     attributes:
-      label: Proposed Solution
-      description: Describe the solution you'd like to see implemented
-      placeholder: A clear and concise description of what you want to happen
+      label: Approaches you've considered (optional)
+      description: |
+        If you've already thought about how this might work, share that here. Skip this if you haven't gotten that far — the maintainer would rather shape the design with you than have you commit to one up front.
+      placeholder: Optional. Leave blank if you're still in the idea stage.
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: alternatives
@@ -96,5 +99,5 @@ body:
           required: true
         - label: This feature aligns with the integration's purpose (cable modem monitoring)
           required: true
-        - label: I have provided a clear description of the feature and its benefits
+        - label: For changes spanning multiple files, I've opened a Discussion first or this issue links to one
           required: true

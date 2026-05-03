@@ -13,6 +13,35 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 ---
 
+## Before You File
+
+The encouraged contribution path is **expanding modem support** — the catalog grows through community contributions because the maintainer can't acquire every modem. See [Adding Modem Support](#adding-modem-support) for the catalog intake pipeline.
+
+- **Bug reports** — file directly via the bug template.
+- **Modem support requests** — file directly via the modem-request template.
+- **Adding modem support yourself** — use the catalog intake pipeline (`/modem-intake`); see [Adding Modem Support](#adding-modem-support).
+- **New features, sensors, architecture changes** — start a [Discussion](https://github.com/solentlabs/cable_modem_monitor/discussions/new?category=ideas), not an Issue. Issues are for features whose shape is already clear; Discussions are for shaping the idea. This avoids the situation where a contributor invests time in a full design that doesn't fit the project's direction.
+- **Core code changes (`packages/cable_modem_monitor_core/`)** — start a Discussion regardless of size. Core is the shared substrate every supported modem depends on; a regression there breaks every modem at once. The bar is correspondingly high (regression tests, golden files, real-modem evidence).
+- **Refactors that touch more than two files** — start as a Discussion. Small, scoped fixes outside Core can go straight to PR.
+
+---
+
+## What Happens After You File
+
+Review path depends on which surface the PR touches:
+
+- **Catalog PR** (new modem entry, HAR fixtures, parser.yaml) — reviewed against intake-pipeline standards. This is the encouraged path; usually the fastest to merge.
+- **Core PR** (`packages/cable_modem_monitor_core/`) — heavy scrutiny. Regression tests, golden files, and real-modem evidence are expected. Core PRs without that bar may be closed or held until the evidence is in. The asymmetric bar reflects asymmetric blast radius — Core breakage affects every supported modem at once.
+- **HA adapter PR** (`custom_components/`) — standard review for behavior changes; bug fixes without behavior change move faster.
+- **Docs PR** — standard review.
+- **PR that builds on a prior Discussion** — the Discussion is the design agreement; review focuses on the implementation matching it.
+- **PR that introduces net-new direction without a prior Discussion** — likely to be closed in favor of starting a Discussion. This isn't a judgment on the work — it's a sequencing call. Direction proposals belong in Discussions where they can be shaped collaboratively before code is written. Once the direction is agreed, a follow-up PR is welcome.
+- **Issue that should have been a Discussion** — converted to a Discussion (GitHub supports this), or you'll be asked to open one. No need to refile.
+
+PR titles and bodies are not edited by the maintainer — any feedback comes in review or close comments.
+
+---
+
 ## Adding Modem Support
 
 There are two paths, depending on what you can do:

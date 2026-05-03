@@ -30,3 +30,48 @@ configuration faster — it is never installed by Home Assistant.
 
 **Operational test:** deleting this package directory must leave
 Core + Catalog + HA fully functional.
+
+## Dependency policy
+
+Catalog Tools is `Private :: Do Not Upload` — only contributors
+running intake install it, never end users. Contributor-onboarding
+friction is load-bearing (catalog growth depends on community
+contributions; every install hurdle counts), so dependency choices
+are made deliberately.
+
+### Decisions
+
+1. **No `lxml` dependency.** Rejected after evaluation against the
+   contributor-onboarding cost.
+2. **HTML parsing uses HTML5-aware regex.** Pattern + accepted
+   blind spots documented in
+   `analysis/js_endpoints.py` module docstring. Not `bs4`.
+3. **If HTML5 compliance ever becomes load-bearing, prefer
+   `html5lib` over `lxml`.** Pure Python, no C extension.
+
+### Why no `lxml`
+
+- C extension. Wheels cover major platforms but exotic ones
+  compile from source — every extra dep is one more install step
+  that can fail.
+- The "use bs4" reflex is misleading: `bs4 + html.parser` (stdlib
+  backend) has the same HTML5 end-tag blind spots as a regex.
+  Only `bs4 + lxml` (or `+ html5lib`) is HTML5-correct. Adding
+  `bs4` without an HTML5-correct backend is strictly worse than
+  the regex (more code, same defect).
+- The pipeline's value proposition is "drop a HAR, get a working
+  catalog entry." Every dep counts against that.
+
+### Revisit if
+
+A real modem intake fails because the regex's accepted blind
+spots — unterminated `<script>` blocks, literal `</script>` in JS
+strings, CDATA wrapping, HTML-commented scripts — actually break
+extraction. Until then, the warnings are advisory and the impact
+of a miss is low. See `analysis/js_endpoints.py` module docstring
+for the full list.
+
+### Scope
+
+This is a catalog_tools decision. Core has its own evaluation to
+make if/when an HTML5-parsing concern arises there.
