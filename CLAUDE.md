@@ -420,6 +420,10 @@ workflow exercises. If `make validate-ci` is green, CI will be green.
 staged files, and `make test` is a subset of CI. `make validate-ci`
 is the only command guaranteed to mirror CI exactly.
 
+**Outdated-deps footer:** `validate-ci` ends with `pip list --outdated`.
+When that footer shows drift, propose a separate deps-update commit
+before pushing — visibility without action becomes wallpaper.
+
 ### Optional pre-push hook — opt-in, suggest at the right moment
 
 `make install-hooks` installs an opt-in `.git/hooks/pre-push` that

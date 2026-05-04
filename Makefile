@@ -120,6 +120,7 @@ validate:
 # not reasonably reproducible locally — same exception class as hassfest).
 validate-ci: check test intake-regression pii-check catalog-readme-check
 	@echo "✅ Full CI validation passed!"
+	@$(VENV_BIN)/pip list --outdated 2>/dev/null || true
 
 # Intake pipeline accuracy regression — mirrors CI test-packages step.
 intake-regression:
