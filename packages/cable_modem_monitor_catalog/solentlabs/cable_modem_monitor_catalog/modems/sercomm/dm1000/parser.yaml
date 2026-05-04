@@ -38,10 +38,13 @@ downstream:
         - key: num
           field: channel_id
           type: integer
-        - key: OFDMFreq
-          field: frequency
-          type: frequency
-          unit: "Hz"
+        # OFDMFreq is the only OFDM frequency-shaped value sercomm exposes
+        # and its semantic is sercomm-specific — under the lower-edge active-
+        # band convention (FIELD_REGISTRY.md § frequency semantics), the
+        # test HAR's value at 827.6 MHz overlaps real SC-QAM channels at
+        # 825-861 MHz, which is physically impossible. Most likely it's a
+        # CMTS-assigned channel placement frequency, not the active-band
+        # edge. Not mapping to canonical `frequency` to avoid misreporting.
         - key: PLC_power
           field: power
           type: float

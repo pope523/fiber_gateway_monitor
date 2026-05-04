@@ -96,6 +96,11 @@ class JsonChannelMapping(BaseModel):
     type conversion. ``separator_index`` selects which segment to use
     (default 0 = first). Example: ``"0.3/60.3"`` with
     ``separator: "/"`` and ``separator_index: 0`` yields ``"0.3"``.
+
+    When ``range`` is set, the split parts feed a range operation
+    instead of a positional pick. ``range: span`` computes
+    ``last - first`` (used to derive ``channel_width`` from a band-edge
+    range like ``"751~860"``). Requires ``separator`` to be set.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -109,12 +114,20 @@ class JsonChannelMapping(BaseModel):
     map: dict[str, str] | None = None
     separator: str = ""
     separator_index: int = 0
+    range: Literal["span"] | None = None
     scale: int | float | None = None
 
     @model_validator(mode="after")
     def validate_field_type(self) -> JsonChannelMapping:
         """Ensure type is a valid FIELD_TYPES value."""
         _check_field_type(self.type)
+        return self
+
+    @model_validator(mode="after")
+    def validate_range_requires_separator(self) -> JsonChannelMapping:
+        """``range`` operates on split parts; requires ``separator``."""
+        if self.range is not None and not self.separator:
+            raise ValueError(f"range '{self.range}' requires 'separator' to be set")
         return self
 
 

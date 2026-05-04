@@ -35,13 +35,8 @@ notes: |
   DS OFDM table has a sub-header row (Pilot/PLC/Data MER columns).
   US OFDMA has a firmware quirk: 9 data cells vs 7 header columns —
   extra cells are subcarrier indices not present in the header.
-  parser.py computes center frequency from first/last subcarrier frequencies.
-
-# TODO: New HAR capture needed for provisioned speed
-# The archive HAR has /cgi-bin/config_params_cgi with SfMaxTrafficRate
-# service flow values (provisioned speed in bps). The current test HAR
-# only captures status_cgi. Re-capture with config_params_cgi included
-# to add provisioned_speed_down / provisioned_speed_up to parser.yaml.
+  parser.py combines first/last subcarrier frequencies into the canonical
+  pair: `frequency` (lower edge) and `channel_width` (band span).
 
 references:
   issues:

@@ -2,7 +2,10 @@
 
 Fixture-driven tests with synthesized JSON data. Each fixture contains
 a JSON response, a JSONSection config, and expected channel output.
-No modem-specific references.
+Optionally a fixture may declare ``_expected_warnings``: a list of
+substrings that must each appear in at least one WARN-level log
+record. An empty list asserts no WARNs were emitted (useful for
+sparse-data sentinels). No modem-specific references.
 
 Adding a test case = drop a JSON file in fixtures/json_parser/valid/.
 """
@@ -10,6 +13,7 @@ Adding a test case = drop a JSON file in fixtures/json_parser/valid/.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -46,8 +50,13 @@ def _build_resources(
     VALID_FIXTURES,
     ids=[f.stem for f in VALID_FIXTURES],
 )
-def test_extraction(fixture_path: Path) -> None:
-    """Parse JSON data and verify extracted channels match expected."""
+def test_extraction(fixture_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Parse JSON data and verify extracted channels match expected.
+
+    When the fixture declares ``_expected_warnings``, also check that
+    every listed substring appears in at least one WARN-level record
+    (or that no WARNs fired, when the list is empty).
+    """
     data = _load_fixture(fixture_path)
 
     # Multi-resource fixtures use _resources dict; single-resource use _resource + _json
@@ -60,12 +69,24 @@ def test_extraction(fixture_path: Path) -> None:
     section_config = JSONSection.model_validate(data["_config"])
     parser = JSONParser(section_config)
 
-    result = parser.parse(resources)
+    with caplog.at_level(logging.WARNING):
+        result = parser.parse(resources)
     expected = data["_expected"]
 
     assert result == expected, (
         f"Mismatch for {fixture_path.stem}:\n" f"  actual:   {result}\n" f"  expected: {expected}"
     )
+
+    if "_expected_warnings" in data:
+        warn_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        warn_messages = [r.message for r in warn_records]
+        if not data["_expected_warnings"]:
+            assert not warn_records, f"{fixture_path.stem}: expected no WARNs, got {warn_messages}"
+        else:
+            for substring in data["_expected_warnings"]:
+                assert any(
+                    substring in m for m in warn_messages
+                ), f"{fixture_path.stem}: expected WARN containing {substring!r}, got {warn_messages}"
 
 
 NAVIGATE_PATH_CASES = [

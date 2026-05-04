@@ -22,9 +22,23 @@ downstream:
     - key: ChannelID
       field: channel_id
       type: integer
+    # OFDM rows report Frequency as a "low~high" band; SC-QAM rows
+    # report a numeric MHz value. separator_index 0 picks the lower
+    # edge for OFDM (see FIELD_REGISTRY.md § frequency semantics);
+    # SC-QAM numeric values pass through (separator only applies to
+    # strings containing it).
     - key: Frequency
       field: frequency
       type: frequency
+      separator: "~"
+      separator_index: 0
+    # OFDM channel_width from the same band range. range:span silently
+    # skips SC-QAM rows (no separator in the raw value).
+    - key: Frequency
+      field: channel_width
+      type: frequency
+      separator: "~"
+      range: span
     - key: SNRLevel
       field: snr
       type: float
@@ -60,9 +74,17 @@ upstream:
     - key: ChannelID
       field: channel_id
       type: integer
+    # Same shape and convention as downstream — see comment above.
     - key: Frequency
       field: frequency
       type: frequency
+      separator: "~"
+      separator_index: 0
+    - key: Frequency
+      field: channel_width
+      type: frequency
+      separator: "~"
+      range: span
     - key: Modulation
       field: modulation
       type: string

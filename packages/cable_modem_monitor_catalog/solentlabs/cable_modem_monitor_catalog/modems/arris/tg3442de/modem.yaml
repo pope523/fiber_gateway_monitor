@@ -43,11 +43,11 @@ actions:
 
 hardware:
   docsis_version: "3.1"
-  chipset: Intel Puma 7
+  chipset: "Intel Puma 7 (FHCE2752M)"
 
 timeout: 10
 
-status: awaiting_verification
+status: confirmed
 sources:
   auth_config: "[#86 Arris TG3442DE](https://github.com/solentlabs/cable_modem_monitor/issues/86)"
   chipset: "[TG3442DE Teardown](https://github.com/nox-x/TG3442DE-Teardown)"

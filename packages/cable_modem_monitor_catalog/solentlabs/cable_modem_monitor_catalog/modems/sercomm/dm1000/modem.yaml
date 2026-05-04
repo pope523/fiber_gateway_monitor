@@ -45,6 +45,18 @@ notes: |
   Content-Type: applation/json (typo in firmware). Upstream frequencies in MHz
   (not Hz). Inactive channels: modulation=QAM_NONE, rep_power=-inf.
 
+  OFDM/OFDMA channels carry no `frequency` field. The firmware only
+  exposes single sercomm-specific values (`OFDMFreq` downstream,
+  `Center Freq SC0` upstream) with no subcarrier metadata, and the
+  test HAR shows the downstream OFDM value at 827.6 MHz overlapping
+  real SC-QAM channels at 825-861 MHz — physically impossible if it
+  were the active-band lower edge. Most likely it's the CMTS-assigned
+  channel placement frequency, the same concept as the DOCSIS 3.1
+  legacy `docsIfDownChannelTable` shadow frequency (see g54's
+  parser.yaml). Reporting nothing beats misreporting placement-as-edge;
+  hardware verification can revisit if firmware grows a real lower-edge
+  field.
+
 references:
   issues:
     - "[#92 — [Modem Request] Sercomm DM1000](https://github.com/solentlabs/cable_modem_monitor/issues/92)"

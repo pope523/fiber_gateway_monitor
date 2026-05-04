@@ -1,4 +1,4 @@
-"""PostProcessor for {manufacturer}/{model} — OFDMA and system_info extraction.
+"""PostProcessor for Sercomm DM1000 — OFDMA and system_info extraction.
 
 Extends the parser.yaml-driven extraction with two hooks:
 
@@ -65,12 +65,17 @@ class PostProcessor:
             if "OPERATE" not in state:
                 continue
 
-            freq_mhz = float(ch_data.get("Center Freq SC0", "0"))
+            # "Center Freq SC0" is the only OFDMA frequency-shaped value
+            # sercomm exposes; semantic is sercomm-specific and likely the
+            # CMTS-assigned channel placement frequency rather than the
+            # active-band lower edge required by FIELD_REGISTRY.md §
+            # frequency semantics. Not mapping to canonical `frequency`
+            # until hardware verification clarifies. See parser.yaml's
+            # OFDM section for the parallel reasoning.
             channels.append(
                 {
                     "channel_id": int(ch_data.get("CH", "0")),
                     "channel_type": "ofdma",
-                    "frequency": int(freq_mhz * 1_000_000),
                     "power": float(ch_data.get("rep power", "0")),
                 }
             )

@@ -31,6 +31,31 @@ present only on JS-embedded modems when the per-function position
 differs from the unified `channel_number`. See
 [CHANNEL_IDENTIFICATION_SPEC.md](CHANNEL_IDENTIFICATION_SPEC.md) §10.
 
+### `frequency` semantics
+
+Hz, integer. The same field name carries different physical meaning
+across channel types — but the catalog stores one canonical value
+per channel, by convention:
+
+| `channel_type` | What `frequency` represents |
+|----------------|-----------------------------|
+| `qam`, `atdma` | Carrier center frequency (the SC-QAM channel is a single 6/8 MHz carrier; center is unambiguous) |
+| `ofdm`, `ofdma` | **Lower edge of the active subcarrier band** |
+
+The OFDM/OFDMA convention is "lower edge" — not center, not FFT-block
+boundary — for fleet consistency. Different firmwares report the band
+in different shapes (a single MHz value, a `"low~high"` range string,
+a discrete `firstFrequency` key, a `firstActiveSubcarrier` index, etc.);
+each parser.yaml maps whichever firmware shape lands at the lower edge,
+and downstream consumers can treat the value uniformly. `channel_width`
+(Tier 2) carries the band span when the firmware exposes it.
+
+How this convention was chosen: CM2050V's reported OFDM frequency
+(690 MHz) overlaps SC-QAM channels at 642–651 MHz if interpreted as
+center, which is physically impossible (no spectrum sharing). Lower
+edge places the 96 MHz block at 690–786 MHz, clear of SC-QAM, matching
+DOCSIS 3.1 OSSI MIB `docsIf31CmDsOfdmChanLowerBoundaryFrequency`.
+
 ### Canonical channel key order (JSON serialization)
 
 Channel dicts are presented in a fixed key order when serialized to JSON

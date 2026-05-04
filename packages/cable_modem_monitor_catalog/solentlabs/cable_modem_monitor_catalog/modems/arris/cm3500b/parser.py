@@ -1,8 +1,9 @@
 """Post-processor for ARRIS CM3500B — OFDM channel enrichment.
 
-Computes OFDM center frequency from first/last subcarrier frequencies
-(both in MHz, averaged and converted to Hz). parser.yaml cannot
-express computed fields across two source columns.
+Sets OFDM ``frequency`` to the lower edge of the active subcarrier
+band (the first subcarrier frequency, in Hz) per FIELD_REGISTRY.md
+§ frequency semantics. ``channel_width`` is mapped directly from the
+firmware's bandwidth column in parser.yaml.
 
 ``channel_id`` is set from ``source_channel_number`` — the label
 index extracted by parser.yaml (``"Downstream 1"`` → ``1``). The
@@ -43,18 +44,19 @@ class PostProcessor:
 
 
 def _enrich_ofdm_channel(channel: dict[str, Any]) -> None:
-    """Compute center frequency and set channel ID for an OFDM channel.
+    """Set channel ID and lower-edge frequency for an OFDM channel.
 
     Modifies the channel dict in place:
     - ``channel_id``: from ``source_channel_number`` (label index).
-    - ``frequency``: center of first/last subcarrier in Hz.
+    - ``frequency``: first subcarrier frequency in Hz (lower edge).
+
+    ``last_subcarrier_freq`` is dropped (channel_width is mapped
+    directly by parser.yaml from the firmware bandwidth column).
     """
     # Use label index as channel_id (no DCID available in firmware)
     channel["channel_id"] = channel.get("source_channel_number", 0)
 
-    # Compute center frequency from first/last subcarrier (both in MHz)
     first_mhz = channel.pop("first_subcarrier_freq", None)
-    last_mhz = channel.pop("last_subcarrier_freq", None)
-    if first_mhz is not None and last_mhz is not None:
-        center_mhz = (float(first_mhz) + float(last_mhz)) / 2
-        channel["frequency"] = int(center_mhz * 1_000_000)
+    channel.pop("last_subcarrier_freq", None)
+    if first_mhz is not None:
+        channel["frequency"] = int(float(first_mhz) * 1_000_000)

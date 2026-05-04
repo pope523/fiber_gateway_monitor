@@ -271,7 +271,7 @@
       "channel_type": "ofdm",
       "channel_width": 190000000,
       "fft_type": "4K",
-      "frequency": 229500000,
+      "frequency": 135000000,
       "snr": 43.0,
       "source_channel_number": 1
     },
@@ -282,7 +282,7 @@
       "channel_type": "ofdm",
       "channel_width": 110000000,
       "fft_type": "4K",
-      "frequency": 805500000,
+      "frequency": 751000000,
       "snr": 29.0,
       "source_channel_number": 2
     }
@@ -341,7 +341,7 @@
       "channel_type": "ofdma",
       "channel_width": 32000000,
       "fft_type": "2K",
-      "frequency": 47300000,
+      "frequency": 29800000,
       "power": 45.0,
       "source_channel_number": 0
     }

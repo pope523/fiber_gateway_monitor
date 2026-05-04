@@ -30,8 +30,18 @@ downstream:
         - key: "uncorrectableCodewords"
           field: uncorrected
           type: integer
+      # DOCSIS 3.1 OSSI requires every downstream channel — SC-QAM and
+      # OFDM — to be enumerable in the legacy docsIfDownChannelTable.
+      # OFDM channels appear there with modulation="unsupported" (the
+      # legacy modulation enum has no OFDM value); rich OFDM data lives
+      # in docsIf31CmDsOfdmChanTable. g54's web API mirrors this — the
+      # ofdmchannel array below is the canonical source for OFDM rows;
+      # the dschannel "UNSUPPORTED" entries are DCID-registration
+      # shadows of the same physical channels and would double-count.
       filter:
         lock_status: "locked"
+        modulation:
+          not: "UNSUPPORTED"
 
     - array_path: "docsis.ofdmchannel.ofdmchannel"
       channel_type:
@@ -43,6 +53,11 @@ downstream:
         - key: "modulation"
           field: modulation
           type: string
+        # See FIELD_REGISTRY.md § frequency semantics — OFDM/OFDMA
+        # frequency is the lower edge of the active subcarrier band.
+        - key: "firstFrequency"
+          field: frequency
+          type: frequency
         - key: "powerLevel"
           field: power
           type: float
@@ -112,6 +127,10 @@ upstream:
         - key: "modulation"
           field: modulation
           type: string
+        # See FIELD_REGISTRY.md § frequency semantics.
+        - key: "firstFrequency"
+          field: frequency
+          type: frequency
         - key: "reportPower"
           field: power
           type: float

@@ -771,6 +771,24 @@ Examine the data for placeholder/invalid rows:
 | Rows with "Not Locked" or "Unlocked" status | `filter: { lock_status: "Locked" }` |
 | HNAP channels with channel_id 0 | `filter: { channel_id: { not: 0 } }` |
 | Rows with all-zero values | `filter: { frequency: { not: 0 } }` |
+| DOCSIS 3.1 modem, legacy downstream channel array contains rows with `modulation: "UNSUPPORTED"` (or `"unsupported"`) | `filter: { modulation: { not: "UNSUPPORTED" } }` — see note below |
+
+**DOCSIS 3.1 OFDM shadows in the legacy SC-QAM array.** DOCSIS 3.1
+OSSI requires every downstream channel — SC-QAM and OFDM — to be
+enumerable in the legacy `docsIfDownChannelTable`. OFDM channels
+appear there with modulation reported as `"unsupported"` (the legacy
+modulation enum has no OFDM value); the rich OFDM data is exposed
+in a separate `docsIf31CmDsOfdmChanTable`. Many vendor web APIs
+mirror this shape — a "downstream channels" endpoint returns both
+real SC-QAM rows and OFDM-shadow rows with `modulation: UNSUPPORTED`,
+while a separate "OFDM channels" endpoint carries the canonical OFDM
+data. When parser.yaml extracts SC-QAM from the legacy array, add
+`filter: { modulation: { not: "UNSUPPORTED" } }` so the shadows
+don't double-count alongside the OFDM-array extraction. The shadow
+rows' `frequency` is typically a CMTS-assigned channel placement
+value, not the active subcarrier band edge — different concept from
+the canonical `frequency` field (see `core/docs/FIELD_REGISTRY.md`
+§ `frequency` semantics).
 
 ### Post-Analysis: JS Endpoint Discovery
 

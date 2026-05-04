@@ -190,29 +190,43 @@ def _extract_channel(
 
     Tries the primary ``key`` first, then ``fallback_key`` if present.
     Returns ``None`` if no fields could be extracted.
+
+    Raw values that are absent or whitespace-only are silently skipped
+    (sparse-data signal). Non-empty raw values that fail to coerce —
+    after any declared ``separator``/``range_op`` transform — surface
+    as WARN logs so catalog gaps don't go unnoticed when firmware
+    introduces a novel shape.
     """
     channel: dict[str, Any] = {}
 
     for mapping in mappings:
-        raw_value = item.get(mapping.key)
+        original_raw = item.get(mapping.key)
 
         # Try fallback key if primary is missing
-        if raw_value is None and mapping.fallback_key:
-            raw_value = item.get(mapping.fallback_key)
+        if original_raw is None and mapping.fallback_key:
+            original_raw = item.get(mapping.fallback_key)
 
-        if raw_value is None:
+        if original_raw is None:
+            continue
+        if isinstance(original_raw, str) and not original_raw.strip():
             continue
 
         # Boolean truthy check: compare against declared truthy value
         if mapping.truthy is not None:
-            channel[mapping.field] = raw_value == mapping.truthy
+            channel[mapping.field] = original_raw == mapping.truthy
             continue
 
-        # Apply separator split before type conversion
-        if mapping.separator and isinstance(raw_value, str):
-            parts = raw_value.split(mapping.separator)
-            idx = mapping.separator_index
-            raw_value = parts[idx] if idx < len(parts) else raw_value
+        raw_value, transform_warned = _apply_transform(original_raw, mapping)
+
+        if raw_value is None:
+            if not transform_warned:
+                _logger.warning(
+                    "Field '%s' (type=%s): transform produced no value for raw %r",
+                    mapping.field,
+                    mapping.type,
+                    original_raw,
+                )
+            continue
 
         value = convert_value(
             raw_value,
@@ -223,10 +237,88 @@ def _extract_channel(
             input_format=mapping.format,
         )
 
-        if value is not None:
-            channel[mapping.field] = value
+        if value is None:
+            _logger.warning(
+                "Field '%s' (type=%s): cannot coerce raw value %r — "
+                "no extractor handled this shape. Declare a separator "
+                "or range in parser.yaml if firmware uses a compound format.",
+                mapping.field,
+                mapping.type,
+                original_raw,
+            )
+            continue
+
+        channel[mapping.field] = value
 
     return channel if channel else None
+
+
+def _apply_transform(
+    raw_value: Any,
+    mapping: JsonChannelMapping,
+) -> tuple[Any, bool]:
+    """Apply separator + optional range transform before type conversion.
+
+    Returns ``(transformed_value, transform_warned)``. ``transform_warned``
+    is True when the transform itself logged a WARN or intentionally
+    suppressed silent-fail surfacing for an expected-skip case (e.g.
+    ``range`` declared but raw isn't range-shaped — SC-QAM rows reading
+    the same key as OFDM range rows).
+    """
+    if mapping.range == "span":
+        # Only produce a value when raw is a string carrying the separator.
+        # Mixed-shape tables (SC-QAM numeric Frequency in the same array as
+        # OFDM range strings) land in the silent-skip branch.
+        if mapping.separator and isinstance(raw_value, str) and mapping.separator in raw_value:
+            parts = raw_value.split(mapping.separator)
+            transformed = _compute_span(parts, raw_value, mapping.field)
+            return transformed, transformed is None
+        return None, True  # intentional silent skip
+
+    if mapping.separator and isinstance(raw_value, str):
+        parts = raw_value.split(mapping.separator)
+        idx = mapping.separator_index
+        return (parts[idx] if idx < len(parts) else raw_value), False
+
+    return raw_value, False
+
+
+def _compute_span(parts: list[str], original_raw: Any, field_name: str) -> str | None:
+    """Compute ``last - first`` from separator-split parts.
+
+    Used by ``range_op: span`` to derive a band span (e.g. OFDM
+    ``channel_width``) from a band-edge string like ``"751~860"``.
+    Returns the span as a string for downstream type coercion. Returns
+    ``None`` and WARN-logs on shape surprises so the catalog author is
+    notified rather than silently absorbing an unexpected value.
+    """
+    if len(parts) < 2:
+        _logger.warning(
+            "Field '%s': range_op span needs separator-split parts, " "got single value %r — firmware shape change?",
+            field_name,
+            original_raw,
+        )
+        return None
+    try:
+        low = float(parts[0].strip())
+        high = float(parts[-1].strip())
+    except ValueError:
+        _logger.warning(
+            "Field '%s': cannot parse range bounds in %r as numbers.",
+            field_name,
+            original_raw,
+        )
+        return None
+    if high <= low:
+        _logger.warning(
+            "Field '%s': range bounds reversed or zero in %r (low=%s, high=%s).",
+            field_name,
+            original_raw,
+            low,
+            high,
+        )
+        return None
+    return str(high - low)
 
 
 def _apply_channel_type(

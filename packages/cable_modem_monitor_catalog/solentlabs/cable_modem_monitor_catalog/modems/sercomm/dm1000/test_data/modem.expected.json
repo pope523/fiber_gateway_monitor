@@ -356,7 +356,6 @@
       "channel_id": 0,
       "channel_number": 33,
       "channel_type": "ofdm",
-      "frequency": 275600000,
       "power": 11.199997,
       "snr": 41.0
     },
@@ -364,7 +363,6 @@
       "channel_id": 1,
       "channel_number": 34,
       "channel_type": "ofdm",
-      "frequency": 827600000,
       "power": 13.0,
       "snr": 41.0
     }
@@ -419,7 +417,6 @@
     {
       "channel_id": 0,
       "channel_type": "ofdma",
-      "frequency": 42000000,
       "power": 43.391663
     }
   ]

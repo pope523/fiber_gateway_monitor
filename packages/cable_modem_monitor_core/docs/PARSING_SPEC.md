@@ -423,10 +423,17 @@ class PostProcessor:
     def parse_downstream(
         self, channels: list[dict], resources: dict[str, Any]
     ) -> list[dict]:
-        """Convert OFDM frequency ranges to center frequencies."""
+        """Compute OFDM `frequency` from a non-standard firmware shape.
+
+        OFDM ``frequency`` is the lower edge of the active subcarrier
+        band — see FIELD_REGISTRY.md § frequency semantics. Most
+        firmwares fit `range: span` (band string) or a discrete
+        lower-edge key; reach for a PostProcessor only when the
+        firmware shape is novel.
+        """
         for ch in channels:
             if ch.get("channel_type") == "ofdm" and ch.get("freq_start"):
-                ch["frequency"] = (ch["freq_start"] + ch["freq_end"]) // 2
+                ch["frequency"] = ch["freq_start"]
         return channels
 
     def parse_system_info(
@@ -623,7 +630,7 @@ reported by roughly half the fleet.
 
 | Field | Type | Notes |
 | ----- | ---- | ----- |
-| `frequency` | int | Center frequency in Hz (when available) |
+| `frequency` | int | Hz; lower edge of active subcarrier band (when available). See [FIELD_REGISTRY.md § `frequency` semantics](FIELD_REGISTRY.md#frequency-semantics). |
 | `power` | float | dBmV (PLC power) |
 | `snr` | float | Average RxMER in dB |
 | `corrected` | int | LDPC codeword corrections (when available) |
@@ -634,7 +641,7 @@ reported by roughly half the fleet.
 
 | Field | Type | Notes |
 | ----- | ---- | ----- |
-| `frequency` | int | Center frequency in Hz (when available) |
+| `frequency` | int | Hz; lower edge of active subcarrier band (when available). See [FIELD_REGISTRY.md § `frequency` semantics](FIELD_REGISTRY.md#frequency-semantics). |
 | `power` | float | dBmV |
 | `modulation` | str | Optional. Same rules as OFDM downstream. |
 
