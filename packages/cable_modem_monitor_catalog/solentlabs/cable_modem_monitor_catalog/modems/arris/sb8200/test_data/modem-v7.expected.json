@@ -1,4 +1,5 @@
 {
+  "_about": "Capture for SB8200 hardware v7 firmware (AB01.02.053_082120, Spectrum). Stem walk resolves to modem-v7.yaml (Tier 1 exact match) — distinct config variant, not a runtime variant of modem.yaml. Wire shape: bare-base64 credentials in the login URL (no login_ prefix), session established via the 'credential' cookie, no URL token suffix on data fetches (no token_prefix in the yaml). Captured by northstarcomp via Playwright (#124). See packages/cable_modem_monitor_core/docs/MODEM_DIRECTORY_SPEC.md § test_data/ Directory.",
   "downstream": [
     {
       "channel_id": 32,

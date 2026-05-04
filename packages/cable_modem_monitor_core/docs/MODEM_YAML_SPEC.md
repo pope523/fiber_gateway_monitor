@@ -451,15 +451,18 @@ auth:
 1. **Data page detection:** Response body **contains** `success_indicator`
    → the body is the data page itself (modem served data directly during
    login). Token is `None` — no URL injection needed. The response is
-   passed to the loader as an auth response reuse candidate.
+   passed to the loader as an auth response reuse candidate
+   (`AuthResult.response` and `AuthResult.response_url` are set).
 2. **Token extraction gate:** Response body **does not contain** indicator
    → the body is treated as a server-issued session token (typically
    20-40 chars alphanumeric). Extracted via `response.text.strip()` →
-   `auth_context.url_token`.
+   `auth_context.url_token`. `AuthResult.response`/`response_url` MUST
+   stay unset — see reuse contract below.
 3. **Empty body fallback:** Body is empty → fall back to cookie via
-   `cookie_name`.
+   `cookie_name`. `AuthResult.response`/`response_url` MUST stay unset.
 4. **Empty cookie fallback:** Cookie is empty → no token injection
-   (loader attempts without).
+   (loader attempts without). `AuthResult.response`/`response_url`
+   MUST stay unset.
 
 The collector prefers `auth_context.url_token` (body-derived) over
 cookie extraction when both are available. This ordering matters because
@@ -469,6 +472,16 @@ differs from the cookie value.
 Without the `success_indicator` guard, the auth manager would use an
 entire HTML data page as a URL parameter, silently breaking any
 url_token variant where the login response returns data directly.
+
+**Reuse contract — load-bearing for url_token.** The login URL and a
+parser data page often share the same path (SB8200 logs in at
+`/cmconnectionstatus.html` and parses the same path). Branches 2-4
+above produce a non-data-page response at that path; advertising it
+for loader reuse causes the loader to surface the auth artefact —
+or empty body — as the parsed data page and skip the real fetch.
+See `RESOURCE_LOADING_SPEC.md` § Auth Response Reuse and the
+`AuthResult` docstring in `auth/base.py` for the full contract.
+Regression: SB8200 #81 (v3.14.0-beta.2 dtaubert — 0/0 channels).
 
 **Pre-login cookie clearing:** Before the login request, the auth
 manager deletes any existing session cookie (`cookie_name`) from the

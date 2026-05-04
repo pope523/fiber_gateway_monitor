@@ -108,7 +108,14 @@ class _MockHandler(BaseHTTPRequestHandler):
             return
 
         # Serve from route table
-        route = _find_route(server.routes, method, path, route_path)
+        route = _find_route(
+            server.routes,
+            method,
+            path,
+            route_path,
+            login_page=server.login_page,
+            token_prefix=server.token_prefix,
+        )
         if route is None:
             self._send_response(404, [], "Not Found")
             return
@@ -154,7 +161,14 @@ class _MockHandler(BaseHTTPRequestHandler):
             return
 
         # Form auth fallthrough — route table + set_authenticated
-        route = _find_route(server.routes, method, path, route_path)
+        route = _find_route(
+            server.routes,
+            method,
+            path,
+            route_path,
+            login_page=server.login_page,
+            token_prefix=server.token_prefix,
+        )
         if route is None:
             self._send_response(404, [], "Not Found")
             return
@@ -188,6 +202,8 @@ def _find_route(
     method: str,
     path: str,
     route_path: str,
+    login_page: str = "",
+    token_prefix: str = "",
 ) -> Any:
     """Look up a route by method and path, with query-string fallback.
 
@@ -202,14 +218,29 @@ def _find_route(
     ``/setup.cgi?todo=X``) and dynamic URL token suffixes.
     Tier 3 handles HARs that captured incidental query params
     (e.g. ``?status=1``) that aren't part of the resource path.
+
+    **Login-page disambiguation.** When ``login_page`` is set and the
+    request targets that path with a query string, the request is a
+    login GET — unless ``token_prefix`` is set and the query starts
+    with it, in which case it's a token-suffixed data fetch. Login
+    GETs match against captured login HAR entries (path with query)
+    only; they MUST NOT fall back to a bare-path data entry, which
+    would silently substitute the data page for the login response
+    and mask auth-side bugs end-to-end. Data fetches use the normal
+    Tier 1-3 lookup. Regression: SB8200 #81.
     """
+    has_query = route_path != path
+
     # Tier 1: exact match
     route = routes.get((method, route_path))
     if route is not None:
         return route
 
+    if _is_login_get(path, has_query, route_path, login_page, token_prefix):
+        return _find_login_entry(routes, method, path, token_prefix)
+
     # Tier 2: request has query, route stored without
-    if route_path != path:
+    if has_query:
         route = routes.get((method, path))
         if route is not None:
             return route
@@ -219,6 +250,46 @@ def _find_route(
         if m == method and rp.split("?", 1)[0] == path:
             return r
 
+    return None
+
+
+def _is_login_get(
+    path: str,
+    has_query: bool,
+    route_path: str,
+    login_page: str,
+    token_prefix: str,
+) -> bool:
+    """True if the request is a login GET at ``login_page``."""
+    if not login_page or path != normalize_path(login_page) or not has_query:
+        return False
+    # Data fetch with token suffix at login_page is not a login GET.
+    query = route_path.split("?", 1)[1]
+    return not (token_prefix and query.startswith(token_prefix))
+
+
+def _find_login_entry(
+    routes: dict[tuple[str, str], Any],
+    method: str,
+    path: str,
+    token_prefix: str,
+) -> Any:
+    """Return the captured login HAR entry for ``path``, or ``None``.
+
+    Picks the first route whose key has the same path and a non-empty
+    query string. Skips data-shape entries (query starts with
+    ``token_prefix``) so SB8200-style fixtures with both login and
+    token-suffixed data entries at the same path don't cross-route.
+    """
+    for (m, rp), r in routes.items():
+        if m != method:
+            continue
+        entry_path, _, entry_query = rp.partition("?")
+        if entry_path != path or not entry_query:
+            continue
+        if token_prefix and entry_query.startswith(token_prefix):
+            continue
+        return r
     return None
 
 
@@ -259,6 +330,8 @@ class HARMockServer(HTTPServer):
     ) -> None:
         self.routes = build_routes(har_entries)
         self.auth_handler = create_auth_handler(modem_config, har_entries)
+        self.login_page = _extract_login_page(modem_config)
+        self.token_prefix = _extract_token_prefix(modem_config)
         self._thread: threading.Thread | None = None
 
         super().__init__((host, port), _MockHandler)
@@ -282,3 +355,17 @@ class HARMockServer(HTTPServer):
         if self._thread is not None:
             self._thread.join(timeout=5)
         self.server_close()
+
+
+def _extract_login_page(modem_config: ModemConfig | None) -> str:
+    """Return the ``auth.login_page`` if the strategy declares one."""
+    if modem_config is None or modem_config.auth is None:
+        return ""
+    return getattr(modem_config.auth, "login_page", "") or ""
+
+
+def _extract_token_prefix(modem_config: ModemConfig | None) -> str:
+    """Return ``auth.token_prefix`` (url_token strategy) if declared."""
+    if modem_config is None or modem_config.auth is None:
+        return ""
+    return getattr(modem_config.auth, "token_prefix", "") or ""

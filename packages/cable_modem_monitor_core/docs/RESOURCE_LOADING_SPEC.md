@@ -224,6 +224,22 @@ reuses that response instead of re-fetching. This avoids an extra HTTP
 round-trip and is common with form auth modems that redirect to a
 dashboard page after login.
 
+**Contract — load-bearing.** Reuse keys on `AuthResult.response` and
+`AuthResult.response_url`. Auth managers MUST populate these fields
+only when the response body is itself a parser-consumable data page
+for the path in `response_url`. Strategies that return opaque
+artefacts (session tokens in the body, empty bodies, redirect
+landings on non-data pages) MUST leave both fields unset; otherwise
+the loader decodes the artefact as the data page and silently skips
+the real fetch. See `auth/base.py` `AuthResult` docstring and
+`MODEM_YAML_SPEC.md` § `url_token`. Regression: SB8200 #81.
+
+The contract is unit-tested at the auth-strategy boundary (each
+strategy's `test_*_branch_does_not_advertise_reuse`) and at the
+loader boundary (`test_no_reuse_when_auth_result_has_no_response`).
+Adding a new auth strategy with a non-data-page success path
+requires both tests.
+
 ---
 
 ## Timeout

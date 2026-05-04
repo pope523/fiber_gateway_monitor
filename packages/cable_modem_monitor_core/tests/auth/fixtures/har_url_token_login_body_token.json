@@ -1,0 +1,16 @@
+{
+  "_description": "URL token auth: login response body is a 31-char session token (SB8200 AB01 firmware shape per #81 dtaubert log)",
+  "_entries": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "http://192.168.100.1/login.html"
+      },
+      "response": {
+        "status": 200,
+        "headers": [],
+        "content": {"text": "ddgFdG7bqJDDJIBXNfyMSPfDdgjG8PC"}
+      }
+    }
+  ]
+}

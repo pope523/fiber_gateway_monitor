@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **SB8200 url_token data fetch returns 0/0 channels (#81).** The
+  url_token auth manager populated `AuthResult.response` and
+  `AuthResult.response_url` on its token-extraction branch (body is
+  a session token, not a data page). The loader's auth-response
+  reuse logic — which keys on those fields — then surfaced the
+  token string as the parsed data page and skipped the real
+  `?ct_<token>` data fetch. The fix returns `AuthResult` from the
+  token branch with `response`/`response_url` unset; only the
+  data-page branch (success_indicator present in body) advertises
+  reuse. Contract tightened in `AuthResult` docstring +
+  ORCHESTRATION_SPEC + RESOURCE_LOADING_SPEC + MODEM_YAML_SPEC,
+  with paired auth/loader unit tests pinning both branches. Bug
+  present from v3.14.0-alpha.7 (d7806b0a, "G-1 url_token body
+  token extraction") through beta.2.
+
+  Symptom shape (auth success, parser finds no tables, no
+  LoginPageDetectedError) matches dtaubert's 2026-05-03 beta.2
+  trace; hardware verification still required to confirm the fix
+  resolves #81 specifically. Full evidence chain in the commit
+  message.
+- **Test harness Tier 2 routing masked auth-side bugs at login_page
+  paths.** When a modem's login URL and a parser-fetched data page
+  share a path (SB8200 logs in at `/cmconnectionstatus.html` and
+  the parser fetches `/cmconnectionstatus.html`), `_find_route`
+  Tier 2 collapsed a live login GET (with sanitized credentials in
+  the query) onto the bare-path data entry, handing the data page
+  back as the login response. Routing now requires login GETs to
+  match a captured login HAR entry (path with query); only
+  token-suffixed data fetches use the bare-path fallback. Surfaced
+  the SB8200 fixture mismatch above. Login-page disambiguation is
+  unit-tested in `test_har_mock_server.py::TestFindRouteLoginDisambiguation`.
+
+### Added
+
+- **SB8200 catalog fixtures exercising both auth-manager
+  extraction branches against the same AB01 firmware variant.**
+  `arris/sb8200/test_data/modem.har` is the post-sanitization
+  Travis #81 HAR (login response body stripped to empty) —
+  exercises the cookie-fallback branch where `_extract_token`
+  returns the cookie value when the body is empty.
+  `modem-body-token.har` is a synthetic capture of the same
+  firmware's actual production wire shape — 31-byte session
+  token in the login response body, matching Travis's
+  `bodySize: 31` and dtaubert's v3.13.0-beta.5 wire trace.
+  Both exercise the active `modem.yaml` (login_prefix=`login_`,
+  token_prefix=`ct_`, cookie_name=`sessionId`); together they
+  pin the two `_extract_token` branches against runtime drift.
+  Replaces the previous `modem.har` which was no-auth-shaped
+  and passed only because of the harness routing bug above.
+
 ## [3.14.0-beta.3] - 2026-05-01
 
 ### Added

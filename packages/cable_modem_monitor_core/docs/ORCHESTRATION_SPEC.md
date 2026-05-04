@@ -291,6 +291,27 @@ See ARCHITECTURE_DECISIONS.md § "Auth-failure detail via single
 WARNING log" for the design rationale (replaces an earlier session-
 adapter capture mechanism that was over-engineered for the goal).
 
+#### AuthResult Reuse Contract (success path)
+
+On the **success** path, ``AuthResult.response`` and
+``AuthResult.response_url`` advertise an auth-response-reuse
+opportunity to the loader. The loader decodes ``response.text`` as
+the data page for ``response_url`` and skips re-fetching that path.
+
+These fields MUST be set only when the login response body is itself
+a parser-consumable data page for ``response_url``. Strategies that
+return opaque artefacts (session tokens in the body, empty bodies,
+non-data-page redirect landings) MUST leave both fields unset.
+Violating this contract surfaces the auth artefact as the parsed
+data page and silently produces empty results.
+
+The contract is canonically documented in the ``AuthResult``
+docstring (``auth/base.py``) and replicated in
+``RESOURCE_LOADING_SPEC.md`` § Auth Response Reuse. Each auth
+strategy unit-tests both branches (positive: data-page advertises
+reuse; negative: artefact branches do not). Adding a new auth
+strategy requires both tests. Regression: SB8200 #81.
+
 ### Exceptions
 
 ModemDataCollector does **not** raise exceptions to the orchestrator. All

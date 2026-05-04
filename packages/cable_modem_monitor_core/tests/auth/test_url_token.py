@@ -84,6 +84,40 @@ class TestUrlTokenAuthManager:
             assert result.success is True
             assert result.auth_context.url_token == "Error: bad credentials"
 
+    def test_token_branch_does_not_advertise_reuse(self, session: requests.Session) -> None:
+        """Token-extraction branch must NOT populate response/response_url.
+
+        Per AuthResult contract (auth/base.py) and RESOURCE_LOADING_SPEC.md
+        § Auth Response Reuse, ``response`` and ``response_url`` exist solely
+        to flag a login response that landed on a data page so the loader
+        can skip re-fetching. When the body is just a session token, the
+        login URL still resolves to a parser-configured path (e.g.,
+        ``/cmconnectionstatus.html`` for SB8200) — but the body is not the
+        data page. Advertising it as reusable causes the loader to decode
+        the token string as HTML and skip the real data fetch.
+
+        Regression: SB8200 #81 (dtaubert v3.14.0-beta.2 — 0/0 channels).
+        """
+        entries, _ = load_auth_fixture("har_url_token_login_body_token.json")
+        with HARMockServer(entries) as server:
+            config = UrlTokenAuth(
+                strategy="url_token",
+                login_page="/login.html",
+                login_prefix="login_",
+                success_indicator="Downstream Bonded Channels",
+                token_prefix="ct_",
+            )
+            manager = UrlTokenAuthManager(config)
+            manager.configure_session(session, {})
+
+            result = manager.authenticate(session, server.base_url, "admin", "password")
+
+            assert result.success is True
+            assert result.auth_context.url_token == "ddgFdG7bqJDDJIBXNfyMSPfDdgjG8PC"
+            # Contract: token branch does not advertise reuse
+            assert result.response is None
+            assert result.response_url == ""
+
     def test_ajax_login_header(self, session: requests.Session) -> None:
         """AJAX login adds X-Requested-With header."""
         entries, _ = load_auth_fixture("har_url_token_login.json")
@@ -115,19 +149,27 @@ class TestUrlTokenAuthManager:
             assert result.success is True
             assert session.auth == ("admin", "password")
 
-    def test_response_url_captured(self, session: requests.Session) -> None:
-        """Response URL path is captured for auth response reuse."""
+    def test_data_page_branch_advertises_reuse(self, session: requests.Session) -> None:
+        """Data-page branch populates response/response_url for loader reuse.
+
+        Per RESOURCE_LOADING_SPEC.md § Auth Response Reuse, when the login
+        response body IS the data page (success_indicator present), the
+        AuthResult carries the response so the loader can skip re-fetching.
+        Pairs with test_token_branch_does_not_advertise_reuse.
+        """
         entries, _ = load_auth_fixture("har_url_token_login.json")
         with HARMockServer(entries) as server:
             config = UrlTokenAuth(
                 strategy="url_token",
                 login_page="/login.html",
+                success_indicator="Downstream Bonded Channels",
             )
             manager = UrlTokenAuthManager(config)
             manager.configure_session(session, {})
 
             result = manager.authenticate(session, server.base_url, "admin", "password")
             assert result.success is True
+            assert result.response is not None
             assert result.response_url == "/login.html"
 
     def test_cookies_available_for_runner(self, session: requests.Session) -> None:

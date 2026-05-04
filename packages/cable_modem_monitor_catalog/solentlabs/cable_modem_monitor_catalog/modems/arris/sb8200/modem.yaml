@@ -34,7 +34,10 @@ attribution:
         #42)"
     - github: https://github.com/ctravis8892
       contribution: "HTTPS authentication variant (Issue #81)"
-
+    - github: https://github.com/dtaubert
+      contribution:
+        "Hardware testing through v3.13 betas; surfaced v3.14.0-beta.2
+        url_token reuse regression (Issue #81)"
     - github: https://github.com/MapGuy11
       contribution:
         "Verification - Service Electric Cablevision, no-auth HTTP variant

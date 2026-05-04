@@ -194,18 +194,24 @@ class UrlTokenAuthManager(BaseAuthManager):
         if config.auth_header_data:
             session.auth = (username, password)
 
-        response_path = urlparse(response.url).path if response.url else ""
         _logger.log(
             log_level,
             "URL token login succeeded: cookies=%s",
             list(session.cookies.keys()),
         )
 
+        # Contract: token branch must NOT populate response/response_url.
+        # Those fields advertise an auth-response-reuse opportunity to the
+        # loader and only apply when the body IS the data page (the
+        # indicator-present branch above). A token-only body shares the
+        # login URL path with parser-configured data pages on some firmware
+        # (SB8200: /cmconnectionstatus.html), so falsely advertising reuse
+        # would cause the loader to surface the token string as the data
+        # page and skip the real fetch. See AuthResult docstring +
+        # RESOURCE_LOADING_SPEC.md § Auth Response Reuse. Regression: #81.
         return AuthResult(
             success=True,
             auth_context=AuthContext(url_token=url_token),
-            response=response,
-            response_url=response_path,
         )
 
     def _extract_token(

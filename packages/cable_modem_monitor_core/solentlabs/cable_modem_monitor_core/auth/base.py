@@ -42,9 +42,31 @@ class AuthResult:
             See :class:`AuthContext` for available fields.
         response: Login response object. Used for auth response reuse
             — the loader skips re-fetching if the login response landed
-            on a data page.
+            on a data page. Also set on failure (any branch where the
+            modem returned a response) so the collector can render
+            sanitized failure detail.
         response_url: URL path the login response corresponds to.
             May differ from the login URL if a redirect occurred.
+
+    **Reuse contract — load-bearing.** ``response`` and ``response_url``
+    advertise an auth-response-reuse opportunity to the loader, which
+    decodes ``response.text`` as if it were a fetched data page. They
+    MUST NOT be set when:
+
+    - The login response body is an opaque artefact (e.g., a session
+      token string returned for downstream URL injection).
+    - The login response is otherwise not a parser-consumable data page
+      for any path in the fetch list.
+
+    Violating this contract causes the loader to surface the auth
+    artefact as the data page and skip the real fetch — silently
+    producing empty results. See RESOURCE_LOADING_SPEC.md § Auth
+    Response Reuse and MODEM_YAML_SPEC.md § ``url_token``.
+    Regression: SB8200 #81.
+
+    On the failure path (``success=False``), ``response`` may be set
+    so the collector can log sanitized wire detail; ``response_url``
+    is irrelevant there because the loader is not invoked.
     """
 
     success: bool

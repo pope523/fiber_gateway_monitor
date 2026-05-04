@@ -23,10 +23,11 @@ from solentlabs.cable_modem_monitor_core.test_harness.auth import (
     create_auth_handler,
 )
 from solentlabs.cable_modem_monitor_core.test_harness.routes import (
+    RouteEntry,
     build_routes,
     normalize_path,
 )
-from solentlabs.cable_modem_monitor_core.test_harness.server import HARMockServer
+from solentlabs.cable_modem_monitor_core.test_harness.server import HARMockServer, _find_route
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -139,6 +140,135 @@ NORMALIZE_PATH_CASES = [
 def test_normalize_path(input_path: str, expected: str, desc: str) -> None:
     """Path normalization: {desc}."""
     assert normalize_path(input_path) == expected
+
+
+# ---------------------------------------------------------------------------
+# _find_route — login-page disambiguation (regression: SB8200 #81)
+#
+# When a modem's login_page shares a path with parser-fetched data
+# (e.g., SB8200 logs in at /cmconnectionstatus.html and the parser
+# fetches /cmconnectionstatus.html), the harness must not collapse a
+# login GET onto the bare-path data entry. Otherwise the auth manager
+# receives the data page as the login response, masking the real
+# behavior end-to-end.
+# ---------------------------------------------------------------------------
+
+
+def _route(body: str) -> RouteEntry:
+    return RouteEntry(status=200, headers=[], body=body)
+
+
+class TestFindRouteLoginDisambiguation:
+    """Login-page-aware routing for url_token / form modems."""
+
+    def test_login_get_does_not_collapse_to_bare_data_entry(self) -> None:
+        """Login GET with query MUST NOT match a bare-path data entry.
+
+        SB8200-shape HAR: login GET (with query, empty body) plus a
+        bare-path data entry (the page fetched after auth). A live
+        login GET with a different sanitized credential previously
+        fell through to the bare data entry via Tier 2 — handing the
+        data page back as the login response. With login_page set,
+        the route lookup must return the captured login entry only.
+        """
+        routes = {
+            ("GET", "/cmconnectionstatus.html?login_AAAA"): _route("token_value"),
+            ("GET", "/cmconnectionstatus.html"): _route("<html>Downstream Bonded Channels</html>"),
+        }
+
+        result = _find_route(
+            routes,
+            method="GET",
+            path="/cmconnectionstatus.html",
+            route_path="/cmconnectionstatus.html?login_BBBB",
+            login_page="/cmconnectionstatus.html",
+            token_prefix="ct_",
+        )
+
+        assert result is not None
+        assert result.body == "token_value"
+
+    def test_token_suffixed_data_fetch_uses_bare_data_entry(self) -> None:
+        """Data fetches with ``?ct_<token>`` use the bare-path entry.
+
+        This is the normal Tier 2 fallback for url_token data fetches
+        — it must keep working even when the data path equals the
+        login page.
+        """
+        routes = {
+            ("GET", "/cmconnectionstatus.html?login_AAAA"): _route("token_value"),
+            ("GET", "/cmconnectionstatus.html"): _route("<html>Downstream Bonded Channels</html>"),
+        }
+
+        result = _find_route(
+            routes,
+            method="GET",
+            path="/cmconnectionstatus.html",
+            route_path="/cmconnectionstatus.html?ct_dynamic_token",
+            login_page="/cmconnectionstatus.html",
+            token_prefix="ct_",
+        )
+
+        assert result is not None
+        assert "Downstream Bonded Channels" in result.body
+
+    def test_login_get_with_no_login_entry_returns_none(self) -> None:
+        """Login GET with no captured login entry returns None.
+
+        Don't silently substitute the bare data entry — that's the
+        bug we're guarding against. A missing login HAR entry should
+        surface as a 404 so the test author notices.
+        """
+        routes = {
+            ("GET", "/cmconnectionstatus.html"): _route("<html>data</html>"),
+        }
+
+        result = _find_route(
+            routes,
+            method="GET",
+            path="/cmconnectionstatus.html",
+            route_path="/cmconnectionstatus.html?login_AAAA",
+            login_page="/cmconnectionstatus.html",
+            token_prefix="ct_",
+        )
+
+        assert result is None
+
+    def test_login_get_without_token_prefix_picks_query_entry(self) -> None:
+        """Bare-base64 variant (no token_prefix): any query entry matches login."""
+        routes = {
+            ("GET", "/cmconnectionstatus.html?YWRtaW46c2FuaXRpemVk"): _route(""),
+            ("GET", "/cmconnectionstatus.html"): _route("<html>data</html>"),
+        }
+
+        result = _find_route(
+            routes,
+            method="GET",
+            path="/cmconnectionstatus.html",
+            route_path="/cmconnectionstatus.html?YWRtaW46bGl2ZQ==",
+            login_page="/cmconnectionstatus.html",
+            token_prefix="",
+        )
+
+        assert result is not None
+        assert result.body == ""
+
+    def test_no_login_page_uses_default_tier_lookup(self) -> None:
+        """Without login_page set, behavior is unchanged (Tier 2 active)."""
+        routes = {
+            ("GET", "/data.html"): _route("data"),
+        }
+
+        result = _find_route(
+            routes,
+            method="GET",
+            path="/data.html",
+            route_path="/data.html?token=abc",
+            login_page="",
+        )
+
+        assert result is not None
+        assert result.body == "data"
 
 
 # ---------------------------------------------------------------------------

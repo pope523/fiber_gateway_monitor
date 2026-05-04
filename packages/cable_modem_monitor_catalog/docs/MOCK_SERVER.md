@@ -76,8 +76,24 @@ All auth-enabled servers accept:
 | `form_nonce` | Session gating on login POST | Login + cookie |
 | `form_sjcl` | Full AES-CCM crypto | PBKDF2 key derivation + encrypted nonce |
 | `form_pbkdf2` | Full PBKDF2 validation | Salt challenge + derived key verification |
-| `url_token` | No gating (token in URL) | Routes contain auth response |
+| `url_token` | Login-page route disambiguation | Login GET resolves to a captured login HAR entry; token-suffixed data fetches use the bare-path entry |
 | `hnap` | Full HMAC validation | Challenge-response + signature verification |
+
+### url_token Login-Page Routing
+
+When `auth.login_page` and a parser-fetched data path collide on the
+same URL (SB8200 logs in at `/cmconnectionstatus.html` and the parser
+fetches `/cmconnectionstatus.html`), the route table needs both a
+captured login HAR entry (path with query) and a data entry (bare
+path or `?{token_prefix}{token}`). The harness's login-page
+disambiguation routes a live login GET to the captured login entry
+only — it does **not** fall back to a bare-path data entry. A
+token-suffixed data fetch matches the bare entry via the normal
+Tier 2 fallback. This is documented in
+`MODEM_DIRECTORY_SPEC.md` § test_data/ Directory and enforced by
+`_find_route` in `test_harness/server.py`. If the harness returns
+404 for a login GET, the HAR is missing its login entry. Regression
+guard: SB8200 #81.
 
 ## Known Limitations
 
