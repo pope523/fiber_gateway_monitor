@@ -12,10 +12,57 @@ in a directory share the same `parser.yaml` (and optional `parser.py`).
 See [MODEM_DIRECTORY_SPEC.md](MODEM_DIRECTORY_SPEC.md) for the full
 directory layout and multi-variant assembly contract.
 
+## Principles
+
+Three principles govern modem.yaml. Every field in this spec is shaped
+by them, and any new field proposal must satisfy them.
+
+### Modem Behavior Is Data-Driven
+
+Core provides a fixed set of behaviours (auth strategies, session
+patterns, action executors, parser formats, extraction modes). Each
+modem selects from them via `modem.yaml`. No modem's configuration
+requires code changes; no modem's configuration affects another.
+
+When a new modem doesn't fit, the answer is either (a) it composes
+from existing behaviours and the YAML just hasn't been written, or
+(b) Core needs a new behaviour added — never (c) special-case logic
+for that one modem.
+
+### Config Fields Are Parameters, Not Implementations
+
+Every field in `modem.yaml` is a parameter to a Core behaviour, not
+a raw implementation. `auth.strategy: form` selects a strategy;
+`endpoint_pattern: "RouterStatus"` supplies a keyword to a Core
+extraction strategy.
+
+Contributors provide *what*, Core handles *how*. If a config field
+would require regex, code, or implementation knowledge from the
+contributor, the abstraction is wrong — the field should be a
+higher-level parameter that Core decodes, not a passthrough to an
+implementation detail.
+
+### Catalog Tools Intake Is the Onboarding Path
+
+New modems are added through the Catalog Tools pipeline
+(`/modem-intake` skill or the equivalent function calls), not by
+hand-constructing files. The pipeline validates against this spec
+end-to-end: HAR analysis → config generation → validation → trial
+parse → test fixtures. Manual construction bypasses that validation
+and is a recurring source of drift.
+
+The pipeline is plain Python; AI assistance helps with the judgment
+layer (which auth strategy fits, which fields map where). See
+[ONBOARDING_SPEC.md](../../cable_modem_monitor_catalog_tools/docs/ONBOARDING_SPEC.md)
+for the contract.
+
+---
+
 ## Contents
 
 | Section | What it covers |
 |---------|----------------|
+| [Principles](#principles) | The three rules every field obeys |
 | [Schema Overview](#schema-overview) | Complete YAML skeleton with annotations |
 | [Identity](#identity) | manufacturer, model, transport, default_host, aliases |
 | [Auth](#auth) | 9 strategy types with full config examples |
