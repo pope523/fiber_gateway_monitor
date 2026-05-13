@@ -75,8 +75,8 @@ body:
         # Install (one-time)
         pip install "har-capture[full]"
 
-        # Capture your modem
-        har-capture 192.168.100.1
+        # Capture your modem (--patterns selects the PII rule set; network-device covers modems and routers)
+        har-capture 192.168.100.1 --patterns network-device
         ```
 
         > **Use incognito / private browsing mode.** This is critical. If your browser has a cached login session, the capture will miss the authentication flow and we won't be able to build a parser from it. Open an incognito/private window before starting the capture, or clear your browser cookies first.

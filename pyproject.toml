@@ -13,7 +13,7 @@ dependencies = [
     # Runtime dependencies
     "requests>=2.31",     # HTTP client for modem polling
     "pydantic>=2.0",      # Data validation and modeling
-    "har-capture~=0.8.2", # HAR sanitization + enhanced PII validation; per-call custom_patterns API since 0.7.0
+    "har-capture~=0.9.0", # HAR sanitization + PII validation; library API (custom_patterns kwarg) used in catalog scripts
 ]
 
 [project.optional-dependencies]
