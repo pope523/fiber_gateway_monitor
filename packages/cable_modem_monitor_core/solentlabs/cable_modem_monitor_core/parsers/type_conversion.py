@@ -294,25 +294,42 @@ def _compile_uptime_pattern(format_str: str) -> re.Pattern[str]:
 
     Replaces ``{days}``, ``{hours}``, ``{minutes}``, ``{seconds}`` with
     named capture groups. Whitespace in literal text is matched flexibly.
+    ``[...]`` brackets mark an optional segment — useful when a firmware
+    conditionally emits a component (e.g., Netgear omits the ``"N days "``
+    prefix below 24h).
     """
     cached = _uptime_pattern_cache.get(format_str)
     if cached is not None:
         return cached
 
-    # Split on placeholders, preserving the matched group names.
-    parts = re.split(r"\{(days|hours|minutes|seconds)\}", format_str)
+    # Split on bracketed optional segments. Odd-indexed entries are the
+    # contents of an optional segment; even-indexed are required.
+    segments = re.split(r"\[([^\[\]]*)\]", format_str)
     regex_parts: list[str] = []
-    for part in parts:
-        if part in _UPTIME_COMPONENTS:
-            regex_parts.append(f"\\s*(?P<{part}>\\d+)")
+    for idx, segment in enumerate(segments):
+        compiled = _compile_uptime_segment(segment)
+        if idx % 2 == 1:
+            regex_parts.append(f"(?:{compiled})?")
         else:
-            escaped = re.escape(part)
-            escaped = re.sub(r"\\ ", r"\\s*", escaped)
-            regex_parts.append(escaped)
+            regex_parts.append(compiled)
 
     pattern = re.compile("".join(regex_parts))
     _uptime_pattern_cache[format_str] = pattern
     return pattern
+
+
+def _compile_uptime_segment(segment: str) -> str:
+    """Compile one uptime format segment to its regex form."""
+    parts = re.split(r"\{(days|hours|minutes|seconds)\}", segment)
+    out: list[str] = []
+    for part in parts:
+        if part in _UPTIME_COMPONENTS:
+            out.append(f"\\s*(?P<{part}>\\d+)")
+        else:
+            escaped = re.escape(part)
+            escaped = re.sub(r"\\ ", r"\\s*", escaped)
+            out.append(escaped)
+    return "".join(out)
 
 
 def _uptime_from_pattern(value: str, format_str: str) -> str | None:

@@ -356,10 +356,18 @@ placeholders to parse modem-specific strings:
 - field: system_uptime
   type: uptime
   format: "D: {days} H: {hours} M: {minutes} S: {seconds}"
+
+# Optional segment with brackets (Netgear CM2000/CM3000: firmware omits
+# the "N days " prefix below 24h, e.g. "10 days 01:41:16" vs "05:07:57")
+- field: system_uptime
+  type: uptime
+  format: "[{days} days ]{hours}:{minutes}:{seconds}"
 ```
 
 Missing components default to 0. Whitespace in format strings is
-matched flexibly. Compiled patterns are cached.
+matched flexibly. ``[...]`` brackets mark an optional segment — the
+content inside is skipped if not present in the input. Brackets do not
+nest. Compiled patterns are cached.
 
 #### Filter Rules
 
