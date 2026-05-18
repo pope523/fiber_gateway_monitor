@@ -122,7 +122,7 @@ Approach: HA template-entity blueprint YAML files shipped from CMM via
 
 Directory layout under repo-root `docs/`:
 
-```
+```text
 docs/examples/blueprints/
 ├── template/                       # template-type blueprints (sensors, binary_sensors, numbers)
 │   └── <name>.yaml
@@ -162,7 +162,7 @@ CMM blueprint contributions should populate, at minimum:
 1. User finds the blueprint URL via CMM docs or community post. The canonical
    form is:
 
-   ```
+   ```text
    https://github.com/solentlabs/cable_modem_monitor/raw/main/docs/examples/blueprints/<type>/<name>.yaml
    ```
 
@@ -174,9 +174,14 @@ CMM blueprint contributions should populate, at minimum:
    where `<source>` is derived from the import URL; the exact mapping for
    GitHub-org URLs is determined by HA at import time. See
    [Using blueprints](https://www.home-assistant.io/docs/automation/using_blueprints/).
-5. User instantiates the blueprint from the relevant integration page
-   (Automations, Scripts, or Helpers for template entities), sets their
-   inputs (thresholds, target entities, notification targets), and saves.
+5. User instantiates the blueprint:
+   - **Automation / Script blueprints**: Settings → Automations & Scenes →
+     Blueprints → select the blueprint → Create.
+   - **Template blueprints**: no UI instantiation path exists. Add a
+     `use_blueprint:` block to `configuration.yaml` referencing the blueprint
+     path and supplying input values, then reload template entities. HA 2024.11
+     release notes describe template blueprints as "an advanced feature only
+     available using manual YAML configuration."
 6. The created entity or automation behaves per the blueprint's logic with
    user-owned values.
 
