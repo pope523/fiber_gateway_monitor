@@ -1045,14 +1045,11 @@ def _create_data_dependent_entities(
         entities.append(ModemSystemUptimeSensor(data_coord, entry))
 
     # Last boot time — from native uptime OR counter-reset detection.
-    # Created when modem has uptime data OR any channel has error counters
-    # (for reset proxy — orchestrator sums from channels, not aggregates).
-    has_error_counters = any(
-        "corrected" in ch or "uncorrected" in ch
-        for direction in ("downstream", "upstream")
-        for ch in modem_data.get(direction, [])
-    )
-    if "system_uptime" in system_info or has_error_counters:
+    # Gate mirrors the error-total sensors: SC-QAM aggregate presence
+    # means the orchestrator can detect counter resets and proxy last
+    # boot time from them.
+    has_qam_error_counters = "total_corrected" in system_info or "total_uncorrected" in system_info
+    if "system_uptime" in system_info or has_qam_error_counters:
         entities.append(ModemLastBootTimeSensor(data_coord, entry))
 
     # Per-channel sensors

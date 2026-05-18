@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +44,19 @@ _logger = logging.getLogger(__name__)
 
 # Re-export so existing imports (tests, HA) keep working.
 __all__ = ["Orchestrator", "RestartNotSupportedError"]
+
+
+@dataclass(frozen=True)
+class _ErrorRateBaseline:
+    """Prior-poll state for inter-poll error rate computation (#164).
+
+    Always updated and cleared as a unit — see _update_error_stats and
+    reset_auth().
+    """
+
+    corrected: int
+    uncorrected: int
+    monotonic: float
 
 
 class Orchestrator:
@@ -91,12 +105,9 @@ class Orchestrator:
         # reset_auth(), DEBUG on steady-state
         self._first_poll_complete: bool = False
 
-        # Counter-reset detection — proxy for "last boot time" when
-        # the modem doesn't report native uptime (see #110). The
-        # monotonic timestamp is paired with the totals to compute the
-        # per-minute error rates (#164); both are updated together.
-        self._prev_error_totals: tuple[int, int] | None = None  # (corrected, uncorrected)
-        self._prev_poll_monotonic: float | None = None
+        # Counter-reset detection (#110) and inter-poll error rates (#164).
+        # Both use the same prior-poll baseline; see _update_error_stats.
+        self._prev_error_baseline: _ErrorRateBaseline | None = None
         self._stats_last_reset: datetime | None = None
 
         # Diagnostics state
@@ -170,6 +181,7 @@ class Orchestrator:
         self._policy.reset()
         self._collector.clear_session()
         self._first_poll_complete = False
+        self._prev_error_baseline = None
         _logger.info("Auth state reset — next poll will attempt fresh login")
 
     def reset_connectivity(self) -> None:
@@ -574,9 +586,9 @@ class Orchestrator:
           (the interval spans a discontinuity).
 
         Otherwise the rate field is omitted (HA renders ``unknown``).
-        The prior-state tuple ``(_prev_error_totals,
-        _prev_poll_monotonic)`` is always updated together so the next
-        poll has a consistent baseline.
+        Prior state is held in ``_prev_error_baseline`` (an
+        ``_ErrorRateBaseline`` — corrected, uncorrected, monotonic),
+        updated atomically each poll and cleared by ``reset_auth()``.
         """
         system_info = modem_data.setdefault("system_info", {})
         raw_corrected = system_info.get("total_corrected")
@@ -591,12 +603,8 @@ class Orchestrator:
             return  # aggregate present but uncoercible — defensive guard
 
         current_monotonic = time.monotonic()
-        prev_totals = self._prev_error_totals
-        prev_monotonic = self._prev_poll_monotonic
-        # State invariant: totals and monotonic timestamp are updated
-        # together so the next poll's delta is internally consistent.
-        self._prev_error_totals = (cur_corrected, cur_uncorrected)
-        self._prev_poll_monotonic = current_monotonic
+        prev = self._prev_error_baseline
+        self._prev_error_baseline = _ErrorRateBaseline(cur_corrected, cur_uncorrected, current_monotonic)
 
         # Zero floor: cur == 0 means rate == 0 by definition. Applies
         # even on the first poll, after a reset, or under bad clock
@@ -607,33 +615,31 @@ class Orchestrator:
         if cur_uncorrected == 0:
             system_info["rate_uncorrected"] = 0.0
 
-        if prev_totals is None or prev_monotonic is None:
+        if prev is None:
             return  # first poll — no inter-poll delta for non-zero totals
 
-        prev_corrected, prev_uncorrected = prev_totals
-
-        if cur_corrected < prev_corrected or cur_uncorrected < prev_uncorrected:
+        if cur_corrected < prev.corrected or cur_uncorrected < prev.uncorrected:
             self._stats_last_reset = datetime.now(UTC)
             _logger.info(
                 "Counter reset detected [%s] — corrected: %d→%d, uncorrected: %d→%d",
                 self._modem_config.model,
-                prev_corrected,
+                prev.corrected,
                 cur_corrected,
-                prev_uncorrected,
+                prev.uncorrected,
                 cur_uncorrected,
             )
             return  # interval spans a discontinuity — no inter-poll delta
 
-        delta_seconds = current_monotonic - prev_monotonic
+        delta_seconds = current_monotonic - prev.monotonic
         if delta_seconds <= 0:
             return  # clock skew or paused VM — no inter-poll delta
 
         # Inter-poll delta for non-zero totals. (Counters at zero
         # were already handled by the zero floor above.)
         if cur_corrected > 0:
-            system_info["rate_corrected"] = (cur_corrected - prev_corrected) / delta_seconds * 60
+            system_info["rate_corrected"] = (cur_corrected - prev.corrected) / delta_seconds * 60
         if cur_uncorrected > 0:
-            system_info["rate_uncorrected"] = (cur_uncorrected - prev_uncorrected) / delta_seconds * 60
+            system_info["rate_uncorrected"] = (cur_uncorrected - prev.uncorrected) / delta_seconds * 60
 
     # ------------------------------------------------------------------
     # Internal — snapshot construction

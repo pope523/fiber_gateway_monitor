@@ -559,6 +559,37 @@ class TestResetAuth:
         snapshot = orch.get_modem_data()
         assert snapshot.connection_status == ConnectionStatus.ONLINE
 
+    def test_reset_auth_clears_error_rate_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """reset_auth() discards the error-rate baseline so the first
+        post-reset poll treats rates as unknown (no prior baseline).
+
+        Without the fix, _prev_error_totals and _prev_poll_monotonic
+        survive the auth reset, causing the post-reset poll to compute
+        a rate across a potentially long auth-outage interval.
+        """
+        _patch_orch_monotonic(monkeypatch, [0.0, 0.0, 0.0, 3600.0, 3600.0, 3600.0])
+        collector = _mock_collector(
+            [
+                _ok_result(_data_with_totals(100, 10)),
+                _ok_result(_data_with_totals(200, 20)),
+            ]
+        )
+        orch = _make_orchestrator(collector=collector)
+
+        # Poll 1 — establishes baseline
+        orch.get_modem_data()
+
+        # Simulate credential update (auth outage gap baked into monotonic patch)
+        orch.reset_auth()
+
+        # Poll 2 — first poll after reset; should have no inter-poll rate
+        snap = orch.get_modem_data()
+
+        assert snap.modem_data is not None
+        system_info = snap.modem_data["system_info"]
+        assert "rate_corrected" not in system_info
+        assert "rate_uncorrected" not in system_info
+
 
 class TestLoadAuth:
     """UC-17/18/19: LOAD_AUTH signal handling."""
@@ -1798,25 +1829,59 @@ class TestErrorRateComputation:
         else:
             assert system_info["rate_uncorrected"] == pytest.approx(expected_u)
 
-    def test_reset_to_zero_emits_zero_rates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Counter reset that lands at zero emits rate=0 via the zero floor.
+    # Reset table: prev_c/prev_u → cur_c/cur_u after a decrease in at least
+    # one counter.  expected_c/expected_u are the rate field outcomes:
+    #   float  → field present with that value (zero floor fired)
+    #   None   → field absent (inter-poll delta short-circuited by reset)
+    #
+    # Zero floor and reset detection are evaluated independently per
+    # counter, so mixed outcomes (one present, one absent) are valid.
+    @pytest.mark.parametrize(
+        ("prev_c", "prev_u", "cur_c", "cur_u", "expected_c", "expected_u"),
+        [
+            pytest.param(500, 50, 10, 1, None, None, id="both_decrease_nonzero"),
+            pytest.param(500, 50, 0, 0, 0.0, 0.0, id="both_reset_to_zero"),
+            pytest.param(500, 50, 10, 50, None, None, id="only_corrected_decreases"),
+            pytest.param(500, 50, 500, 1, None, None, id="only_uncorrected_decreases"),
+            pytest.param(500, 50, 0, 50, 0.0, None, id="corrected_to_zero_uncorrected_stable"),
+            pytest.param(500, 50, 500, 0, None, 0.0, id="corrected_stable_uncorrected_to_zero"),
+        ],
+    )
+    def test_counter_reset_scenarios(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        prev_c: int,
+        prev_u: int,
+        cur_c: int,
+        cur_u: int,
+        expected_c: float | None,
+        expected_u: float | None,
+    ) -> None:
+        """Counter decrease in either field triggers reset detection.
 
-        Reset detection still fires (``stats_last_reset`` set), but the
-        zero floor reports rate=0 anyway — the current truth is "no
-        errors observed", which is a defensible rate regardless of how
-        the interval got there.
+        Reset detection fires when ``cur < prev`` on either counter,
+        recording ``stats_last_reset`` and short-circuiting the
+        inter-poll delta for both counters.  The zero floor runs first
+        and is independent: a counter that lands at zero emits 0.0
+        even when the reset short-circuit fires.
         """
         snapshot = _run_polls(
             monkeypatch,
             [0.0, 0.0, 0.0, 60.0, 60.0, 60.0],
-            _data_with_totals(500, 50),
-            _data_with_totals(0, 0),  # reset to zero
+            _data_with_totals(prev_c, prev_u),
+            _data_with_totals(cur_c, cur_u),
         )
 
         assert snapshot.modem_data is not None
         system_info = snapshot.modem_data["system_info"]
-        assert system_info["rate_corrected"] == pytest.approx(0.0)
-        assert system_info["rate_uncorrected"] == pytest.approx(0.0)
+        if expected_c is None:
+            assert "rate_corrected" not in system_info
+        else:
+            assert system_info["rate_corrected"] == pytest.approx(expected_c)
+        if expected_u is None:
+            assert "rate_uncorrected" not in system_info
+        else:
+            assert system_info["rate_uncorrected"] == pytest.approx(expected_u)
         assert snapshot.stats_last_reset is not None
 
     def test_first_poll_nonzero_omits_rate(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1875,33 +1940,12 @@ class TestErrorRateComputation:
         assert "rate_corrected" not in system_info
         assert "rate_uncorrected" not in system_info
 
-    def test_counter_reset_omits_rate(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Counter reset (decrease) → rate fields absent; stats_last_reset still set.
-
-        Kept separate from the omission table because reset has a
-        second invariant (``stats_last_reset`` recorded) that the
-        other edge cases don't share.
-        """
-        snapshot = _run_polls(
-            monkeypatch,
-            [0.0, 0.0, 0.0, 60.0, 60.0, 60.0],
-            _data_with_totals(500, 50),
-            _data_with_totals(10, 1),  # reset (decrease, both nonzero post-reset)
-        )
-
-        assert snapshot.modem_data is not None
-        system_info = snapshot.modem_data["system_info"]
-        assert "rate_corrected" not in system_info
-        assert "rate_uncorrected" not in system_info
-        assert snapshot.stats_last_reset is not None  # reset detection intact
-
     def test_multi_poll_continuity(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Rate computation continues correctly across three successful polls.
 
-        Pins the state-update invariant: ``_prev_error_totals`` and
-        ``_prev_poll_monotonic`` must be advanced after each poll so the
-        third poll's rate is based on the second poll's baseline, not the
-        first poll's.
+        Pins the state-update invariant: ``_prev_error_baseline`` must be
+        advanced after each poll so the third poll's rate is based on the
+        second poll's baseline, not the first poll's.
 
         Poll 1: 100/10 at t=0     → no rate (no baseline)
         Poll 2: 200/20 at t=60s   → rate = (100,10)/60*60 = 100/min, 10/min
