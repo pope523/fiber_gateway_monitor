@@ -11,7 +11,7 @@ homeassistant>=2025.1.0                     # Home Assistant core (>= 2025.1.0 f
 # -------------------------------
 beautifulsoup4>=4.12.0,<5.0                 # HTML parsing
 lxml>=5.0.0                                 # XML/HTML parser backend
-requests>=2.34.2                            # HTTP client (HA determines version)
+requests>=2.31.0                            # HTTP client (HA determines version)
 aiohttp>=3.9.0                              # Async HTTP client (HA determines version)
 
 # -------------------------------
@@ -36,7 +36,7 @@ pylint>=3.0.0                               # Optional static analysis
 # 🔍 Type checking
 # -------------------------------
 mypy>=1.10.0                                # Static type checker
-types-requests>=2.33.0                      # Type stubs for requests
+types-requests>=2.31.0                      # Type stubs for requests
 
 # -------------------------------
 # 🔐 Security scanning
