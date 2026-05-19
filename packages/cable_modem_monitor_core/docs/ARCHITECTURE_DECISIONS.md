@@ -17,6 +17,7 @@ files; this document explains the choices that shaped them.
 | [Recovery Architecture](#recovery-architecture) | Restart vs recovery, generic timing, reboot-signal vote, observer callback |
 | [Testing Strategy](#testing-strategy) | HAR replay, greenfield from specs |
 | [Onboarding](#onboarding) | MCP for deterministic steps, catalog_tools owns the spec |
+| [Config Flow](#config-flow) | Cross-directory grouping, variant label design |
 | [Extension Model](#extension-model) | How to add modems, formats, parsers, auth strategies, transports |
 | [References](#references) | Pointers to authoritative specs |
 
@@ -917,6 +918,48 @@ data the handshake needs. Discarding the response body is a bug.
 Add a new loader (new value type), new `BaseParser` implementation(s)
 that consume that type, a new row in the constraint table, and
 validator updates. No existing code changes.
+
+---
+
+## Config Flow
+
+### Cross-directory grouping for same-model, different-transport entries
+
+**Decision:** `list_modems()` groups catalog directories by
+`(manufacturer.lower(), model.lower())`. The first directory encountered
+in sorted path order becomes primary; additional matches are attached as
+`sibling_dirs`. The config flow passes `sibling_dirs` to `list_variants()`,
+which scans all directories and returns a flat combined list. Transport is
+a variant dimension, not a dropdown dimension.
+
+**Rationale:** The MODEM_YAML_SPEC rule "different transport = different
+directory" is correct and must not change — directories are independently
+testable. But users should not have to know the catalog directory structure.
+Grouping at the `list_modems()` layer keeps each directory self-contained
+while presenting a single logical entry in the UI.
+
+**Constrains:** Variant dropdown values use composite keys
+(`"{rel_dir}/{name|__default__}"`) to prevent collisions when multiple
+directories each contribute a default variant. The selected directory is
+stored as `_selected_modem_dir` on the config flow and used for all
+downstream steps (auth strategy resolution, connection validation, config
+entry storage).
+
+### Hardware version as the user-facing variant discriminator
+
+**Decision:** `hardware.hw_version` is the field shown in the variant
+dropdown when multiple entries share the same auth strategy. `hardware.firmware`
+is recorded as catalog metadata but not shown in the UI.
+
+**Rationale:** Hardware version is printed on the modem sticker — users can
+physically verify it without navigating the modem's web UI. Firmware codes
+(AB01, TB01) are meaningful to contributors and maintainers but opaque to
+users during setup.
+
+**Constrains:** `hw_version` must be omitted when the variant name (from the
+filename stem) already communicates the version to the user — duplication
+degrades the label. `firmware` should always be recorded when known as it is
+useful for future tooling and contributor reference.
 
 ---
 

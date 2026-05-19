@@ -68,7 +68,7 @@ for the contract.
 | [Auth](#auth) | 9 strategy types with full config examples |
 | [Session](#session) | Cookie, single-session, SPA patterns |
 | [Actions](#actions) | Restart and logout — http and hnap types |
-| [Hardware](#hardware) | DOCSIS version, chipset |
+| [Hardware](#hardware) | DOCSIS version, hw_version, firmware, chipset |
 | [Timeout](#timeout) | Per-request override |
 | [Health](#health) | Health probe configuration (fragile modems) |
 | [Metadata](#metadata) | Status, attribution, sources, ISPs, notes |
@@ -1085,13 +1085,21 @@ actions:
 ```yaml
 hardware:
   docsis_version: "3.1"
+  hw_version: "v6"         # optional — shown in variant dropdown; users can verify on modem sticker
+  firmware: "TB01"         # optional — firmware family identifier (catalog metadata, not shown in UI)
   chipset: "Broadcom BCM3390"
+  release_date: "2017"     # optional — year or YYYY-MM-DD
+  end_of_life: "2024"      # optional — year or YYYY-MM-DD; omit if still current
 ```
 
 | Field | Type | Required | Description |
 |-------|------| :--------: |-------------|
 | `docsis_version` | string | yes | DOCSIS specification version ("3.0" or "3.1") |
+| `hw_version` | string | no | Hardware version label shown in the variant dropdown (e.g., `"v6"`). Users can verify this against the sticker on the modem. |
+| `firmware` | string | no | Firmware family identifier for catalog documentation (e.g., `"TB01"`). Not shown in the UI. |
 | `chipset` | string | no | Modem chipset (informational) |
+| `release_date` | string | no | Year or date the hardware was released (e.g., `"2017"` or `"2017-06"`). Used in the catalog timeline. |
+| `end_of_life` | string | no | Year or date the hardware reached end-of-life. Omit if still current. |
 
 ---
 

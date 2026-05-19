@@ -204,13 +204,16 @@ MOCK_SUMMARIES: list[ModemSummary] = [
     ),
 ]
 
+_TPS2000_DIR = FAKE_CATALOG / "solentlabs" / "tps-2000"
+_TPS3000_DIR = FAKE_CATALOG / "solentlabs" / "tps-3000"
+
 MOCK_SINGLE_VARIANT: list[VariantInfo] = [
-    VariantInfo(name=None, auth_strategy="none"),
+    VariantInfo(name=None, auth_strategy="none", path=_TPS2000_DIR / "modem.yaml"),
 ]
 
 MOCK_MULTI_VARIANTS: list[VariantInfo] = [
-    VariantInfo(name=None, auth_strategy="basic", isps=["ISP-A"]),
-    VariantInfo(name="v2", auth_strategy="form_nonce", isps=["ISP-B"]),
+    VariantInfo(name=None, auth_strategy="basic", isps=["ISP-A"], path=_TPS3000_DIR / "modem.yaml"),
+    VariantInfo(name="v2", auth_strategy="form_nonce", isps=["ISP-B"], path=_TPS3000_DIR / "modem-v2.yaml"),
 ]
 
 

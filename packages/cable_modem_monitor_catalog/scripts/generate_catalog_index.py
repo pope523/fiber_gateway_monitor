@@ -54,7 +54,7 @@ def load_catalog_modems() -> list[dict]:
         strategy = auth.get("strategy", "none") if auth else "none"
 
         transport = str(data.get("transport", "http")).lower()
-        transport_map = {"http": "HTML", "hnap": "HNAP", "rest_api": "REST_API"}
+        transport_map = {"http": "HTML", "hnap": "HNAP", "cbn": "CBN", "rest_api": "REST_API"}
         protocol = transport_map.get(transport, "HTML")
 
         # Discover test data variants (each .har file = one variant)
@@ -88,6 +88,8 @@ def load_catalog_modems() -> list[dict]:
                 "path": f"{mfr}/{model}",
                 "manufacturer": data.get("manufacturer", mfr.title()),
                 "model": data.get("model", model.upper()),
+                "hw_version": hardware.get("hw_version"),
+                "firmware": hardware.get("firmware"),
                 "status": data.get("status", "awaiting_verification"),
                 "docsis": hardware.get("docsis_version", ""),
                 "chipset": hardware.get("chipset", ""),
@@ -195,7 +197,10 @@ def _modem_table_row(m: dict) -> str:
     status = _STATUS_ICONS.get(m["status"], "❓ Unknown")
     chipset = chipset_to_link(m["chipset"])
     protocol = protocol_to_badge(m["protocol"])
-    model_link = f"[{m['model']}]({_GITHUB_MODEM_BASE}/{m['path']}/modem.yaml)"
+    model_display = m["model"]
+    if m.get("hw_version"):
+        model_display = f"{model_display} ({m['hw_version']})"
+    model_link = f"[{model_display}]({_GITHUB_MODEM_BASE}/{m['path']}/modem.yaml)"
     all_names = [m["model"]] + m["model_aliases"]
     names_cell = "<br>".join(all_names)
     auth = "<br>".join(m["auth_strategies"])
@@ -328,7 +333,8 @@ def generate_index(output_path: Path | None = None) -> str:
             + "![HTML](https://img.shields.io/badge/-HTML-E34C26?style=flat-square) = web scraping | "
             + "![REST](https://img.shields.io/badge/-REST-5B9A5B?style=flat-square) = JSON REST API | "
             + "[![HNAP](https://img.shields.io/badge/-HNAP-5B8FBF?style=flat-square)]"
-            + "(https://en.wikipedia.org/wiki/Home_Network_Administration_Protocol) = SOAP-based, requires auth",
+            + "(https://en.wikipedia.org/wiki/Home_Network_Administration_Protocol) = SOAP-based, requires auth | "
+            + "![CBN](https://img.shields.io/badge/-CBN-8B6914?style=flat-square) = CBN SOAP-based protocol",
             "",
         ]
     )
