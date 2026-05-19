@@ -60,7 +60,7 @@ HEADER_CASES = [
     ("Status",                              "lock_status",     1,  "",    "status shorthand"),
     ("Symbol Rate",                         "symbol_rate",     1,  "",    "symbol rate"),
     ("Symb. Rate",                          "symbol_rate",     1,  "",    "abbreviated symbol rate"),
-    ("Channel Width",                       "channel_width",   2,  "",    "tier 2 channel width"),
+    ("Channel Width",                       "width",           1,  "",    "channel width as frequency field"),
     ("Custom Field Name",                   "custom_field_name", 3, "",   "tier 3 snake_case"),
     ("  Frequency  ",                       "frequency",       1,  "",    "whitespace stripped"),
     # Header variants with parenthesized units (Motorola MB7621/MB8611)
@@ -74,7 +74,14 @@ HEADER_CASES = [
     ("DCID",                                "channel_id",      1,  "",    "cm3500b downstream channel id"),
     ("Correcteds",                          "corrected",       1,  "",    "cm3500b corrected variant"),
     ("Uncorrectables",                      "uncorrected",     1,  "",    "cm3500b uncorrectable variant"),
-    ("Width",                               "channel_width",   2,  "",    "sb8200 width shorthand"),
+    ("Width",                               "width",           1,  "",    "sb8200 width shorthand"),
+    # TC4400 non-standard column headers
+    ("Channel Index",                       "channel_number",  1,  "",    "tc4400 channel index"),
+    ("SNR/MER Threshold Value",             "snr",             1,  "",    "tc4400 snr header"),
+    ("Received Level",                      "power",           1,  "",    "tc4400 power header"),
+    ("Transmit Level",                      "power",           1,  "",    "tc4400 upstream power header"),
+    ("Modulation/Profile ID",               "modulation",      1,  "",    "tc4400 modulation header"),
+    ("Corrected Codewords",                 "corrected",       1,  "",    "tc4400 corrected codewords"),
 ]
 # fmt: on
 
@@ -194,14 +201,11 @@ def test_table_field_extraction(fixture_path: Path) -> None:
             if "index" in expected:
                 assert m.index == expected["index"], f"{field_name} index"
 
-    # Modulation field type — set via the registry; Core's
-    # canonicalize_modulation handler runs at extraction time. Per-modem
-    # ``map:`` blocks are obsolete.
     mapping_fields = {m.field: m for m in section.mappings}
     mod = mapping_fields.get("modulation")
     if mod is not None:
         assert mod.type == "modulation", f"expected type='modulation', got {mod.type!r}"
-        assert mod.map == {}, f"modulation map should be empty (Core canonicalizes); got {mod.map!r}"
+        assert mod.map == {}, f"modulation map should be empty; got {mod.map!r}"
 
 
 # =====================================================================
@@ -243,11 +247,8 @@ def test_transposed_field_extraction(fixture_path: Path) -> None:
     mapping_fields_full = {m.field: m for m in section.mappings}
     mod = mapping_fields_full.get("modulation")
     if mod is not None:
-        # modulation field type is set via the registry — Core's
-        # canonicalize_modulation handler runs at extraction time, no
-        # per-modem ``map:`` needed.
         assert mod.type == "modulation", f"expected type='modulation', got {mod.type!r}"
-        assert mod.map == {}, f"modulation map should be empty (Core canonicalizes); got {mod.map!r}"
+        assert mod.map == {}, f"modulation map should be empty; got {mod.map!r}"
 
 
 # =====================================================================
@@ -293,11 +294,8 @@ def test_json_field_extraction(fixture_path: Path) -> None:
     mapping_fields_full = {m.field: m for m in section.mappings}
     mod = mapping_fields_full.get("modulation")
     if mod is not None:
-        # modulation field type is set via the registry — Core's
-        # canonicalize_modulation handler runs at extraction time, no
-        # per-modem ``map:`` needed.
         assert mod.type == "modulation", f"expected type='modulation', got {mod.type!r}"
-        assert mod.map == {}, f"modulation map should be empty (Core canonicalizes); got {mod.map!r}"
+        assert mod.map == {}, f"modulation map should be empty; got {mod.map!r}"
 
 
 # =====================================================================
@@ -453,11 +451,8 @@ def test_js_field_extraction(fixture_path: Path) -> None:
     mapping_fields_full = {m.field: m for m in section.mappings}
     mod = mapping_fields_full.get("modulation")
     if mod is not None:
-        # modulation field type is set via the registry — Core's
-        # canonicalize_modulation handler runs at extraction time, no
-        # per-modem ``map:`` needed.
         assert mod.type == "modulation", f"expected type='modulation', got {mod.type!r}"
-        assert mod.map == {}, f"modulation map should be empty (Core canonicalizes); got {mod.map!r}"
+        assert mod.map == {}, f"modulation map should be empty; got {mod.map!r}"
 
 
 # =====================================================================

@@ -36,9 +36,12 @@ Common issues and solutions for Cable Modem Monitor.
 
 | Condition | Level | Rationale |
 | ----------- | ------- | ----------- |
-| Timeouts | DEBUG | Modem may be busy or rebooting |
-| Connection errors | WARNING | Network issue |
-| Authentication failures | ERROR | Wrong credentials |
+| Timeouts (during collection) | WARNING | Connectivity failure; always visible |
+| Connection errors | WARNING | Network failure; always visible |
+| Authentication phase failed | WARNING | Sanitized response logged; never demoted |
+| Circuit breaker open | ERROR | Persistent auth failure; polling halted |
+
+Success-path logs (auth details, resource loading) fire at INFO on the first poll and drop to DEBUG after, to avoid flooding multi-modem logs.
 
 See [ORCHESTRATION_SPEC.md § Logging Contract](../packages/cable_modem_monitor_core/docs/ORCHESTRATION_SPEC.md#logging-contract) for the full logging contract.
 
@@ -267,12 +270,13 @@ automation:
 
 All log lines include a `[MODEL]` tag for multi-modem disambiguation.
 
-**Steady-state INFO is quiet.** A healthy modem produces verbose INFO
-output on the first poll (auth strategy, resource loading, parse
-summary) and then drops to DEBUG for routine success-path logs.
-Operator-relevant transitions stay at INFO regardless of poll count:
-status changes, adaptive-reuse state changes, counter resets (modem
-reboot), recovery events.
+**Success-path logs fire at INFO on the first poll, then drop to DEBUG.**
+A healthy modem produces verbose INFO output on the first poll (auth
+strategy, resource loading, parse summary) to confirm startup in the
+default log view. Subsequent polls drop these to DEBUG to avoid flooding
+multi-modem setups. Operator-relevant transitions always stay at INFO
+regardless of poll count: status changes, adaptive-reuse state changes,
+counter resets (modem reboot), recovery events.
 
 **Confirming the integration is alive without enabling DEBUG:**
 
