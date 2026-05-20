@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declarative format can match both `2 days 03:14:15` and `03:14:15`
   when the modem omits days under one day. Unified the cm2000 and
   cm3000 uptime declarations on this shared format.
+- **Config-flow variant picker groups cross-directory modem
+  variants.** SB8200 HTML, HNAP, and CBN variants now appear as a
+  single "Arris SB8200" entry in the picker; choosing one opens a
+  sub-picker for the variant. Hardware version (`hw_version`) read
+  from `hardware.hw_version` in the catalog appears as "(v6)" or
+  "(v7)" in the variant label so users can match against the modem
+  sticker. `firmware` moves to `hardware.firmware`; `hw_version`
+  removed from the top-level model config. Catalog README gains a
+  CBN badge column and shows `hw_version` in the model column to
+  disambiguate duplicate rows.
 
 ### Fixed
 
@@ -68,6 +78,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   converted to explicit `+`; ineffectual `await` in
   `test_sensor_entities.py` marked explicit. Catalog README
   byte-identical after regeneration; no behavior change.
+- **v1 to v2 migration: sibling variants missed; Ping and HTTP
+  Latency sensors absent post-upgrade.** `resolve_variant` only
+  walked the primary modem directory, missing variants defined in
+  sibling directories (SB8200 CBN, HNAP, url_token). `supports_icmp`
+  and `supports_head` were omitted from the migrated entry;
+  `sensor.py` gates Ping and HTTP Latency sensor creation on those
+  keys, so both were silently absent after upgrade. Both keys now
+  default `True`; runtime health probing corrects false positives.
+  Addresses #143.
+- **Error rate baseline not cleared on `reset_auth()`.** The
+  post-reset poll computed a rate across the auth-outage interval
+  rather than emitting no-baseline. `reset_auth()` now clears the
+  prior-state baseline. Related to #164.
+
+### Changed
+
+- **Catalog tools field registry expanded.** New vocabulary entries
+  map non-standard modem headers to canonical fields without pipeline
+  code changes: `Channel Index` to `channel_number`, `Received Level`
+  and `Transmit Level` to `power`, `SNR/MER Threshold Value` to
+  `snr`, and `Modulation/Profile ID` to `modulation`. HNAP
+  `_run_pass1` now skips degenerate all-counters rows. Fleet accuracy
+  improves from 72.3% to 74.0%; TC4400 per-modem accuracy from 60.8%
+  to 98.6%.
+- **Arris SB8200 CBN variant directory renamed from `sb8200v3` to
+  `sb8200-cbn`.** No confirmed installations. Directory name now
+  reflects transport rather than hardware revision, consistent with
+  `sb8200-hnap`.
 
 ### Confirmed
 
