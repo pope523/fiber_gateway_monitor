@@ -36,7 +36,7 @@ pylint>=3.0.0                               # Optional static analysis
 # 🔍 Type checking
 # -------------------------------
 mypy>=2.1.0                                 # Static type checker
-types-requests>=2.33.0                      # Type stubs for requests
+types-requests>=2.31.0,<2.33.0              # Type stubs for requests; capped: 2.33+ requires urllib3>=2, HA 2025.1.x requires urllib3<2
 
 # -------------------------------
 # 🔐 Security scanning
