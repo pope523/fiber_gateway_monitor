@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.0-beta.4] - 2026-05-20
+
 ### Added
 
 - **Per-minute error rate sensors (#164).** SC-QAM `rate_corrected`

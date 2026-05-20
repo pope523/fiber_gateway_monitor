@@ -323,9 +323,10 @@ workflow exercises. If `make validate-ci` is green, CI will be green.
 staged files, and `make test` is a subset of CI. `make validate-ci`
 is the only command guaranteed to mirror CI exactly.
 
-**Outdated-deps footer:** `validate-ci` ends with `pip list --outdated`.
-When that footer shows drift, propose a separate deps-update commit
-before pushing — visibility without action becomes wallpaper.
+**Owned-deps check:** `validate-ci` ends with `scripts/check_owned_deps.py`,
+which reports only packages declared in our requirements files and
+pyproject.toml — not the transitive HA or test-harness tree. When it
+shows drift, propose a separate deps-update commit before pushing.
 
 **CI job coverage:** When verifying CI after a push, confirm every
 expected job ran. A missing job is not a pass — absence of failure is
