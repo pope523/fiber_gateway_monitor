@@ -296,6 +296,7 @@
     "provisioned_speed_down": 500000000,
     "provisioned_speed_up": 43750000,
     "software_version": "V1.03.08",
+    "system_uptime": "1 days 04:37:49",
     "total_corrected": 126039,
     "total_uncorrected": 2980,
     "upstream_channel_count": 5

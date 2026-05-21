@@ -53,6 +53,9 @@ def test_valid_golden_file(fixture_path: Path, tmp_path: Path) -> None:
     assert result.system_info_fields == data["_expected_system_info_fields"]
     assert result.missing_system_info_fields == data["_expected_missing_system_info_fields"]
     assert result.golden_file == data["_expected_golden_file"]
+    assert (
+        result.golden_file_json == json.dumps(result.golden_file, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    )
 
 
 # --- Invalid fixtures: expected errors ---
