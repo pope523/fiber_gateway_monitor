@@ -201,6 +201,12 @@ Report channel counts for sanity check:
 - Upstream: N channels, fields: [list]
 - System info: [list of fields]
 
+If `result.missing_system_info_fields` is non-empty, inspect the HAR for
+those fields before proceeding. Search the response bodies for the field
+name or a likely label (e.g., "uptime", "Up Time") and add the mapping to
+the parser.yaml. A parser that ships without a Tier-1 field will fail
+`verify_diagnostics` at confirmation time.
+
 Then write the catalog package:
 
 ```python

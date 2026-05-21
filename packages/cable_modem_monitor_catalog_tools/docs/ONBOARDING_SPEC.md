@@ -1274,11 +1274,17 @@ config to extract `ModemData`. This is the same extraction logic the
 pipeline uses, but against HAR content rather than a live server.
 
 **Input:** HAR file path + parser.yaml content
-**Output:** `{ golden_file: dict, channel_counts: { downstream: int, upstream: int }, system_info_fields: [str] }`
+**Output:** `{ golden_file: dict, channel_counts: { downstream: int, upstream: int }, system_info_fields: [str], missing_system_info_fields: [str] }`
 
-The channel counts and field list are returned separately so the LLM can
+The channel counts and field lists are returned separately so the LLM can
 sanity-check before writing ("Found 16 downstream, 4 upstream, system
 info has uptime + firmware version — does that look right?").
+`missing_system_info_fields` is the diff of `SYSTEM_INFO_FIELDS` (the four
+Tier-1 fields: `docsis_status`, `hardware_version`, `software_version`,
+`system_uptime`) against what the parser actually extracted. A non-empty list
+means the parser is missing a registry field — inspect the HAR for that data
+before proceeding. This is an advisory warning, not a hard stop; some modems
+genuinely don't expose all four fields.
 
 ### `run_tests`
 
