@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.0-beta.6] - 2026-05-22
+
+### Breaking Changes
+
+- **Arris SB8200 `variant: v7` config entries will fail on
+  startup.** `modem-v7.yaml` was renamed internally to `modem-cookie.yaml`.
+  Delete and re-add the integration to fix it.
+
+### Added
+
+- **Bearer token auth strategy (`auth.strategy: bearer`).** Supports
+  RFC 6750 `Authorization: Bearer <token>` authentication for modems
+  using token-based REST APIs. Virgin SuperHub 5 uses this path for
+  its restart action.
+- **Per-action auth (`action_auth`) on `HttpAction`.** Restart (and
+  future) actions can carry independent credentials without touching
+  the monitoring session. A fresh session is authenticated and
+  discarded after the action. Modems with `auth.strategy: none` for
+  monitoring but bearer-protected restart endpoints use this path
+  (e.g., Virgin SuperHub 5). Config flow shows credential fields
+  when `action_auth` is set on any restart action.
+- **Virgin SuperHub 5 restart action.** `actions.restart` block added
+  to `virgin/superhub5/modem.yaml` (bearer `action_auth`, sourced
+  from issue #82). HAR verification pending — needs a contributor
+  capture to confirm http vs https and username field handling. Related to #82.
+- **`ModemStatus` StrEnum replacing `Literal[...]` in Core schema.**
+  Values: `confirmed`, `awaiting_verification`, `unsupported`.
+  Imported from `models` package. Closes future drift at the Pydantic
+  gate. Catalog tools and config index updated in lockstep.
+- **Per-variant `*` markers in config-flow variant dropdown.**
+  Unconfirmed variants are labeled with `*` (e.g.,
+  `SB8200 Cookie (v6)*`). A translation footer explaining the
+  marker appears in all 12 supported locales. The model-level
+  rollup shows `*` only when every variant in every sibling
+  directory is unconfirmed.
+- **Catalog tools: missing Tier-1 `system_info` fields flagged at
+  golden-file generation.** `generate_golden_file` returns
+  `missing_system_info_fields` — the diff of `SYSTEM_INFO_FIELDS`
+  against what the parser extracted. A non-empty list means the
+  HAR has data the parser isn't capturing; the onboarding workflow
+  now instructs contributors to inspect the HAR and add the mapping
+  before proceeding. Closes the gap where `system_uptime` was absent
+  from `netgear/c7000v2` and `netgear/c3700` at authoring time but
+  only caught at confirmation. Related to #163.
+- **Restart action test harness auto-discovery.** `RestartTestCase`,
+  `discover_restart_tests`, and `run_modem_restart_test` added to
+  Core's test harness. The catalog test suite picks these up
+  automatically — adding restart coverage for a modem means adding
+  `test_data/modem-restart.har`. No test code changes needed. Two
+  HAR sources (first match wins): dedicated `modem-restart.har`, or
+  `modem.har` when `modem.yaml` declares `actions.restart`.
+- **Catalog README auth strategy badges and render_readme.** Each
+  modem row now shows a color-coded badge for its auth strategy
+  (grouped by family: No auth / Simple / Form-based / Token-based /
+  Protocol). `render_readme: true` added to `hacs.json` so the
+  catalog README renders as the HACS store listing.
+- **Chipset sourcing audit.** BCM3390 citations added for CM1200,
+  CM2050v, CGA4236, and CGA6444VF (cross-model inference, sourced);
+  bare "Same platform as X" stubs on S34 and MB8600 replaced with
+  real URLs.
+
+### Fixed
+
+- **Technicolor `form_pbkdf2` modems rejected every login attempt.**
+  `{"error": "ok"}` signals success on the Technicolor REST platform
+  (CGA6444VF, CGA4236), but the truthy-error check treated `"ok"` as
+  a failure and returned `MSG_LOGIN_1` on every attempt. New
+  `login_success` field on `FormPbkdf2Auth` specifies the exact
+  key-value pairs that constitute success; the existing truthy-error
+  path is unchanged when `login_success` is unset. Addresses #120.
+- **TCP probe analysis layer still matched HTTP GET log lines.**
+  `362db673` removed the HTTP GET probe and promoted TCP connect as
+  the primary L4 signal, but `log_parser.py` kept the old regex
+  (`HTTP GET Xms, N bytes`) — real TCP probe logs were silently
+  dropped. Regex updated to match the current `ICMP Xms, TCP Yms`
+  format. `HealthEvent.http_ms` renamed to `tcp_ms` throughout the
+  analysis layer. ORCHESTRATION_SPEC, ORCHESTRATION_USE_CASES,
+  HA_ADAPTER_SPEC, and README updated to remove stale HTTP examples.
+- **PII check false-positive on credit card pattern in modem
+  fixtures.** `check_fixture_pii` flagged valid hex MAC/channel data
+  as Visa card numbers. False positive suppressed for cable modem
+  fixture context.
+- **Netgear C3700 uptime field false-positive IPv6 redaction.** HAR
+  capture included an uptime string that tripped the IP redaction
+  regex; fixture corrected.
+
+### Confirmed
+
+- **Arris SB8200 HNAP** — verified on hardware by @inventor7777
+  on TB01 firmware, Cox ISP, hardware version v6. Addresses #165.
+- **Netgear C7000v2** — verified on hardware (beta.5 diagnostics).
+  `system_uptime` parser added (RouterStatus.htm offset 33).
+  Addresses #163.
+
 ## [3.14.0-beta.5] - 2026-05-20
 
 ### Fixed
