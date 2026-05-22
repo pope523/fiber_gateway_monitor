@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Generate a catalog index from the v3.14 catalog package modem.yaml files.
+"""Generate catalog index and gap analysis from the v3.14 catalog package modem.yaml files.
 
-Reads modem.yaml files from the catalog package and generates a README.md
-with modem landscape table, chipset info, ISP coverage, and status summary.
+Reads modem.yaml files from the catalog package and generates:
+  - README.md: modem landscape table, chipset info, ISP coverage, status summary
+  - CATALOG_AUDIT.md: verification status, HAR capture needs, community callout candidates
 
 Usage:
     python packages/cable_modem_monitor_catalog/scripts/generate_catalog_index.py
@@ -23,8 +24,10 @@ catalog_root = script_dir.parent
 repo_root = catalog_root.parent.parent
 
 from catalog_reference import (  # noqa: E402  # pyright: ignore[reportMissingImports]
+    auth_to_badge,
     check_reference_gaps,
     chipset_to_link,
+    generate_auth_legend,
     generate_chipset_reference,
     generate_provider_reference,
     isp_to_badge,
@@ -42,67 +45,59 @@ _GITHUB_MODEM_BASE = (
 
 
 def load_catalog_modems() -> list[dict]:
-    """Load all modem.yaml files from the catalog package."""
+    """Load all modem yaml files (including named variants) from the catalog package."""
     modems = []
-    for modem_yaml in sorted(CATALOG_DIR.rglob("modem.yaml")):
-        mfr = modem_yaml.parts[-3]
-        model = modem_yaml.parts[-2]
-        data = yaml.safe_load(modem_yaml.read_text()) or {}
+    modem_dirs = sorted({p.parent for p in CATALOG_DIR.rglob("modem*.yaml")})
 
-        hardware = data.get("hardware", {}) or {}
-        auth = data.get("auth", {}) or {}
-        strategy = auth.get("strategy", "none") if auth else "none"
+    for modem_dir in modem_dirs:
+        mfr = modem_dir.parts[-2]
+        model_dir = modem_dir.parts[-1]
 
-        transport = str(data.get("transport", "http")).lower()
-        transport_map = {"http": "HTML", "hnap": "HNAP", "cbn": "CBN", "rest_api": "REST_API"}
-        protocol = transport_map.get(transport, "HTML")
+        for yaml_path in sorted(modem_dir.glob("modem*.yaml")):
+            stem = yaml_path.stem
+            if stem == "modem":
+                variant_name: str | None = None
+            elif stem.startswith("modem-"):
+                variant_name = stem[len("modem-") :]
+            else:
+                continue
 
-        # Discover test data variants (each .har file = one variant)
-        test_data_dir = modem_yaml.parent / "test_data"
-        test_variants: list[str] = []
-        if test_data_dir.exists():
-            for har in sorted(test_data_dir.glob("*.har")):
-                name = har.stem  # e.g. "modem", "mb8600", "modem-basic"
-                if name != "modem":
-                    test_variants.append(name)
+            data = yaml.safe_load(yaml_path.read_text()) or {}
+            hardware = data.get("hardware", {}) or {}
+            auth = data.get("auth", {}) or {}
+            strategy = auth.get("strategy", "none") if auth else "none"
 
-        # Derive auth variants from test data names
-        auth_variant_map = {
-            "modem-form-nonce": "form_nonce",
-            "modem-basic": "basic",
-        }
-        auth_strategies = [strategy]
-        for tv in test_variants:
-            mapped = auth_variant_map.get(tv)
-            if mapped and mapped != strategy:
-                auth_strategies.append(mapped)
+            transport = str(data.get("transport", "http")).lower()
+            transport_map = {"http": "HTML", "hnap": "HNAP", "cbn": "CBN", "rest_api": "REST_API"}
+            protocol = transport_map.get(transport, "HTML")
 
-        release_date = str(hardware.get("release_date", ""))
-        release_year = int(release_date[:4]) if release_date and len(release_date) >= 4 else None
+            release_date = str(hardware.get("release_date", ""))
+            release_year = int(release_date[:4]) if release_date and len(release_date) >= 4 else None
 
-        eol = str(hardware.get("end_of_life", ""))
-        eol_year = int(eol[:4]) if eol and len(eol) >= 4 else None
+            eol = str(hardware.get("end_of_life", ""))
+            eol_year = int(eol[:4]) if eol and len(eol) >= 4 else None
 
-        modems.append(
-            {
-                "path": f"{mfr}/{model}",
-                "manufacturer": data.get("manufacturer", mfr.title()),
-                "model": data.get("model", model.upper()),
-                "hw_version": hardware.get("hw_version"),
-                "firmware": hardware.get("firmware"),
-                "status": data.get("status", "awaiting_verification"),
-                "docsis": hardware.get("docsis_version", ""),
-                "chipset": hardware.get("chipset", ""),
-                "release_date": release_date,
-                "release_year": release_year,
-                "eol_year": eol_year,
-                "protocol": protocol,
-                "auth_strategies": auth_strategies,
-                "isps": data.get("isps") or [],
-                "model_aliases": data.get("model_aliases") or [],
-                "test_variants": test_variants,
-            }
-        )
+            modems.append(
+                {
+                    "path": f"{mfr}/{model_dir}",
+                    "yaml_file": yaml_path.name,
+                    "variant_name": variant_name,
+                    "manufacturer": data.get("manufacturer", mfr.title()),
+                    "model": data.get("model", model_dir.upper()),
+                    "hw_version": hardware.get("hw_version"),
+                    "firmware": hardware.get("firmware"),
+                    "status": data.get("status", "awaiting_verification"),
+                    "docsis": hardware.get("docsis_version", ""),
+                    "chipset": hardware.get("chipset", ""),
+                    "release_date": release_date,
+                    "release_year": release_year,
+                    "eol_year": eol_year,
+                    "protocol": protocol,
+                    "auth_strategy": strategy,
+                    "isps": data.get("isps") or [],
+                    "model_aliases": data.get("model_aliases") or [],
+                }
+            )
 
     return modems
 
@@ -113,7 +108,8 @@ def generate_timeline(modems: list[dict]) -> list[str]:
     base_year = 2010
     bar_width = 20
 
-    dated = [m for m in modems if m.get("release_year")]
+    # One timeline entry per modem directory — skip named variants to avoid duplicates.
+    dated = [m for m in modems if m.get("release_year") and m.get("variant_name") is None]
     dated.sort(key=lambda m: (m.get("release_year", 9999), m.get("model", "")))
 
     if not dated:
@@ -182,7 +178,7 @@ def _build_summary(supported: list[dict]) -> tuple[str, str]:
 
     auth_counts: dict[str, int] = {}
     for m in supported:
-        a = m["auth_strategies"][0]
+        a = m["auth_strategy"]
         auth_counts[a] = auth_counts.get(a, 0) + 1
     auth_str = ", ".join(f"{k} ({v})" for k, v in sorted(auth_counts.items(), key=lambda x: -x[1]))
 
@@ -195,12 +191,17 @@ def _modem_table_row(m: dict) -> str:
     chipset = chipset_to_link(m["chipset"])
     protocol = protocol_to_badge(m["protocol"])
     model_display = m["model"]
+    qualifiers = []
     if m.get("hw_version"):
-        model_display = f"{model_display} ({m['hw_version']})"
-    model_link = f"[{model_display}]({_GITHUB_MODEM_BASE}/{m['path']}/modem.yaml)"
+        qualifiers.append(m["hw_version"])
+    if m.get("variant_name") and m["variant_name"] != m.get("hw_version"):
+        qualifiers.append(m["variant_name"])
+    if qualifiers:
+        model_display = f"{model_display} ({', '.join(qualifiers)})"
+    model_link = f"[{model_display}]({_GITHUB_MODEM_BASE}/{m['path']}/{m['yaml_file']})"
     all_names = [m["model"]] + m["model_aliases"]
     names_cell = "<br>".join(all_names)
-    auth = "<br>".join(m["auth_strategies"])
+    auth = auth_to_badge(m["auth_strategy"])
     if chipset == "unknown":
         chipset = ""
 
@@ -239,6 +240,7 @@ def generate_index(output_path: Path | None = None) -> str:
             print(gap, file=sys.stderr)
 
     summary, auth_str = _build_summary(supported)
+    model_count = len({m["path"] for m in supported})
 
     lines = [
         "# Cable Modem Catalog",
@@ -269,7 +271,7 @@ def generate_index(output_path: Path | None = None) -> str:
         "",
         "- `modem.yaml` — Single source of truth (manufacturer, model, hardware, ISPs, status)",
         "",
-        f"**Supported Modems:** {len(supported)}{summary}",
+        f"**{model_count} modems, {len(supported)} configurations**{summary}",
         "",
         f"**Auth strategies:** {auth_str}",
         "",
@@ -332,6 +334,11 @@ def generate_index(output_path: Path | None = None) -> str:
             + "[![HNAP](https://img.shields.io/badge/-HNAP-5B8FBF?style=flat-square)]"
             + "(https://en.wikipedia.org/wiki/Home_Network_Administration_Protocol) = SOAP-based, requires auth | "
             + "![CBN](https://img.shields.io/badge/-CBN-8B6914?style=flat-square) = CBN SOAP-based protocol",
+        ]
+    )
+    lines.extend(generate_auth_legend())
+    lines.extend(
+        [
             "",
         ]
     )
@@ -365,9 +372,120 @@ def generate_index(output_path: Path | None = None) -> str:
     return markdown
 
 
+def generate_catalog_audit(output_path: Path | None = None) -> str:  # noqa: C901
+    """Generate CATALOG_AUDIT.md — plain-language verification status for planning."""
+    import json as _json
+
+    modems = load_catalog_modems()
+    supported = [m for m in modems if m["status"] != "unsupported"]
+    confirmed = [m for m in modems if m["status"] == "confirmed"]
+    awaiting = [m for m in modems if m["status"] == "awaiting_verification"]
+
+    def display(m: dict) -> str:
+        qualifiers = []
+        if m.get("hw_version"):
+            qualifiers.append(m["hw_version"])
+        if m.get("variant_name") and m["variant_name"] != m.get("hw_version"):
+            qualifiers.append(m["variant_name"])
+        label = m["model"]
+        if qualifiers:
+            label = f"{label} ({', '.join(qualifiers)})"
+        return label
+
+    def has_verified(m: dict) -> bool:
+        test_data = CATALOG_DIR / m["path"] / "test_data"
+        return test_data.exists() and any(test_data.glob("*.verified.json"))
+
+    def has_synthetic_har(m: dict) -> bool:
+        # Synthetic if the matching expected.json _about mentions it
+        stem = m["yaml_file"].replace(".yaml", "")
+        exp = CATALOG_DIR / m["path"] / "test_data" / f"{stem}.expected.json"
+        if not exp.exists():
+            return False
+        about = (_json.loads(exp.read_text()) or {}).get("_about", "")
+        return "synthetic" in about.lower() or "synthesized" in about.lower()
+
+    needs_testing = [m for m in awaiting if not has_verified(m)]
+    pending_review = [m for m in awaiting if has_verified(m)]
+
+    lines = [
+        "# Modem Support Status",
+        "",
+        "> Auto-generated. Run `scripts/generate_catalog_index.py` to refresh.",
+        "",
+        f"**{len(supported)} configurations supported** — "
+        f"{len(confirmed)} confirmed on real hardware, {len(awaiting)} awaiting verification.",
+        "",
+        "---",
+        "",
+        "## Needs Testing",
+        "",
+        "The integration is implemented and CI passes for these modems.",
+        "They just need someone with that hardware to confirm it works",
+        "and share a diagnostics snapshot.",
+        "",
+        "| Modem | Transport | ISPs | Note |",
+        "|-------|-----------|------|------|",
+    ]
+
+    for m in needs_testing:
+        isp_str = ", ".join(m["isps"]) if m["isps"] else "—"
+        note = "synthetic fixture — real capture also welcome" if has_synthetic_har(m) else ""
+        lines.append(f"| {display(m)} | {m['protocol']} | {isp_str} | {note} |")
+
+    lines += [
+        "",
+        "## Pending Review",
+        "",
+        "These have a hardware report on file but haven't been promoted to Confirmed yet.",
+        "May have open repair work — review individually.",
+        "",
+        "| Modem | Transport | ISPs |",
+        "|-------|-----------|------|",
+    ]
+
+    for m in pending_review:
+        isp_str = ", ".join(m["isps"]) if m["isps"] else "—"
+        lines.append(f"| {display(m)} | {m['protocol']} | {isp_str} |")
+
+    lines += [
+        "",
+        "## Confirmed",
+        "",
+        "Working on real hardware with a report on file.",
+        "",
+        "| Modem | Transport | ISPs |",
+        "|-------|-----------|------|",
+    ]
+
+    for m in confirmed:
+        isp_str = ", ".join(m["isps"]) if m["isps"] else "—"
+        lines.append(f"| {display(m)} | {m['protocol']} | {isp_str} |")
+
+    lines += [
+        "",
+        "---",
+        "",
+        "Generated by `scripts/generate_catalog_index.py`.",
+    ]
+
+    markdown = "\n".join(lines) + "\n"
+
+    if output_path:
+        if output_path.exists():
+            existing = output_path.read_text()
+            if existing == markdown:
+                print(f"No changes to {output_path}")
+                return markdown
+        output_path.write_text(markdown)
+        print(f"Written to {output_path}")
+
+    return markdown
+
+
 def main() -> None:
     """Entry point."""
-    parser = argparse.ArgumentParser(description="Generate catalog modem index")
+    parser = argparse.ArgumentParser(description="Generate catalog modem index and gap analysis")
     parser.add_argument(
         "--output",
         "-o",
@@ -382,6 +500,7 @@ def main() -> None:
         sys.stdout.write(generate_index())
     else:
         generate_index(args.output)
+        generate_catalog_audit(catalog_root / "CATALOG_AUDIT.md")
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ status: awaiting_verification
 
 sources:
   auth_config: "[#2 Technicolor XB7](https://github.com/solentlabs/cable_modem_monitor/issues/2)"
-
+  chipset: "[WikiDevi](https://wikidevi.wi-cat.ru/Technicolor_CGM4331COM)"
   detection_hints: "[#2 Technicolor XB7](https://github.com/solentlabs/cable_modem_monitor/issues/2)"
 attribution:
   contributors:

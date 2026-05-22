@@ -64,6 +64,90 @@ def protocol_to_badge(protocol: str) -> str:
     return badges.get(protocol, protocol)
 
 
+# Color registry — hex colors keyed by strategy literal.
+# Strategy names and display tooltips come from Core's auth registry.
+# Order here defines the Legend display order.
+_AUTH_COLORS: dict[str, str] = {
+    "none": "808080",
+    "basic": "C07820",
+    "form": "4A7FB8",
+    "form_nonce": "3A6A9E",
+    "form_pbkdf2": "4A9A5B",
+    "form_sjcl": "7B4FB8",
+    "form_cbn": "8B6914",
+    "hnap": "5B8FBF",
+    "url_token": "0E9A8B",
+    "bearer": "1A7FAA",
+}
+
+_AUTH_COLOR_FALLBACK = "9E9E9E"
+
+
+def _load_auth_display_labels() -> dict[str, str]:
+    """Return {strategy: display_name} from Core's auth registry."""
+    try:
+        from solentlabs.cable_modem_monitor_core.models.modem_config.auth import (
+            get_strategy_display_labels,
+        )
+
+        return get_strategy_display_labels()
+    except ImportError:
+        return {}
+
+
+# Loaded once at import time — Core is always present in the monorepo venv.
+_AUTH_DISPLAY_LABELS: dict[str, str] = _load_auth_display_labels()
+
+
+def _auth_badge_label(strategy: str) -> str:
+    """Derive a short badge label from a strategy name.
+
+    Returns the last underscore-delimited segment: url_token→token, form_nonce→nonce, etc.
+    Single-word strategies (none, basic, form, hnap, bearer) are returned as-is.
+    """
+    return strategy.rsplit("_", 1)[-1] if "_" in strategy else strategy
+
+
+def auth_to_badge(strategy: str) -> str:
+    """Convert an auth strategy name to a Shields.io badge."""
+    label = _auth_badge_label(strategy)
+    color = _AUTH_COLORS.get(strategy, _AUTH_COLOR_FALLBACK)
+    tooltip = _AUTH_DISPLAY_LABELS.get(strategy, strategy)
+    return f'![{label}](https://img.shields.io/badge/-{label}-{color}?style=flat-square "{tooltip}")'
+
+
+def generate_auth_legend() -> list[str]:
+    """Build Auth legend lines, grouped by family.
+
+    Returns a list of markdown lines suitable for extending into the Legend
+    section. Groups the 10 strategies so the legend stays readable even
+    as new strategies are added over time.
+    """
+    _groups: list[tuple[str, list[str]]] = [
+        ("No auth", ["none"]),
+        ("Simple", ["basic"]),
+        ("Form-based", ["form", "form_nonce", "form_pbkdf2", "form_sjcl", "form_cbn"]),
+        ("Token-based", ["url_token", "bearer"]),
+        ("Protocol", ["hnap"]),
+    ]
+    # Append Core-registered strategies not yet in any group (gray fallback).
+    known = {s for _, strategies in _groups for s in strategies}
+    extras = [s for s in _AUTH_DISPLAY_LABELS if s not in known]
+    groups: list[tuple[str, list[str]]] = list(_groups) + ([("Other", extras)] if extras else [])
+
+    lines = ["- **Auth**:"]
+    for group_name, strategies in groups:
+        parts = []
+        for strategy in strategies:
+            label = _auth_badge_label(strategy)
+            color = _AUTH_COLORS.get(strategy, _AUTH_COLOR_FALLBACK)
+            tooltip = _AUTH_DISPLAY_LABELS.get(strategy, strategy)
+            badge = f"![{label}](https://img.shields.io/badge/-{label}-{color}?style=flat-square)"
+            parts.append(f"{badge} {tooltip}")
+        lines.append(f"  - {group_name}: " + " | ".join(parts))
+    return lines
+
+
 def chipset_to_link(chipset: str) -> str:
     """Convert a chipset name to a linked reference."""
     if not chipset:
@@ -109,7 +193,8 @@ def check_reference_gaps(modems: list[dict[str, object]]) -> list[str]:
 
     Returns a list of warning strings. Empty list means no gaps.
     """
-    skip_chipsets = {"unknown", ""}
+    # Generic manufacturer names (no specific model) are intentional — skip silently.
+    skip_chipsets = {"unknown", "", "broadcom", "intel", "qualcomm", "marvell"}
     skip_isps = {"unknown", "various", ""}
 
     warnings: list[str] = []

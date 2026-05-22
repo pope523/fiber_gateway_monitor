@@ -21,6 +21,7 @@ status: confirmed
 
 sources:
   auth_config: "[#105 Netgear CM2050V](https://github.com/solentlabs/cable_modem_monitor/issues/105)"
+  chipset: "[DSLReports community post](https://www.dslreports.com/forum/r33000298-Netgear-CM2000-vs-Arris-S33-vs-Motorola-MB8611) — same BCM3390 platform as CM2000/CM1200 family"
 
 attribution:
   contributors:
@@ -35,11 +36,6 @@ notes: |
   ATDMA + OFDMA upstream. Same tagValueList format as CM2000/CM1200.
   XSRF_TOKEN cookie set on first GET, sent with all subsequent requests.
   Login page at /, POST to /goform/Login.
-
-# TODO: New HAR capture needed for provisioned speed
-# Same XHR pattern as CM2000 — InitProvRateTableUpdateView() exists but
-# InitProvRateTableTagValue() data loads via XHR not in current capture.
-# Re-capture with har-capture 0.5.1+ (XHR quiescence).
 
 references:
   issues:

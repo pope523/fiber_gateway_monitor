@@ -12,6 +12,7 @@ timeout: 20
 status: awaiting_verification
 sources:
   auth_config: "[#63 CM1200](https://github.com/solentlabs/cable_modem_monitor/issues/63)"
+  chipset: "[PC Perspective CM1200 announcement](https://pcper.com/2019/05/netgear-readies-nighthawk-cm1200-multi-gigabit-docsis-31-cable-modem/)"
   detection_hints: "[#63 CM1200](https://github.com/solentlabs/cable_modem_monitor/issues/63)"
 attribution:
   contributors:

@@ -24,6 +24,7 @@ status: awaiting_verification
 
 sources:
   auth_config: "[#111 XB6](https://github.com/solentlabs/cable_modem_monitor/issues/111)"
+  chipset: "[TechInfoDepot](https://techinfodepot.shoutwiki.com/wiki/Technicolor_CGM4140COM)"
 
 attribution:
   contributors:
