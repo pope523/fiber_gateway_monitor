@@ -95,7 +95,7 @@ def _load_auth_display_labels() -> dict[str, str]:
         return {}
 
 
-# Loaded once at import time — Core is always present in the monorepo venv.
+# Loaded once at import time. Core must be installed (CI: pip install -e packages/cable_modem_monitor_core).
 _AUTH_DISPLAY_LABELS: dict[str, str] = _load_auth_display_labels()
 
 
