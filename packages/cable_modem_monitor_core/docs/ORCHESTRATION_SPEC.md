@@ -765,7 +765,7 @@ class ResourceFetch:
 
     Resource fetch metrics are distinct from health probe latency:
 
-    - Health probe latency (ICMP, HTTP HEAD/GET): baseline
+    - Health probe latency (ICMP, TCP): baseline
       responsiveness — "how quickly does the modem respond to a
       lightweight request?"
     - Resource fetch timing: data page performance — "how long do
@@ -825,6 +825,13 @@ class OrchestratorDiagnostics:
             compute aggregates (min/max/avg) from this raw data.
         last_poll_at: ISO 8601 wall-clock timestamp (UTC) of the last
             ``get_modem_data()`` call. None if never polled.
+        last_stub_body: Response body snippets from the last
+            LOAD_INTEGRITY event, keyed by resource path. Empty dict
+            if no stub-page failure has occurred. Retained across
+            successful polls so it is present in user-shared diagnostics
+            downloads even after the modem recovers. Full body stored;
+            no truncation (stub pages are small, and the full body is
+            the diagnostic signal).
 
     Note: auth-failure wire detail is not stored on this dataclass.
     The collector emits a single sanitized ``WARNING`` log when
@@ -843,6 +850,7 @@ class OrchestratorDiagnostics:
     session_reuse_disabled: bool = False
     resource_fetches: list[ResourceFetch] = field(default_factory=list)
     last_poll_at: str | None = None
+    last_stub_body: dict[str, str] = field(default_factory=dict)
 
 
 class ConnectionStatus(Enum):
@@ -1755,10 +1763,10 @@ based — the same status at the same level would flood logs every 30s:
 
 | Event | Level | Example |
 |-------|-------|---------|
-| Transition to responsive (recovery) | INFO | `"Health check [MODEL]: responsive (ICMP 3ms, HTTP GET 110ms)"` |
-| Transition to degraded | WARNING | `"Health check [MODEL]: degraded (ICMP 2ms, HTTP HEAD timeout)"` |
-| Transition to unresponsive | WARNING | `"Health check [MODEL]: unresponsive (ICMP timeout, HTTP HEAD timeout)"` |
-| HTTP skipped (collection evidence) | DEBUG | `"Health check [MODEL]: responsive (ICMP 1.5ms, HTTP skipped (collection active\|recent collection))"` |
+| Transition to responsive (recovery) | INFO | `"Health check [MODEL]: responsive (ICMP 3ms, TCP 2ms)"` |
+| Transition to degraded | WARNING | `"Health check [MODEL]: degraded (ICMP 2ms, TCP timeout)"` |
+| Transition to unresponsive | WARNING | `"Health check [MODEL]: unresponsive (ICMP timeout, TCP timeout)"` |
+| TCP/HEAD skipped (collection evidence) | DEBUG | `"Health check [MODEL]: responsive (ICMP 1.5ms, TCP/HEAD skipped (collection active\|recent collection))"` |
 | First check (UNKNOWN → any) | INFO or WARNING | Depending on the target status |
 | Steady-state (no change) | DEBUG | Same format, but only visible with debug logging enabled |
 
@@ -1784,7 +1792,11 @@ recovery)`, called by `Orchestrator.restart()`.
 Procedure:
 
 1. Raise `RestartNotSupportedError` if `actions.restart` is None.
-2. Authenticate against the modem.
+2. Authenticate against the modem — **unless** `actions.restart` is an
+   `HttpAction` with `action_auth` set (per-action auth). When
+   `action_auth` is present, `execute_action` creates a fresh session,
+   authenticates, and executes the action on it;
+   `collector.authenticate()` is skipped entirely.
 3. Execute the `actions.restart` executor (`HTTP` or `HNAP` — see
    § Action Executors).
 4. Clear the collector session (forces fresh auth on the next poll;
@@ -1794,6 +1806,13 @@ Procedure:
    recovery module owns what happens next.
 6. Return a `RestartResult` — success iff steps 2–5 completed
    without raising.
+
+**Per-action auth (`action_auth` on `HttpAction`):** when
+`actions.restart.action_auth` is set, `execute_action` creates a
+fresh `requests.Session`, authenticates using the configured strategy,
+and executes the action on that temporary session. The collector's
+monitoring session is not needed and `collector.authenticate()` (step
+2) is skipped. Any auth strategy is valid in `action_auth`.
 
 Typical call duration: 2–5 seconds (auth + POST + session clear).
 The caller does not block on the reboot itself.

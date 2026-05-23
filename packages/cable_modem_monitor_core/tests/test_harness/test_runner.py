@@ -19,9 +19,11 @@ from typing import Any
 import pytest
 from solentlabs.cable_modem_monitor_core.test_harness.discovery import (
     ModemTestCase,
+    RestartTestCase,
     discover_modem_tests,
 )
 from solentlabs.cable_modem_monitor_core.test_harness.runner import (
+    run_modem_restart_test,
     run_modem_test,
     run_modem_test_orchestrated,
 )
@@ -33,6 +35,7 @@ from solentlabs.cable_modem_monitor_core.test_harness.runner import (
 _PIPELINE_FIXTURES = Path(__file__).parent.parent / "fixtures" / "pipeline"
 
 _MODEM_YAML = (_PIPELINE_FIXTURES / "modem.yaml").read_text()
+_MODEM_WITH_RESTART_YAML = (_PIPELINE_FIXTURES / "modem_with_restart.yaml").read_text()
 _MODEM_FORM_AUTH_YAML = (_PIPELINE_FIXTURES / "modem_form_auth.yaml").read_text()
 _MODEM_SESSION_HEADERS_YAML = (_PIPELINE_FIXTURES / "modem_session_headers.yaml").read_text()
 _MODEM_URL_TOKEN_YAML = (_PIPELINE_FIXTURES / "modem_url_token.yaml").read_text()
@@ -40,6 +43,7 @@ _MODEM_HNAP_YAML = (_PIPELINE_FIXTURES / "modem_hnap.yaml").read_text()
 _PARSER_YAML = (_PIPELINE_FIXTURES / "parser.yaml").read_text()
 _PARSER_HNAP_YAML = (_PIPELINE_FIXTURES / "parser_hnap.yaml").read_text()
 _HAR_DATA: dict[str, Any] = json.loads((_PIPELINE_FIXTURES / "har_2ch.json").read_text())
+_HAR_RESTART_DATA: dict[str, Any] = json.loads((_PIPELINE_FIXTURES / "har_restart.json").read_text())
 _HAR_HNAP_DATA: dict[str, Any] = json.loads((_PIPELINE_FIXTURES / "har_hnap_2ch.json").read_text())
 _GOLDEN_FILE: dict[str, Any] = json.loads((_PIPELINE_FIXTURES / "golden_2ch.json").read_text())
 _GOLDEN_HNAP_FILE: dict[str, Any] = json.loads((_PIPELINE_FIXTURES / "golden_hnap_2ch.json").read_text())
@@ -452,3 +456,108 @@ class TestOrchestratedErrors:
 
         assert result.passed is False
         assert "Failed to load modem config" in result.error
+
+
+# ---------------------------------------------------------------------------
+# Restart action runner
+# ---------------------------------------------------------------------------
+
+
+def _build_restart_case(
+    tmp_path: Path,
+    *,
+    modem_yaml: str = _MODEM_WITH_RESTART_YAML,
+    har_data: dict[str, Any] = _HAR_RESTART_DATA,
+) -> RestartTestCase:
+    """Build a minimal RestartTestCase under tmp_path."""
+    modem_dir = tmp_path / "modems" / "solentlabs" / "t100"
+    tests_dir = modem_dir / "test_data"
+    tests_dir.mkdir(parents=True)
+    modem_config_path = modem_dir / "modem.yaml"
+    modem_config_path.write_text(modem_yaml)
+    har_path = tests_dir / "modem-restart.har"
+    har_path.write_text(json.dumps(har_data))
+    return RestartTestCase(
+        name="solentlabs/t100/restart",
+        modem_dir=modem_dir,
+        har_path=har_path,
+        modem_config_path=modem_config_path,
+    )
+
+
+# fmt: off
+RESTART_ERROR_CASES = [
+    # (description,           kwargs,                                        expected_error)
+    ("config load failure",   {"modem_yaml": "not: valid: yaml: config"},   "Config load failed"),
+    ("no actions.restart",    {"modem_yaml": _MODEM_YAML},                  "No actions.restart"),
+    ("har load failure",      {"har_data": {"not": "a har"}},               "Failed to load HAR"),
+]
+# fmt: on
+
+
+@pytest.mark.parametrize(
+    "desc,kwargs,expected_error",
+    RESTART_ERROR_CASES,
+    ids=[c[0] for c in RESTART_ERROR_CASES],
+)
+def test_restart_error(
+    tmp_path: Path,
+    desc: str,
+    kwargs: dict[str, Any],
+    expected_error: str,
+) -> None:
+    """Restart pipeline errors return passed=False with structured error message."""
+    case = _build_restart_case(tmp_path, **kwargs)
+
+    result = run_modem_restart_test(case)
+
+    assert result.passed is False, f"{desc}: expected failure"
+    assert expected_error in result.error, f"{desc}: error mismatch"
+
+
+class TestRestartAction:
+    """run_modem_restart_test — happy path and auth failure."""
+
+    def test_happy_path(self, tmp_path: Path) -> None:
+        """Restart action against mock server succeeds."""
+        case = _build_restart_case(tmp_path)
+
+        result = run_modem_restart_test(case)
+
+        assert result.passed is True
+        assert result.error == ""
+        assert result.test_name == case.name
+
+    def test_auth_failure(self, tmp_path: Path) -> None:
+        """Form auth failure before action dispatch returns structured error."""
+        modem_yaml_with_form_and_restart = (
+            "manufacturer: Solent Labs\n"
+            "model: T100\n"
+            "transport: http\n"
+            "default_host: 192.168.100.1\n"
+            "auth:\n"
+            "  strategy: form\n"
+            "  action: /login\n"
+            "  success:\n"
+            "    indicator: Welcome\n"
+            "hardware:\n"
+            "  docsis_version: '3.0'\n"
+            "status: awaiting_verification\n"
+            "attribution:\n"
+            "  contributors:\n"
+            "    - github: test-user\n"
+            "      contribution: Initial capture\n"
+            "isps:\n"
+            "  - Various\n"
+            "actions:\n"
+            "  restart:\n"
+            "    type: http\n"
+            "    method: POST\n"
+            "    endpoint: /restart\n"
+        )
+        case = _build_restart_case(tmp_path, modem_yaml=modem_yaml_with_form_and_restart)
+
+        result = run_modem_restart_test(case)
+
+        assert result.passed is False
+        assert "Auth failed" in result.error

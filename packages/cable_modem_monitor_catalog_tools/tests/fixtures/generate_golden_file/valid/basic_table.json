@@ -43,6 +43,10 @@
     "system_uptime",
     "upstream_channel_count"
   ],
+  "_expected_missing_system_info_fields": [
+    "docsis_status",
+    "hardware_version"
+  ],
   "_expected_golden_file": {
     "downstream": [
       {

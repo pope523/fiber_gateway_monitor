@@ -26,6 +26,7 @@ hardware:
 status: awaiting_verification
 sources:
   auth_config: "[#38 Netgear CM2000](https://github.com/solentlabs/cable_modem_monitor/issues/38)"
+  chipset: "[Homeowner.com Review](https://www.homeowner.com/connectivity/netgear/netgear-cm2000-review)"
   detection_hints: "[#38 Netgear CM2000](https://github.com/solentlabs/cable_modem_monitor/issues/38)"
 attribution:
   contributors:

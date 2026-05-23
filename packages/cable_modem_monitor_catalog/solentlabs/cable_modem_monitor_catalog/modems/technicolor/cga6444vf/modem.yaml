@@ -14,6 +14,8 @@ auth:
   pbkdf2_iterations: 1000
   pbkdf2_key_length: 128
   salt_trigger: "seeksalthash"
+  login_success:
+    error: "ok"
 hardware:
   docsis_version: "3.1"
   chipset: "Broadcom BCM3390"
@@ -24,10 +26,7 @@ sources:
   auth_config:
     "[#120 CGA6444VF](https://github.com/solentlabs/cable_modem_monitor/issues/120)
     — PBKDF2 double-hash auth"
-  chipset: "HAR /api/v1/sta_about COSP list (17 hal-*-broadcom modules including
-    hal-platform-broadcom); BCM3390 identified by vodafonekabelforum.de
-    (user robert_s, thread t=45183); corroborated by WikiDevi CGA4233
-    (confirmed BCM3390) and CGA4236 datasheet (Viper CPU = Broadcom)"
+  chipset: "[DeviWiki CGA4233](https://deviwiki.com/wiki/Technicolor_CGA4233) — same BCM3390 Technicolor gateway platform"
 
 attribution:
   contributors:

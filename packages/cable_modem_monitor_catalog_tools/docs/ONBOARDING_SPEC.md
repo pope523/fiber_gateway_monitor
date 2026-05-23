@@ -352,7 +352,8 @@ Check HAR entries for login flow:
   │   │   └── strategy: form_pbkdf2
   │   │       Extract: login_endpoint, salt_trigger,
   │   │                pbkdf2_iterations, pbkdf2_key_length,
-  │   │                double_hash, csrf_init_endpoint, csrf_header
+  │   │                double_hash, csrf_init_endpoint, csrf_header,
+  │   │                login_success (see below)
   │   │
   │   └── Single POST login?
   │       └── strategy: form
@@ -369,6 +370,42 @@ Check HAR entries for login flow:
   │
   └── Cannot determine → HARD STOP
 ```
+
+#### `form_pbkdf2` — detecting `login_success`
+
+Most firmware signals a failed login via a truthy `error` field in the
+response JSON. Some firmware (e.g., the Technicolor REST platform) instead
+uses `"error": "ok"` on success — treating `error` as a general status
+field rather than a strict failure indicator. The default check
+("no truthy `error` = success") breaks for these modems.
+
+**Detection rule:** Inspect the response body of the *login* POST (the
+second POST to `login_endpoint`, where the password field carries the
+derived hash — not the salt-trigger POST). Parse the response JSON.
+
+- If a field is present with a value that is non-null, non-false, and reads
+  as a sentinel (short string like `"ok"`, integer `0` meaning "no error",
+  boolean `true`) rather than an error description, emit `login_success`
+  with that key-value pair.
+- If the response has no `error` field, or `error` is null/false/absent,
+  omit `login_success` — the default behaviour handles it.
+
+**Examples:**
+
+```yaml
+# Technicolor CGA6444VF — {"error": "ok", "message": "MSG_LOGIN_1", ...}
+login_success:
+  error: "ok"
+
+# Hypothetical — {"result": 0, ...} where 0 means no error
+login_success:
+  result: 0
+```
+
+Values may be string, integer, or boolean — matched by equality against
+the parsed JSON response. If the login response body is absent from the
+HAR or encrypted, omit `login_success` and flag for contributor
+verification.
 
 ### Phase 3: Session Detection
 
@@ -1193,7 +1230,7 @@ clear guidance on what's missing.
    `inferred` / `missing` / `warnings` output, fills gaps via web search,
    passes complete metadata to `generate_config`.
 
-3. **Status upgrade:** Existing modem moves from `in_progress` → `confirmed`.
+3. **Status upgrade:** Existing modem moves from `awaiting_verification` → `confirmed`.
    Tool merges new metadata (ISPs, attribution) with existing config.
 
 **Input:** Analysis result + optional existing config + optional user input
@@ -1213,7 +1250,7 @@ clear guidance on what's missing.
 - `default_host` — most common host in HAR request URLs
 - `hardware.docsis_version` — OFDM/OFDMA channels in analysis → 3.1, else 3.0
 - `transport` — from analysis
-- `status` — defaults to `in_progress` for new, unchanged for existing
+- `status` — defaults to `awaiting_verification` for new, unchanged for existing
 
 ### `generate_config`
 
@@ -1237,11 +1274,19 @@ config to extract `ModemData`. This is the same extraction logic the
 pipeline uses, but against HAR content rather than a live server.
 
 **Input:** HAR file path + parser.yaml content
-**Output:** `{ golden_file: dict, channel_counts: { downstream: int, upstream: int }, system_info_fields: [str] }`
+**Output:** `{ golden_file: dict, golden_file_json: str, channel_counts: { downstream: int, upstream: int }, system_info_fields: [str], missing_system_info_fields: [str] }`
 
-The channel counts and field list are returned separately so the LLM can
+`golden_file_json` is the canonical serialization of `golden_file` (`sort_keys=True`, `indent=2`, `ensure_ascii=False`). Always write this string directly to `modem.expected.json` — never re-serialize `golden_file` yourself, which loses the ordering guarantee.
+
+The channel counts and field lists are returned separately so the LLM can
 sanity-check before writing ("Found 16 downstream, 4 upstream, system
 info has uptime + firmware version — does that look right?").
+`missing_system_info_fields` is the diff of `SYSTEM_INFO_FIELDS` (the four
+Tier-1 fields: `docsis_status`, `hardware_version`, `software_version`,
+`system_uptime`) against what the parser actually extracted. A non-empty list
+means the parser is missing a registry field — inspect the HAR for that data
+before proceeding. This is an advisory warning, not a hard stop; some modems
+genuinely don't expose all four fields.
 
 ### `run_tests`
 

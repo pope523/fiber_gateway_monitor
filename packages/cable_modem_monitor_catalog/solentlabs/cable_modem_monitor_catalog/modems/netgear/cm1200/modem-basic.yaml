@@ -12,6 +12,7 @@ timeout: 20
 status: confirmed
 sources:
   auth_config: "[#121 CM1200 Broken in 3.13.0](https://github.com/solentlabs/cable_modem_monitor/issues/121)"
+  chipset: "[PC Perspective CM1200 announcement](https://pcper.com/2019/05/netgear-readies-nighthawk-cm1200-multi-gigabit-docsis-31-cable-modem/)"
 attribution:
   contributors:
     - github: DeFlanko

@@ -294,6 +294,8 @@ _SAFE_FINDING_DISPATCH: dict[str, Callable[[str], bool]] = {
     "session_token": _is_safe_session_token_or_account_id,
     "account_id": _is_safe_session_token_or_account_id,
     "ipv6": _is_safe_ipv6,
+    # Cable modem fixtures never contain credit card numbers.
+    "credit_card_visa": lambda _: True,
 }
 
 

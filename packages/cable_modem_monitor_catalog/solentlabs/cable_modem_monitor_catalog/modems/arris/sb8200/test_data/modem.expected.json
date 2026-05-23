@@ -1,5 +1,5 @@
 {
-  "_about": "Post-sanitization Travis #81 HAR for SB8200 AB01 firmware. The actual modem returns a 31-byte session token in the login response body (Travis HAR records bodySize: 31; sanitization stripped the content). Stem walk resolves to modem.yaml (Tier 1 exact match). Wire shape exercised: empty login response body — auth manager falls back to extracting the url_token from the Set-Cookie sessionId header. This pins the cookie-fallback branch of _extract_token. The body-as-token branch (production wire shape) is exercised by the sibling modem-body-token.har. See packages/cable_modem_monitor_core/docs/MODEM_DIRECTORY_SPEC.md § test_data/ Directory.",
+  "_about": "Synthesized no-auth fixture for SB8200 AB01 firmware (hw_version: 7). Derived from modem-url-token-body.har with the login request removed. Stem walk resolves to modem.yaml. Wire shape: plain GET to /cmconnectionstatus.html and /cmswinfo.html with no auth step. Represents the ISP-configured no-auth variant verified by MapGuy11 on Service Electric Cablevision (Issue #126). Channel data is identical to the auth variants since the modem serves the same HTML regardless of session. Replace with a real HAR capture when a no-auth contributor provides one.",
   "downstream": [
     {
       "channel_id": 45,

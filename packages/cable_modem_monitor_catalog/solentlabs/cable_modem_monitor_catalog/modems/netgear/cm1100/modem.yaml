@@ -23,6 +23,7 @@ status: awaiting_verification
 
 sources:
   auth_config: "[#104 CM1100 HAR capture](https://github.com/solentlabs/cable_modem_monitor/issues/104)"
+  chipset: "[DeviWiki](https://deviwiki.com/wiki/Netgear_CM1100)"
 
 attribution:
   contributors:

@@ -22,11 +22,11 @@ hardware:
   chipset: "Broadcom BCM3384"
   release_date: "2016"
 
-status: awaiting_verification
+status: confirmed
 
 sources:
   auth_config: "[#163 C7000v2 HAR](https://github.com/solentlabs/cable_modem_monitor/issues/163)"
-
+  chipset: "[DeviWiki](https://deviwiki.com/wiki/Netgear_C7000_v2)"
   detection_hints: "[#163 C7000v2 HAR](https://github.com/solentlabs/cable_modem_monitor/issues/163)"
 attribution:
   contributors:

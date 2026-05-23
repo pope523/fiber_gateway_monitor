@@ -9,11 +9,13 @@ See ONBOARDING_SPEC.md generate_golden_file section.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from solentlabs.cable_modem_monitor_core.config_loader import validate_parser_config
 from solentlabs.cable_modem_monitor_core.har import build_resource_dict
+from solentlabs.cable_modem_monitor_core.models.field_registry import SYSTEM_INFO_FIELDS
 from solentlabs.cable_modem_monitor_core.parsers.coordinator import ModemParserCoordinator
 
 
@@ -23,14 +25,19 @@ class GenerateGoldenFileResult:
 
     Attributes:
         golden_file: The extracted ModemData dict.
+        golden_file_json: Canonical JSON serialization (sort_keys=True).
+            Write this string directly to modem.expected.json — never
+            re-serialize the dict, which loses the ordering guarantee.
         channel_counts: Downstream and upstream channel counts.
         system_info_fields: Field names present in system_info.
         errors: Any errors encountered during extraction.
     """
 
     golden_file: dict[str, Any]
+    golden_file_json: str = ""
     channel_counts: dict[str, int] = field(default_factory=dict)
     system_info_fields: list[str] = field(default_factory=list)
+    missing_system_info_fields: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
 
@@ -91,11 +98,14 @@ def generate_golden_file(
     }
 
     system_info_fields = sorted(system_info.keys()) if system_info else []
+    missing_system_info_fields = sorted(SYSTEM_INFO_FIELDS - set(system_info_fields))
 
     return GenerateGoldenFileResult(
         golden_file=golden,
+        golden_file_json=json.dumps(golden, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
         channel_counts=channel_counts,
         system_info_fields=system_info_fields,
+        missing_system_info_fields=missing_system_info_fields,
         errors=errors,
     )
 
