@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from solentlabs.cable_modem_monitor_core.test_harness.discovery import (
     discover_modem_tests,
+    discover_restart_tests,
 )
 
 # ---------------------------------------------------------------------------
@@ -21,6 +22,7 @@ from solentlabs.cable_modem_monitor_core.test_harness.discovery import (
 _PIPELINE_FIXTURES = Path(__file__).parent.parent / "fixtures" / "pipeline"
 
 _MODEM_YAML = (_PIPELINE_FIXTURES / "modem.yaml").read_text()
+_MODEM_WITH_ACTIONS_YAML = (_PIPELINE_FIXTURES / "modem_with_restart.yaml").read_text()
 _PARSER_YAML = (_PIPELINE_FIXTURES / "modem.yaml").read_text()  # content irrelevant
 _MINIMAL_HAR: dict = json.loads((_PIPELINE_FIXTURES / "har_minimal.json").read_text())
 _MINIMAL_GOLDEN: dict = json.loads((_PIPELINE_FIXTURES / "golden_empty.json").read_text())
@@ -308,4 +310,246 @@ class TestModemTestCaseImmutable:
         cases = discover_modem_tests(modem_dir)
 
         with pytest.raises(AttributeError):
-            cases[0].name = "hacked"  # type: ignore[misc]
+            cases[0].name = "hacked"  # type: ignore[misc]  # frozen dataclass — assignment raises AttributeError at runtime
+
+
+# ---------------------------------------------------------------------------
+# Test: Config resolution — Tier 3 fallback (no-dash stem)
+# ---------------------------------------------------------------------------
+
+
+class TestConfigResolutionTier3:
+    """_resolve_modem_config Tier 3: stems with no dashes fall through to modem.yaml."""
+
+    def test_no_dash_stem_falls_back_to_modem_yaml(self, tmp_path: Path) -> None:
+        """A stem with no dashes that has no exact yaml falls through to modem.yaml."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            hars={"firmware": _MINIMAL_HAR},
+            goldens={"firmware": _MINIMAL_GOLDEN},
+        )
+        modem_dir = modems / "solentlabs" / "t100"
+
+        cases = discover_modem_tests(modem_dir)
+
+        assert len(cases) == 1
+        assert cases[0].modem_config_path == modem_dir / "modem.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Test: modem-restart.har excluded from data collection
+# ---------------------------------------------------------------------------
+
+
+class TestRestartHarExclusion:
+    """modem-restart.har is skipped by discover_modem_tests."""
+
+    def test_restart_har_not_in_data_collection(self, tmp_path: Path) -> None:
+        """modem-restart.har does not appear as a data collection test case."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            hars={"modem": _MINIMAL_HAR, "modem-restart": _MINIMAL_HAR},
+            goldens={"modem": _MINIMAL_GOLDEN},
+        )
+        modem_dir = modems / "solentlabs" / "t100"
+
+        cases = discover_modem_tests(modem_dir)
+
+        names = [c.name for c in cases]
+        assert all("modem-restart" not in n for n in names)
+        assert len(cases) == 1
+
+
+# ---------------------------------------------------------------------------
+# Test: discover_restart_tests
+# ---------------------------------------------------------------------------
+
+
+class TestRestartDiscovery:
+    """discover_restart_tests finds restart action test cases."""
+
+    def test_discovers_dedicated_restart_har(self, tmp_path: Path) -> None:
+        """modem-restart.har present -> discovered as restart test case."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            mfr="acme",
+            model="r100",
+            modem_yaml=_MODEM_YAML,
+            hars={"modem-restart": _MINIMAL_HAR},
+            goldens={},
+        )
+        modem_dir = modems / "acme" / "r100"
+
+        cases = discover_restart_tests(modems)
+
+        assert len(cases) == 1
+        assert cases[0].har_path == modem_dir / "test_data" / "modem-restart.har"
+        assert cases[0].modem_config_path == modem_dir / "modem.yaml"
+
+    def test_falls_back_to_modem_har_when_actions_declared(self, tmp_path: Path) -> None:
+        """No dedicated restart HAR, actions.restart declared -> uses modem.har."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            modem_yaml=_MODEM_WITH_ACTIONS_YAML,
+        )
+        modem_dir = modems / "solentlabs" / "t100"
+
+        cases = discover_restart_tests(modems)
+
+        assert len(cases) == 1
+        assert cases[0].har_path == modem_dir / "test_data" / "modem.har"
+
+    def test_skips_when_no_restart_har_and_no_actions(self, tmp_path: Path) -> None:
+        """No dedicated restart HAR and modem.yaml has no actions -> skipped."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(modems, modem_yaml=_MODEM_YAML)
+
+        cases = discover_restart_tests(modems)
+
+        assert cases == []
+
+    def test_skips_when_modem_har_missing_for_fallback(self, tmp_path: Path) -> None:
+        """actions.restart declared but no modem.har to fall back to -> skipped."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            modem_yaml=_MODEM_WITH_ACTIONS_YAML,
+            hars={},
+            goldens={},
+        )
+
+        cases = discover_restart_tests(modems)
+
+        assert cases == []
+
+    def test_skips_when_no_modem_yaml(self, tmp_path: Path) -> None:
+        """No modem.yaml in directory -> skipped."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            modem_yaml=None,
+            hars={"modem-restart": _MINIMAL_HAR},
+            goldens={},
+        )
+
+        cases = discover_restart_tests(modems)
+
+        assert cases == []
+
+    def test_single_modem_directory(self, tmp_path: Path) -> None:
+        """discover_restart_tests(modem_dir) works when pointed at a single modem dir."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            mfr="acme",
+            model="r100",
+            modem_yaml=_MODEM_YAML,
+            hars={"modem-restart": _MINIMAL_HAR},
+            goldens={},
+        )
+        modem_dir = modems / "acme" / "r100"
+
+        cases = discover_restart_tests(modem_dir)
+
+        assert len(cases) == 1
+
+    def test_multiple_modems(self, tmp_path: Path) -> None:
+        """discover_restart_tests finds cases across multiple modem directories."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            mfr="acme",
+            model="a100",
+            modem_yaml=_MODEM_YAML,
+            hars={"modem-restart": _MINIMAL_HAR},
+            goldens={},
+        )
+        _build_modem_dir(
+            modems,
+            mfr="acme",
+            model="b200",
+            modem_yaml=_MODEM_YAML,
+            hars={"modem-restart": _MINIMAL_HAR},
+            goldens={},
+        )
+
+        cases = discover_restart_tests(modems)
+
+        assert len(cases) == 2
+        names = {c.name for c in cases}
+        assert "acme/a100/restart" in names
+        assert "acme/b200/restart" in names
+
+    def test_name_format(self, tmp_path: Path) -> None:
+        """Test case name is {mfr}/{model}/restart."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            mfr="acme",
+            model="r100",
+            modem_yaml=_MODEM_YAML,
+            hars={"modem-restart": _MINIMAL_HAR},
+            goldens={},
+        )
+
+        cases = discover_restart_tests(modems)
+
+        assert cases[0].name == "acme/r100/restart"
+
+    def test_nonexistent_directory(self, tmp_path: Path) -> None:
+        """Nonexistent path returns no cases."""
+        cases = discover_restart_tests(tmp_path / "does_not_exist")
+
+        assert cases == []
+
+    def test_empty_directory(self, tmp_path: Path) -> None:
+        """Empty modems directory returns no cases."""
+        modems = tmp_path / "modems"
+        modems.mkdir()
+
+        cases = discover_restart_tests(modems)
+
+        assert cases == []
+
+    def test_cases_sorted_by_name(self, tmp_path: Path) -> None:
+        """Returned cases are sorted alphabetically by name."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            mfr="zebra",
+            model="z900",
+            modem_yaml=_MODEM_YAML,
+            hars={"modem-restart": _MINIMAL_HAR},
+            goldens={},
+        )
+        _build_modem_dir(
+            modems,
+            mfr="acme",
+            model="a100",
+            modem_yaml=_MODEM_YAML,
+            hars={"modem-restart": _MINIMAL_HAR},
+            goldens={},
+        )
+
+        cases = discover_restart_tests(modems)
+
+        assert cases[0].name < cases[1].name
+
+    def test_restart_test_case_is_frozen(self, tmp_path: Path) -> None:
+        """RestartTestCase is a frozen dataclass."""
+        modems = tmp_path / "modems"
+        _build_modem_dir(
+            modems,
+            modem_yaml=_MODEM_YAML,
+            hars={"modem-restart": _MINIMAL_HAR},
+            goldens={},
+        )
+
+        cases = discover_restart_tests(modems)
+
+        with pytest.raises(AttributeError):
+            cases[0].name = "hacked"  # type: ignore[misc]  # frozen dataclass — assignment raises AttributeError at runtime

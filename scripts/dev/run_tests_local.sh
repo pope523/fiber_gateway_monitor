@@ -63,9 +63,9 @@ else
 fi
 echo ""
 
-# Run HA integration tests (coverage gate mirrors CI tests.yml: --cov-fail-under=70)
+# Run HA integration tests (coverage gate mirrors CI tests.yml: --cov-fail-under=92)
 echo -e "${YELLOW}Running HA integration tests...${NC}"
-if pytest tests/ -v --tb=short --cov=custom_components/cable_modem_monitor --cov-report=term --cov-report=html --cov-fail-under=70; then
+if pytest tests/ -v --tb=short --cov=custom_components/cable_modem_monitor --cov-report=term --cov-report=html --cov-fail-under=92; then
     echo -e "${GREEN}✓ HA integration tests passed!${NC}"
     TEST_PASSED=true
 else
@@ -74,9 +74,9 @@ else
 fi
 echo ""
 
-# Run Core package tests (coverage gate mirrors CI tests.yml: --cov-fail-under=80)
+# Run Core package tests (coverage gate mirrors CI tests.yml: --cov-fail-under=92)
 echo -e "${YELLOW}Running Core package tests...${NC}"
-if (cd packages/cable_modem_monitor_core && pytest tests/ -v --tb=short --cov=solentlabs/cable_modem_monitor_core --cov-report=term-missing --cov-fail-under=80); then
+if (cd packages/cable_modem_monitor_core && pytest tests/ -v --tb=short --cov=solentlabs/cable_modem_monitor_core --cov-report=term-missing --cov-fail-under=92); then
     echo -e "${GREEN}✓ Core package tests passed!${NC}"
 else
     echo -e "${RED}✗ Core package tests failed${NC}"
@@ -84,9 +84,9 @@ else
 fi
 echo ""
 
-# Run Catalog package tests (coverage gate mirrors CI tests.yml: --cov-fail-under=90)
+# Run Catalog package tests (coverage gate mirrors CI tests.yml: --cov-fail-under=95)
 echo -e "${YELLOW}Running Catalog package tests...${NC}"
-if (cd packages/cable_modem_monitor_catalog && pytest tests/ -v --tb=short --cov=solentlabs/cable_modem_monitor_catalog --cov-report=term-missing --cov-fail-under=90); then
+if (cd packages/cable_modem_monitor_catalog && pytest tests/ -v --tb=short --cov=solentlabs/cable_modem_monitor_catalog --cov-report=term-missing --cov-fail-under=95); then
     echo -e "${GREEN}✓ Catalog package tests passed!${NC}"
 else
     echo -e "${RED}✗ Catalog package tests failed${NC}"
@@ -94,9 +94,9 @@ else
 fi
 echo ""
 
-# Run Catalog Tools package tests (coverage gate mirrors CI tests.yml: --cov-fail-under=80)
+# Run Catalog Tools package tests (coverage gate mirrors CI tests.yml: --cov-fail-under=90)
 echo -e "${YELLOW}Running Catalog Tools package tests...${NC}"
-if (cd packages/cable_modem_monitor_catalog_tools && pytest tests/ -v --tb=short --cov=solentlabs/cable_modem_monitor_catalog_tools --cov-report=term-missing --cov-fail-under=80); then
+if (cd packages/cable_modem_monitor_catalog_tools && pytest tests/ -v --tb=short --cov=solentlabs/cable_modem_monitor_catalog_tools --cov-report=term-missing --cov-fail-under=90); then
     echo -e "${GREEN}✓ Catalog Tools package tests passed!${NC}"
 else
     echo -e "${RED}✗ Catalog Tools package tests failed${NC}"
