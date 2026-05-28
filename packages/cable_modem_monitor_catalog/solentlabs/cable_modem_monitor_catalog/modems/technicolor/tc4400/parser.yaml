@@ -40,7 +40,7 @@ downstream:
           field: frequency
           type: frequency
         - index: 6
-          field: width
+          field: channel_width
           type: frequency
         - index: 7
           field: snr
@@ -96,7 +96,7 @@ upstream:
           field: frequency
           type: frequency
         - index: 6
-          field: width
+          field: channel_width
           type: frequency
         - index: 7
           field: power

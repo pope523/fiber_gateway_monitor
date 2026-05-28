@@ -21,12 +21,6 @@
         "freq. (mhz)": "MHz"
       }
     },
-    "width": {
-      "tier": 1,
-      "type": "frequency",
-      "headers": ["channel width", "width"],
-      "json_keys": []
-    },
     "power": {
       "tier": 1,
       "type": "float",
@@ -88,7 +82,7 @@
     "channel_width": {
       "tier": 2,
       "type": "integer",
-      "headers": ["bandwidth"],
+      "headers": ["channel width", "width", "bandwidth"],
       "json_keys": ["channelwidth", "channel_width"]
     },
     "active_subcarriers": {
@@ -97,11 +91,11 @@
       "headers": ["active subcarriers"],
       "json_keys": []
     },
-    "fft_size": {
+    "fft_type": {
       "tier": 2,
-      "type": "integer",
-      "headers": ["fft size"],
-      "json_keys": []
+      "type": "string",
+      "headers": ["fft size", "fft type"],
+      "json_keys": ["fft_type"]
     },
     "profile_id": {
       "tier": 2,
@@ -112,8 +106,8 @@
     "ranging_status": {
       "tier": 2,
       "type": "string",
-      "headers": ["ranging status"],
-      "json_keys": []
+      "headers": ["ranging status", "upstream ranging status", "us ranging status"],
+      "json_keys": ["ranging_status"]
     }
   }
 }

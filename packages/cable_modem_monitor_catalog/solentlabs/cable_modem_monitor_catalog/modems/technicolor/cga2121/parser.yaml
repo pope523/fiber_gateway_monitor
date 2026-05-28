@@ -52,7 +52,7 @@ system_info:
       resource: "/st_gateway.html"
       fields:
         - css: "th[data-i18n='atg_model'] + td"
-          field: model
+          field: model_name
           type: string
         - css: "th[data-i18n='atg_hardware_version'] + td"
           field: hardware_version
@@ -73,7 +73,7 @@ system_info:
           type: string
         - attribute: "class"
           css: "table:has(caption[data-i18n='ds_prov_about']) tr:nth-child(2) td:nth-child(2)"
-          field: us_ranging_status
+          field: ranging_status
           type: string
         - attribute: "class"
           css: "table:has(caption[data-i18n='ds_prov_about']) tr:nth-child(2) td:nth-child(3)"

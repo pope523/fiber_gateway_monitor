@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Standardization of `boot_status` (Tier 2).** Renamed `provisioning_status`
+  to `boot_status` in the Compal CH7465MT parser.
+- **Documentation: `FIELD_REGISTRY.md` expanded.** Registered `model_name`
+  in Tier 2; added `dhcp_status`, `tftp_status`, and `internet_access` to
+  prevent field fragmentation across manufacturer-specific diagnostic pages.
+  Renamed `fft_size` to `fft_type` in the field registry to match parser usage.
+- **Standardization of `channel_width` (Tier 2).** Renamed `width` to
+  `channel_width` across all parsers (SB8200, TC4400) and synchronized
+  with the Tier 2 naming authority.
+- **Standardization of `model_name` (Tier 2).** Renamed `model` to
+  `model_name` in the Arris CM820B, TM1602A, and Technicolor CGA2121 parsers.
+  Updated the confirmed `arris/cm820b` verified artifact.
+- **Standardization of `ranging_status` (Tier 2).** Renamed `us_ranging_status`
+  to `ranging_status` in the Technicolor CGA2121 parser.
 - **Orchestration logging migrated to typed `OrchestratorEvent` dataclasses.**
   All log output from the orchestration layer now flows through a single
   `log_event()` adapter. No runtime behavior change.

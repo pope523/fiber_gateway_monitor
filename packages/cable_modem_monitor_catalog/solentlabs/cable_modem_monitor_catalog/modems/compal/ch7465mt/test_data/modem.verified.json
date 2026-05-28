@@ -82,7 +82,7 @@
     "hardware_version": "5.01",
     "system_uptime": "11 days 00h:22m:39s",
     "docsis_status": "Operational",
-    "provisioning_status": "Modem Mode",
+    "boot_status": "Modem Mode",
     "provisioned_speed_down": 110100480,
     "provisioned_speed_up": 22544384,
     "provisioned_burst_down": 412876,

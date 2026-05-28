@@ -25,6 +25,17 @@ Core validates these. Parsers must use exactly these names.
 | upstream | `channel_number`, `channel_id`, `frequency`, `power`, `lock_status`, `modulation`, `channel_type`, `symbol_rate` |
 | system_info | `software_version`, `hardware_version`, `system_uptime`, `docsis_status` |
 
+### Tier 1 Promotion Rules
+
+A field is promoted from Tier 2 to Tier 1 (Canonical) when Core logic
+depends on it for more than pass-through:
+
+1. **Identity**: Required to uniquely identify a channel or device.
+2. **Health Logic**: Used to determine device health, signal availability,
+   or connectivity state.
+3. **Aggregates**: Required to calculate aggregate sensors (e.g., total
+   uncorrected errors).
+
 `channel_number` is always present (1-based, auto-assigned from row
 position when not explicitly mapped). `source_channel_number` is
 present only on JS-embedded modems when the per-function position
@@ -108,9 +119,9 @@ registered_fields:
     active_subcarriers:
       type: integer
       description: "Number of active OFDM subcarriers"
-    fft_size:
-      type: integer
-      description: "FFT size for OFDM channel"
+    fft_type:
+      type: string
+      description: "FFT size/type for OFDM channel (e.g., '2K', '4K')"
     profile_id:
       type: string
       description: "OFDM downstream profile ID"
@@ -128,7 +139,19 @@ registered_fields:
       description: "DOCSIS specification version"
     boot_status:
       type: string
-      description: "DOCSIS boot sequence status"
+      description: "DOCSIS boot sequence status (Connectivity/Provisioning/Boot State)"
+    dhcp_status:
+      type: string
+      description: "DHCP binding state"
+    tftp_status:
+      type: string
+      description: "TFTP configuration file download state"
+    internet_access:
+      type: string
+      description: "Global internet connectivity indicator"
+    model_name:
+      type: string
+      description: "Modem model identifier as reported by the device"
     serial_number:
       type: string
       description: "Modem serial number"

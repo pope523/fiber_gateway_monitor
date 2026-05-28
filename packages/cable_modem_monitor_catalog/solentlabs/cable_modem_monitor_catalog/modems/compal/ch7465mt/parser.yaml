@@ -98,7 +98,7 @@ system_info:
       root_element: cmstatus
       fields:
         - source: provisioning_st
-          field: provisioning_status
+          field: boot_status
           type: string
       child_aggregates:
         - child_element: serviceflow

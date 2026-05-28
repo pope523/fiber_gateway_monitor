@@ -271,7 +271,7 @@
     "firmware_build_time": "Wed Nov  8 07:31:40 EST 2023",
     "firmware_name": "TS0901303U11_110823_1602.TM_PC20_TW",
     "hardware_version": "3",
-    "model": "TM1602A",
+    "model_name": "TM1602A",
     "software_version": "9.1.303U11.SIP.PC20.TW",
     "system_uptime": "27 days 13h:39m:00s",
     "total_corrected": 870,

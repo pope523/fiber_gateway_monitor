@@ -95,7 +95,7 @@
     "firmware_build_time": "Mon Nov 20 11:04:06 EST 2017",
     "firmware_name": "TS0901103S5R_112017_WBM760_CM820",
     "hardware_version": "1",
-    "model": "CM820B",
+    "model_name": "CM820B",
     "software_version": "9.1.103S5R",
     "system_uptime": "6 days 02h:33m:00s",
     "total_corrected": 313999142,
