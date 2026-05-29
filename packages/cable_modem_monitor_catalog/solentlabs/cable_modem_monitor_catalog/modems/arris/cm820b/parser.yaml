@@ -103,7 +103,7 @@ system_info:
           label: "System"
           pattern: "SW_REV:\\s*(.+)"
           type: string
-        - field: model
+        - field: model_name
           label: "System"
           pattern: "MODEL:\\s*(.+)"
           type: string

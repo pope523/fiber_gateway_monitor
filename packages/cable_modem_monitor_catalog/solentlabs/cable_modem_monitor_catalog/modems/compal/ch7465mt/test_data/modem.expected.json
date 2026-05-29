@@ -297,7 +297,7 @@
     "provisioned_burst_up": 84541,
     "provisioned_speed_down": 110100480,
     "provisioned_speed_up": 22544384,
-    "provisioning_status": "Modem Mode",
+    "boot_status": "Modem Mode",
     "software_version": "CH7465MT-AT-NCIP-6.15.32p3TM-GA-NOSH",
     "system_uptime": "0 days 00h:16m:36s",
     "total_corrected": 674991443,

@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.0-beta.8] - 2026-05-29
+
+### Fixed
+
+- **Two-phase TLS probe for cipher-floor incompatibility.** Standard Python
+  SSL is tried first; `SECLEVEL=0` is the fallback only when standard SSL
+  fails. `legacy_ssl=True` when standard fails but `SECLEVEL=0` succeeds,
+  covering both old TLS versions and TLS 1.2 modems whose cipher suites
+  fall below Python's default security floor. Related to #170.
+
+### Added
+
+- **Field-set change detection for `system_info` (P25).** The orchestrator
+  now logs a WARNING when parser-level `system_info` fields appear or
+  disappear between polls. Surfaces silent firmware-induced regressions
+  (e.g., a CSS selector miss after a modem firmware update) that previously
+  went undetected.
+
+### Changed
+
+- **Standardization of `boot_status` (Tier 2).** Renamed `provisioning_status`
+  to `boot_status` in the Compal CH7465MT parser.
+- **Documentation: `FIELD_REGISTRY.md` expanded.** Registered `model_name`
+  in Tier 2; added `dhcp_status`, `tftp_status`, and `internet_access` to
+  prevent field fragmentation across manufacturer-specific diagnostic pages.
+  Renamed `fft_size` to `fft_type` in the field registry to match parser usage.
+- **Standardization of `channel_width` (Tier 2).** Renamed `width` to
+  `channel_width` across all parsers (SB8200, TC4400) and synchronized
+  with the Tier 2 naming authority.
+- **Standardization of `model_name` (Tier 2).** Renamed `model` to
+  `model_name` in the Arris CM820B, TM1602A, Technicolor CGA2121, and
+  Sercomm DM1000 parsers. Updated the confirmed `arris/cm820b` verified
+  artifact.
+- **Standardization of `ranging_status` (Tier 2).** Renamed `us_ranging_status`
+  to `ranging_status` in the Technicolor CGA2121 parser.
+
+## [3.14.0-beta.7] - 2026-05-26
+
+### Added
+
+- **Arris SB8200 `modem-basic` variant (URL Token, v6 hardware).** v6 hardware
+  does not issue a session cookie on login; this variant uses the URL token
+  strategy without cookie credential reuse. Status: `awaiting_verification`.
+  Related to #170.
+- **`ModemSnapshot.to_event_payload()` and HA event bus integration.** Core
+  now produces a structured `EventBusPayload` (model, ISP, status, channel
+  counts, collection timestamp) on every successful poll. The HA coordinator
+  fires this as the `cable_modem_monitor_data_updated` event, enabling
+  downstream integrations to consume live modem data without coordinator
+  coupling. Related to #169.
+
+### Changed
+
+- **Orchestration logging migrated to typed `OrchestratorEvent` dataclasses.**
+  All log output from the orchestration layer now flows through a single
+  `log_event()` adapter. No runtime behavior change.
+- **HA adapter: dev tools extracted to `dev_tools.py`.** `async_request_modem_refresh`,
+  service registration, and related utilities moved from `services.py` into a
+  dedicated module. No behavior change.
+
 ## [3.14.0-beta.6] - 2026-05-22
 
 ### Breaking Changes

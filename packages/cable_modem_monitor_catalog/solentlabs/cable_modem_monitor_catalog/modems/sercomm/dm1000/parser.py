@@ -32,7 +32,7 @@ _OFDMA_US = "/setup.cgi?todo=RF_US_31_param"
 _INFO_PREFIX_MAP = {
     "HW_REV ": "hardware_version",
     "SW_REV ": "software_version",
-    "MODEL ": "model",
+    "MODEL ": "model_name",
     "VENDOR ": "vendor",
     "BOOTR ": "bootloader_version",
 }
