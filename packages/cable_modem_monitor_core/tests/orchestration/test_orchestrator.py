@@ -1660,6 +1660,96 @@ class TestCounterResetDetection:
 
 
 # ==================================================================
+# system_info field-set change detection (P25)
+# ==================================================================
+
+
+class TestSystemInfoFieldsChanged:
+    """Detects when parser-level system_info fields appear or disappear."""
+
+    def test_first_poll_no_event(self, caplog: pytest.LogCaptureFixture) -> None:
+        """First poll sets baseline; no event fired."""
+        data = _make_modem_data(system_info={"firmware": "1.0", "hardware_version": "2"})
+        collector = _mock_collector(_ok_result(data))
+        orch = _make_orchestrator(collector=collector)
+
+        with caplog.at_level(logging.WARNING):
+            orch.get_modem_data()
+
+        assert not any("system_info fields changed" in r.message for r in caplog.records)
+
+    def test_steady_state_no_event(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Same field set across polls — no event."""
+        data = _make_modem_data(system_info={"firmware": "1.0", "hardware_version": "2"})
+        collector = _mock_collector([_ok_result(data), _ok_result(data)])
+        orch = _make_orchestrator(collector=collector)
+
+        with caplog.at_level(logging.WARNING):
+            orch.get_modem_data()
+            orch.get_modem_data()
+
+        assert not any("system_info fields changed" in r.message for r in caplog.records)
+
+    def test_lost_field_fires_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Field disappears → WARNING with lost field name."""
+        data1 = _make_modem_data(system_info={"firmware": "1.0", "boot_status": "operational"})
+        data2 = _make_modem_data(system_info={"firmware": "1.0"})
+        collector = _mock_collector([_ok_result(data1), _ok_result(data2)])
+        orch = _make_orchestrator(collector=collector)
+
+        with caplog.at_level(logging.WARNING):
+            orch.get_modem_data()
+            orch.get_modem_data()
+
+        assert any("system_info fields changed" in r.message and "lost" in r.message for r in caplog.records)
+        assert any("boot_status" in r.message for r in caplog.records)
+
+    def test_gained_field_fires_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """New field appears → WARNING with gained field name."""
+        data1 = _make_modem_data(system_info={"firmware": "1.0"})
+        data2 = _make_modem_data(system_info={"firmware": "1.0", "boot_status": "operational"})
+        collector = _mock_collector([_ok_result(data1), _ok_result(data2)])
+        orch = _make_orchestrator(collector=collector)
+
+        with caplog.at_level(logging.WARNING):
+            orch.get_modem_data()
+            orch.get_modem_data()
+
+        assert any("system_info fields changed" in r.message and "gained" in r.message for r in caplog.records)
+        assert any("boot_status" in r.message for r in caplog.records)
+
+    def test_reset_auth_clears_baseline(self, caplog: pytest.LogCaptureFixture) -> None:
+        """reset_auth() clears baseline — no spurious event on next poll."""
+        data1 = _make_modem_data(system_info={"firmware": "1.0", "boot_status": "operational"})
+        data2 = _make_modem_data(system_info={"firmware": "1.0"})
+        collector = _mock_collector([_ok_result(data1), _ok_result(data2)])
+        orch = _make_orchestrator(collector=collector)
+
+        orch.get_modem_data()
+        orch.reset_auth()
+
+        with caplog.at_level(logging.WARNING):
+            orch.get_modem_data()
+
+        assert not any("system_info fields changed" in r.message for r in caplog.records)
+
+    def test_rate_fields_excluded_from_diff(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Orchestrator-computed rate_* fields do not trigger a change event."""
+        data1 = _make_modem_data(system_info={"firmware": "1.0", "total_corrected": 100, "total_uncorrected": 10})
+        data2 = _make_modem_data(system_info={"firmware": "1.0", "total_corrected": 200, "total_uncorrected": 20})
+        collector = _mock_collector([_ok_result(data1), _ok_result(data2)])
+        orch = _make_orchestrator(collector=collector)
+
+        with caplog.at_level(logging.WARNING):
+            orch.get_modem_data()
+            orch.get_modem_data()
+
+        # rate_corrected / rate_uncorrected are added by _update_error_stats
+        # after the field-set snapshot — they must not appear in the diff.
+        assert not any("system_info fields changed" in r.message for r in caplog.records)
+
+
+# ==================================================================
 # Error Rate Computation (#164)
 # ==================================================================
 

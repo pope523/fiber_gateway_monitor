@@ -80,6 +80,7 @@ def _format(event: OrchestratorEvent) -> str:  # noqa: PLR0911, C901
         StaleSessionRecoveryDisabled,
         StatusTransition,
         StubPageDetected,
+        SystemInfoFieldsChanged,
         ZeroChannelsNoSystemInfo,
     )
 
@@ -219,6 +220,14 @@ def _format(event: OrchestratorEvent) -> str:  # noqa: PLR0911, C901
 
     if isinstance(event, ZeroChannelsNoSystemInfo):
         return f"Zero channels and no system_info [{event.model}] — cannot confirm parser health"
+
+    if isinstance(event, SystemInfoFieldsChanged):
+        parts = []
+        if event.lost:
+            parts.append(f"lost: {', '.join(sorted(event.lost))}")
+        if event.gained:
+            parts.append(f"gained: {', '.join(sorted(event.gained))}")
+        return f"system_info fields changed [{event.model}] — {'; '.join(parts)}"
 
     if isinstance(event, StatusTransition):
         return f"Status transition [{event.model}]: {event.from_status} → {event.to_status}"

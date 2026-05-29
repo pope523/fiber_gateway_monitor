@@ -362,6 +362,20 @@ class ZeroChannelsNoSystemInfo:
 
 
 @dataclass
+class SystemInfoFieldsChanged:
+    """system_info field set changed between polls — possible firmware update.
+
+    Only fires when the parser-level field set changes (docsis_status is
+    included; orchestrator-derived rate_* fields are excluded).
+    """
+
+    model: str
+    gained: frozenset[str]
+    lost: frozenset[str]
+    level: EventLevel = field(default=EventLevel.WARNING, init=False)
+
+
+@dataclass
 class StatusTransition:
     """Connection status changed between polls."""
 
@@ -579,6 +593,7 @@ type OrchestratorEvent = (
     | HnapConnectionFailed
     | HnapLoadError
     | ZeroChannelsNoSystemInfo
+    | SystemInfoFieldsChanged
     | StatusTransition
     | CounterReset
     | RestartCommandSent

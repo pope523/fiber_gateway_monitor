@@ -276,6 +276,7 @@ class TestTlsHandshake:
             ("TLSv1.1", True),
             ("TLSv1", True),
             ("SSLv3", True),
+            (None, False),
         ],
     )
     @patch(f"{_MODULE}.socket.create_connection")
@@ -284,7 +285,7 @@ class TestTlsHandshake:
         self,
         mock_context_cls: MagicMock,
         mock_create_conn: MagicMock,
-        negotiated_version: str,
+        negotiated_version: str | None,
         expected_legacy: bool,
     ) -> None:
         from solentlabs.cable_modem_monitor_core.connectivity import _tls_handshake

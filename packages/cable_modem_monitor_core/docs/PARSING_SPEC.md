@@ -568,8 +568,15 @@ Channel dicts and system_info are open — canonical fields are
 guaranteed, but any additional field mapped in parser.yaml or extracted
 by parser.py passes through without core changes. This lets modems
 expose values like `channel_width`, `active_subcarriers`,
-`temperature`, or `fft_size` without modifying Core or the
+`temperature`, or `fft_type` without modifying Core or the
 `BaseParser` implementations.
+
+The orchestrator tracks the `system_info` field set between polls and
+logs a WARNING (`system_info fields changed`) when fields appear or
+disappear. This surfaces firmware-induced selector failures (e.g., a
+CSS DOM change) that would otherwise be silent. Orchestrator-derived
+fields (`rate_corrected`, `rate_uncorrected`) are excluded from the
+comparison.
 
 ### ModemData Shape
 

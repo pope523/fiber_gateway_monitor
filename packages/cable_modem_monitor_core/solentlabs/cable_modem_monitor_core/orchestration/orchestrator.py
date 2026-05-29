@@ -29,6 +29,7 @@ from .events import (
     SessionRetryStarted,
     SessionRetrySucceeded,
     StatusTransition,
+    SystemInfoFieldsChanged,
 )
 from .logging import log_event
 from .models import ModemSnapshot, OrchestratorDiagnostics, RestartResult
@@ -121,6 +122,10 @@ class Orchestrator:
         self._prev_error_baseline: _ErrorRateBaseline | None = None
         self._stats_last_reset: datetime | None = None
 
+        # Field-set change detection (P25) — parser-level system_info keys
+        # after enrich_docsis_status, before _update_error_stats.
+        self._prev_system_info_fields: frozenset[str] | None = None
+
         # Diagnostics state
         self._last_poll_duration: float | None = None
         self._last_poll_at: str | None = None
@@ -193,6 +198,7 @@ class Orchestrator:
         self._collector.clear_session()
         self._first_poll_complete = False
         self._prev_error_baseline = None
+        self._prev_system_info_fields = None
         log_event(_logger, AuthStateReset(model=self._modem_config.model))
 
     def reset_connectivity(self) -> None:
@@ -424,6 +430,21 @@ class Orchestrator:
         connection_status = derive_connection_status(modem_data, model=self._modem_config.model)
         enrich_docsis_status(modem_data)
         docsis_status = modem_data.get("system_info", {}).get("docsis_status", DocsisStatus.UNKNOWN)
+
+        # Field-set change detection (P25) — snapshot after enrich_docsis_status
+        # so docsis_status is stable, but before _update_error_stats so
+        # orchestrator-derived rate_* fields don't appear in the diff.
+        current_fields = frozenset(modem_data.get("system_info", {}))
+        if self._prev_system_info_fields is not None and current_fields != self._prev_system_info_fields:
+            log_event(
+                _logger,
+                SystemInfoFieldsChanged(
+                    model=self._modem_config.model,
+                    gained=current_fields - self._prev_system_info_fields,
+                    lost=self._prev_system_info_fields - current_fields,
+                ),
+            )
+        self._prev_system_info_fields = current_fields
 
         # Counter-reset detection (#110) and per-minute error rates
         # (#164) — both derived from one prior-state read of the
