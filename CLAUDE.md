@@ -74,6 +74,13 @@ over convenience.
    (CI workflows, Makefiles, docs, VS Code tasks) that linters don't
    scan.
 
+6a. **When any task label, script name, or path changes in
+   `.vscode/tasks.json`, audit these files for references:**
+   `scripts/dev/next_steps.txt`, `scripts/dev/welcome_message.txt`,
+   `.devcontainer/post-start.sh`, `docs/setup/GETTING_STARTED.md`.
+   Task name drift is invisible to linters and causes silent breakage
+   in the contributor on-ramp.
+
 7. **Always read a file before writing to it. No exceptions.** Even
    "I just want to overwrite it" — read first. Local-only/gitignored
    files especially: no git recovery path. The Write tool errors if
