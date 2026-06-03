@@ -1994,7 +1994,7 @@ fires (see HA_ADAPTER_SPEC § Recovery Adapter); Core just exposes
 `recovery_active` and fires the observer.
 
 Future versions may expose the window duration as a user-configurable
-option. For v3.14, it's a class constant.
+option. Currently a class constant.
 
 ### Reboot-Signal Trigger
 
@@ -2042,9 +2042,6 @@ no coordinator timeouts.
 Modems that don't expose the relevant fields simply don't trigger
 via this path. That's fine — commanded restarts and observed
 outages still enter recovery through their own paths.
-
-**Future:** per-modem or user-level opt-out for the reboot-signal
-trigger. Not wired for v3.14.
 
 ### Public API
 
