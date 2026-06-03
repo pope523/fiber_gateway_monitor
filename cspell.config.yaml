@@ -115,6 +115,7 @@ words:
   - Arris
   - Compal
   - Hitron
+  - Moto
   - Motorola
   - Netgear
   - netgear
@@ -133,8 +134,10 @@ words:
   - Xfinity
 
   # Modem data fields (concatenated identifiers from firmware)
+  - cablemodem
   - channeltype
   - cmconnectionstatus
+  - cmstatus
   - cmdocsisds
   - cursystemtime
   - dschannel
@@ -232,6 +235,7 @@ words:
   - fixturenames
   - frozenset
   - frozensets
+  - fromstring
   - functools
   - funcs
   - genericity
@@ -309,6 +313,7 @@ words:
   - glyphicon
 
   # British / alternate spellings (used in comments and docs)
+  - artefacts
   - behaviour
   - Centralises
   - entrancy
