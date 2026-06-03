@@ -216,9 +216,11 @@ ModemDataCollector logs detail at the point of failure *before*
 classifying it into a signal. The signal is for the orchestrator to act
 on. The log record is for humans troubleshooting. Both always happen.
 
-**All log lines include `[MODEL]`** for multi-modem disambiguation.
-When multiple integrations run in the same HA instance, the model tag
-is the primary way to correlate log lines to a specific modem.
+**All log lines include `[MODEL]`** for multi-modem disambiguation —
+model context is carried on each event dataclass and rendered by the
+`log_event()` adapter. See
+[LOGGING_SPEC.md](LOGGING_SPEC.md) for the event taxonomy and level
+policy.
 
 Example — HTTP 401 on a data page:
 
@@ -1280,10 +1282,11 @@ for the MIB-cited boundary rule.
 ### Logging Contract
 
 Every orchestrator log line includes `[MODEL]` for multi-modem
-disambiguation. Policy decisions are logged with enough context to
-identify root cause without reading code. The auth failure streak
-count appears in every auth-related log so the progression is visible
-in a linear log scan.
+disambiguation — model context is carried on event dataclasses and
+rendered by `log_event()`. See [LOGGING_SPEC.md](LOGGING_SPEC.md).
+Policy decisions are logged with enough context to identify root cause
+without reading code. The auth failure streak count appears in every
+auth-related log so the progression is visible in a linear log scan.
 
 **Steady-state success-path logs are DEBUG.** All success-path
 orchestration logs — auth, resource loading, session state, parse

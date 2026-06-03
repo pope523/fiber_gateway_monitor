@@ -15,7 +15,7 @@
 | Code quality (no shortcuts, quality gates, forward refs, suppression discipline) | `docs/CODE_REVIEW.md` § Design Principles + Source File Standards |
 | Test patterns (table-driven, fixtures vs inline, no data blobs, no modem-specifics, test overrides as smell) | `docs/CODE_REVIEW.md` § Test File Standards |
 | HAR fixtures (Git LFS, `load_har_json()`) | `docs/CODE_REVIEW.md` § Loading HAR Fixtures |
-| Logging conventions (`[MODEL]` tag) | `docs/CODE_REVIEW.md` § Modem-Specific Log Messages |
+| Logging conventions (event taxonomy, `log_event()`) | `packages/cable_modem_monitor_core/docs/LOGGING_SPEC.md` |
 | Async / blocking I/O | `docs/CODE_REVIEW.md` § No Blocking I/O in Async Context |
 | Release flow (branching, merging, tagging) | `docs/reference/RELEASING.md` |
 | Process questions (where does X go? PR vs Discussion vs Issue?) | `CONTRIBUTING.md` |
