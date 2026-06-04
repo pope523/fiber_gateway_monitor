@@ -978,11 +978,21 @@ def create_list_orphaned_statistics_handler(
 
         if execute:
             purged = await _purge_statistic_ids(hass, orphaned)
+            _LOGGER.warning(
+                "Purged %d orphaned statistics for prefix '%s'",
+                purged,
+                prefix,
+            )
             return {
                 "yaml": f"# Purged {purged} orphaned statistics for modem prefix '{prefix}'.",
                 "count": purged,
             }
 
+        _LOGGER.debug(
+            "Orphaned statistics preview: %d found for prefix '%s'",
+            total,
+            prefix,
+        )
         lines = [
             f"# Found {total} orphaned entity record(s) for modem prefix '{prefix}'.",
             "# These have no registered entity. They were likely left behind",
