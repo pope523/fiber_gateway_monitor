@@ -17,9 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commented preview of orphaned entity IDs. Pass `execute: true` to purge
   all of them directly via HA's recorder. Purge is permanent. Documented
   in TROUBLESHOOTING.md § Ghost Statistics.
-- **Technicolor XB7 (CGM4981COM) now fully supported.** Verified on
+- **Technicolor XB7 (CGM4331COM) now fully supported.** Verified on
   hardware via contributor HAR capture. 34 downstream + 5 upstream channels
-  confirmed. Addresses #101.
+  confirmed.
 
 ### Fixed
 
