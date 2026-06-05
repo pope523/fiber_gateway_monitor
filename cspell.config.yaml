@@ -32,11 +32,14 @@ words:
 
   # DOCSIS / cable protocol
   - AESCCM
+  - Gbps
   - ATDMA
   - CMTS
   - dbmv
+  - Datasheet
   - DCID
   - DCIDs
+  - UCID
   - Docsis
   - DOCSIS
   - docsis
@@ -113,6 +116,7 @@ words:
 
   # Modem manufacturers and product lines
   - Arris
+  - COMMSCOPE
   - Compal
   - Hitron
   - Moto
@@ -128,9 +132,46 @@ words:
   - Touchstone
 
   # ISPs / providers
+  - Altice
+  - Baltics
+  - brighthouse
+  - BYOM
+  - cableone
   - Comcast
+  - Datagroup
+  - Kabel
+  - Koodo
+  - kood
+  - KOOD
+  - Mediacom
+  - mediacom
   - MTAT
+  - Pyür
+  - pyür
+  - PYÜR
+  - SERV
+  - Sparklight
+  - Suddenlink
+  - suddenlink
+  - Teksavvy
+  - teksavvy
+  - TEKS
+  - Tele
+  - Telus
+  - TNETC
+  - Unitymedia
+  - unitymedia
+  - UNKN
+  - VARI
+  - Videotron
+  - videotron
+  - Vidéotron
   - Vodafone
+  - Volia
+  - volia
+  - VOLY
+  - Volya
+  - VMDG
   - Xfinity
 
   # Modem data fields (concatenated identifiers from firmware)
@@ -196,6 +237,7 @@ words:
   - reauthentication
   - rebonded
   - rebonding
+  - Rebranded
   - rebrands
   - relogin
   - slugification
