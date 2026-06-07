@@ -55,7 +55,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any
 
 from bs4 import BeautifulSoup, Tag
 
@@ -182,8 +181,7 @@ def _find_by_attribute(
     attrs: Mapping[str, str],
 ) -> Tag | None:
     """Find table by element attributes."""
-    find_attrs: dict[str, Any] = dict(attrs)
-    element = soup.find(attrs=find_attrs)
+    element = soup.find(None, dict(attrs))
     if element is None:
         return None
     if isinstance(element, Tag) and element.name == "table":
