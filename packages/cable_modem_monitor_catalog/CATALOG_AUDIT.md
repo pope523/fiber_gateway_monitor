@@ -2,7 +2,7 @@
 
 > Auto-generated. Run `scripts/generate_catalog_index.py` to refresh.
 
-**41 configurations supported** — 18 confirmed on real hardware, 23 awaiting verification.
+**41 configurations supported** — 19 confirmed on real hardware, 22 awaiting verification.
 
 ---
 
@@ -18,7 +18,6 @@ and share a diagnostics snapshot.
 | S33 (v3) | HNAP | Comcast, Cox, Spectrum, Xfinity |  |
 | S34 | HNAP | Comcast, Cox, Spectrum, Xfinity |  |
 | SB6141 | HTML | Comcast, Cox, Spectrum, TWC, Mediacom |  |
-| SB6183 | HTML | Comcast, Cox, Spectrum, Xfinity, Mediacom |  |
 | SB8200 (v6, basic) | HTML | Spectrum |  |
 | SB8200 (v7, cookie) | HTML | Spectrum |  |
 | SB8200 (v7, url-token) | HTML | Comcast, Cox, Spectrum, Xfinity |  |
@@ -56,6 +55,7 @@ Working on real hardware with a report on file.
 | CM820B | HTML | Volya, Various |
 | S33 | HNAP | Comcast, Cox, Spectrum, Xfinity |
 | S33 (v2) | HNAP | Comcast, Cox, Spectrum, Xfinity |
+| SB6183 | HTML | Comcast, Cox, Spectrum, Xfinity, Mediacom |
 | SB6190 (form-nonce) | HTML | Comcast, Spectrum |
 | SB8200 (v6) | HNAP | Cox |
 | TG3442DE | HTML | Vodafone DE |
