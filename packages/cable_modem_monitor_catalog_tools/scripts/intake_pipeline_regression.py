@@ -8,15 +8,18 @@ as a fresh submission. For each modem:
 2. Run generate_golden_file with the generated parser.yaml
 3. Compare generated golden file against committed golden file
 4. Compute field-level accuracy (matching / total committed fields)
+5. Grade detected actions against the committed modem.yaml actions
 
-Reports fleet-wide accuracy percentage so improvements can be tracked
-over time. In CI, writes a GitHub step summary and optional JSON
-scorecard artifact.
+Reports fleet-wide accuracy percentage and per-action grades so
+onboarding capability and consistency can be tracked over time. In CI,
+writes a GitHub step summary and optional JSON scorecard artifact.
 
 Baseline mode (--baseline):
     Compares results against a recorded baseline. Fails only on
-    regressions (status got worse). Use --update-baseline to record
-    the current state after pipeline improvements.
+    regressions: a modem's pipeline status or any action grade got
+    worse. Use --update-baseline to record the current state after
+    pipeline improvements. The committed fleet baseline lives at
+    scripts/intake_baseline.json (wired into make intake-regression).
 
 Usage:
     python .../intake_pipeline_regression.py
@@ -32,12 +35,18 @@ import argparse
 import json
 import os
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
+from solentlabs.cable_modem_monitor_catalog_tools.analysis.actions.grading import (
+    GRADE_SEVERITY,
+    ActionGrade,
+    grade_actions,
+)
 from solentlabs.cable_modem_monitor_catalog_tools.analysis.types import FleetPatterns
 
 CATALOG_ROOT = (
@@ -57,6 +66,7 @@ class ModemResult:
     error: str = ""
     golden_diffs: list[str] = field(default_factory=list)
     config_diffs: list[str] = field(default_factory=list)
+    action_grades: dict[str, ActionGrade] = field(default_factory=dict)
     channel_counts: dict[str, int] = field(default_factory=dict)
     total_fields: int = 0
     matching_fields: int = 0
@@ -409,6 +419,13 @@ def run_modem(
         if analysis_data is None:
             return result
 
+        # Actions grading — onboarding capability per action, graded even
+        # when a later stage fails
+        committed_yaml_path = modem_dir / "modem.yaml"
+        if committed_yaml_path.exists():
+            committed = yaml.safe_load(committed_yaml_path.read_text()) or {}
+            result.action_grades = grade_actions(analysis_data.get("actions"), committed.get("actions"))
+
         modem_yaml, parser_yaml = _run_generate(analysis_data, modem_dir, result, fleet=fleet)
         if modem_yaml is None:
             return result
@@ -447,6 +464,7 @@ def _print_result(result: ModemResult) -> None:
 
     if result.stage_failed:
         print(f"    FAIL  {pct}  {result.stage_failed}: {result.error}")
+        _print_result_actions(result)
         return
 
     ds = result.channel_counts.get("downstream", 0)
@@ -464,6 +482,18 @@ def _print_result(result: ModemResult) -> None:
         print(f"    CONFIG diffs: {len(result.config_diffs)}")
         for d in result.config_diffs[:3]:
             print(f"      {d}")
+    _print_result_actions(result)
+
+
+def _print_result_actions(result: ModemResult) -> None:
+    """Print per-action grades for one modem result."""
+    if not result.action_grades:
+        return
+    summary = "  ".join(f"{kind}={grade.status}" for kind, grade in sorted(result.action_grades.items()))
+    print(f"    ACTIONS {summary}")
+    for kind, grade in sorted(result.action_grades.items()):
+        if grade.status != "match" and grade.detail:
+            print(f"      {kind}: {grade.detail}")
 
 
 def _print_auth_audit(catalog_root: Path) -> None:
@@ -554,7 +584,25 @@ def _print_summary(
     _print_incomplete_section(incomplete)
     _print_failures_section(failed_stage)
     _print_drift_section(drifted)
+    _print_actions_section(results)
     _print_passed_section(passed)
+
+
+def _print_actions_section(results: list[ModemResult]) -> None:
+    """Fleet-wide actions grading: capability tally plus every non-match."""
+    graded = [(r, kind, grade) for r in results for kind, grade in sorted(r.action_grades.items())]
+    if not graded:
+        return
+
+    tally = Counter(grade.status for _, _, grade in graded)
+    counts = "  ".join(f"{status}: {tally.get(status, 0)}" for status in GRADE_SEVERITY)
+    print(f"ACTIONS — pipeline-detected vs committed ({len(graded)} graded):")
+    print(f"  {counts}")
+    for r, kind, grade in graded:
+        if grade.status != "match":
+            detail = f" — {grade.detail}" if grade.detail else ""
+            print(f"  {r.modem} ({r.har_file}) {kind}: {grade.status}{detail}")
+    print()
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +661,8 @@ def _build_scorecard(results: list[ModemResult]) -> dict[str, Any]:
     except Exception:
         sha = os.environ.get("GITHUB_SHA", "")[:8]
 
+    actions_tally = Counter(grade.status for r in results for grade in r.action_grades.values())
+
     return {
         "timestamp": datetime.now(UTC).isoformat(),
         "commit": sha,
@@ -622,6 +672,7 @@ def _build_scorecard(results: list[ModemResult]) -> dict[str, Any]:
         "matching_fields": matching,
         "total_hars": len(results),
         "pipeline_passed": len(results) - failed_count,
+        "actions_summary": {status: actions_tally.get(status, 0) for status in GRADE_SEVERITY},
         "modems": [
             {
                 "modem": r.modem,
@@ -633,6 +684,10 @@ def _build_scorecard(results: list[ModemResult]) -> dict[str, Any]:
                 "diff_count": len(r.golden_diffs),
                 "stage_failed": r.stage_failed,
                 "error": r.error,
+                "actions": {
+                    kind: {"status": grade.status, "detail": grade.detail}
+                    for kind, grade in sorted(r.action_grades.items())
+                },
             }
             for r in results
         ],
@@ -690,15 +745,28 @@ def _write_step_summary(results: list[ModemResult]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _load_baseline(path: Path) -> dict[str, str]:
-    """Load baseline file. Returns {key: status}."""
-    data = json.loads(path.read_text())
-    return data.get("results", {})
+def _load_baseline(path: Path) -> dict[str, dict[str, Any]]:
+    """Load baseline file. Returns {key: {pipeline, actions}}.
+
+    Legacy entries that are bare status strings are normalized to the
+    current schema with no recorded action grades.
+    """
+    data = json.loads(path.read_text()).get("results", {})
+    normalized: dict[str, dict[str, Any]] = {}
+    for key, value in data.items():
+        normalized[key] = {"pipeline": value, "actions": {}} if isinstance(value, str) else value
+    return normalized
 
 
 def _save_baseline(path: Path, results: list[ModemResult]) -> None:
     """Write current results as the new baseline."""
-    baseline = {_result_key(r): _result_status(r) for r in results}
+    baseline = {
+        _result_key(r): {
+            "pipeline": _result_status(r),
+            "actions": {kind: grade.status for kind, grade in sorted(r.action_grades.items())},
+        }
+        for r in results
+    }
     data = {
         "_comment": "Intake pipeline regression baseline. Update with --update-baseline.",
         "results": dict(sorted(baseline.items())),
@@ -708,12 +776,13 @@ def _save_baseline(path: Path, results: list[ModemResult]) -> None:
 
 def _compare_baseline(
     results: list[ModemResult],
-    baseline: dict[str, str],
+    baseline: dict[str, dict[str, Any]],
 ) -> tuple[list[str], list[str]]:
     """Compare results against baseline.
 
     Returns (regressions, improvements) as human-readable messages.
-    A regression is when a modem's status gets worse (higher severity).
+    A regression is when a modem's pipeline status or any action grade
+    gets worse (higher severity).
     """
     regressions: list[str] = []
     improvements: list[str] = []
@@ -721,29 +790,57 @@ def _compare_baseline(
     for r in results:
         key = _result_key(r)
         current = _result_status(r)
-        expected = baseline.get(key)
+        entry = baseline.get(key)
 
-        if expected is None:
+        if entry is None:
             # New modem not in baseline — not a regression, but flag it
-            if current != "clean":
+            if current != "clean" or any(g.status != "match" for g in r.action_grades.values()):
                 regressions.append(f"  NEW {key}: {current} (not in baseline)")
             continue
 
+        expected = entry.get("pipeline", "clean")
         cur_sev = _STATUS_SEVERITY[current]
-        exp_sev = _STATUS_SEVERITY[expected]
+        exp_sev = _STATUS_SEVERITY.get(expected, 0)
 
         if cur_sev > exp_sev:
             regressions.append(f"  REGRESSED {key}: {expected} -> {current}")
         elif cur_sev < exp_sev:
             improvements.append(f"  IMPROVED  {key}: {expected} -> {current}")
 
+        _compare_action_grades(key, r, entry.get("actions", {}), regressions, improvements)
+
     # Modems removed from catalog (in baseline but not in results)
     result_keys = {_result_key(r) for r in results}
     for key in sorted(baseline):
         if key not in result_keys:
-            improvements.append(f"  REMOVED   {key}: was {baseline[key]}")
+            improvements.append(f"  REMOVED   {key}: was {baseline[key].get('pipeline', '?')}")
 
     return regressions, improvements
+
+
+def _compare_action_grades(
+    key: str,
+    result: ModemResult,
+    base_actions: dict[str, str],
+    regressions: list[str],
+    improvements: list[str],
+) -> None:
+    """Ratchet per-action grades against the baseline."""
+    worst = max(GRADE_SEVERITY.values())
+    for kind, grade in sorted(result.action_grades.items()):
+        base = base_actions.get(kind)
+        if base is None:
+            if grade.status != "match":
+                regressions.append(f"  NEW {key} actions.{kind}: {grade.status} (not in baseline)")
+            continue
+        cur_sev = GRADE_SEVERITY[grade.status]
+        base_sev = GRADE_SEVERITY.get(base, worst)
+        if cur_sev > base_sev:
+            regressions.append(f"  REGRESSED {key} actions.{kind}: {base} -> {grade.status}")
+        elif cur_sev < base_sev:
+            improvements.append(f"  IMPROVED  {key} actions.{kind}: {base} -> {grade.status}")
+    for kind in sorted(set(base_actions) - set(result.action_grades)):
+        improvements.append(f"  REMOVED   {key} actions.{kind}: was {base_actions[kind]}")
 
 
 def _print_baseline_comparison(

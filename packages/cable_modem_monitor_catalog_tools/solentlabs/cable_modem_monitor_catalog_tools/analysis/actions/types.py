@@ -10,6 +10,8 @@ _CREDENTIAL_NAME_KEYWORDS: frozenset[str] = frozenset({"password", "passwd", "pw
 
 _SANITIZER_VALUE_PATTERN: re.Pattern[str] = re.compile(r"^(FIELD|PASS)_[0-9a-f]+$")
 
+_COOKIE_DIRECTIVE_PATTERN: re.Pattern[str] = re.compile(r"^\{cookie:[^}]+\}$")
+
 
 @dataclass
 class ActionDetail:
@@ -80,6 +82,10 @@ def _detect_credential_params(params: dict[str, str]) -> set[str]:
     """
     credential_names: set[str] = set()
     for name, value in params.items():
+        # {cookie:name} directives tell Core to echo a session cookie at
+        # execution time — they are config, not captured credential values.
+        if _COOKIE_DIRECTIVE_PATTERN.match(value):
+            continue
         name_lower = name.lower()
         if any(kw in name_lower for kw in _CREDENTIAL_NAME_KEYWORDS) or _SANITIZER_VALUE_PATTERN.match(value):
             credential_names.add(name)

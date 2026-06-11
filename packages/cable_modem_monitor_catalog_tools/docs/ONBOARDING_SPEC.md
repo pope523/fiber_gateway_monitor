@@ -458,6 +458,41 @@ Scan HAR for logout and restart flows:
 **Restart is rarely in the HAR.** Most contributors capture status pages,
 not admin operations. Omitting restart is normal and correct.
 
+#### Source-Inferred Call-Site Extraction
+
+When no request in HAR traffic matches an action pattern, scan captured
+response bodies instead. Two passes, in order:
+
+1. **`$.ajax({...})` call sites** (`analysis/actions/callsite.py`) — parse
+   the options object for `type`, `url`, and `data`. A `url` matching an
+   action pattern yields the endpoint, the method (from `type:`), and
+   data params. This is the only call shape observed at action endpoints
+   in fleet HARs (XB10 restart, S33-family logout). `$.post(url, {...})`
+   appears in fleet page source but never at an action endpoint — it is
+   deliberately unsupported until a fleet HAR shows one.
+2. **Bare quoted strings** — the legacy scan; yields endpoint only, with
+   the method guessed from the action name (GET for logout, POST for
+   restart). The same action-name prior applies in pass 1 when a call
+   site has no `type:` field.
+
+**Param resolution rules (pass 1), in precedence order:**
+
+| Param | Resolution |
+|-------|-----------|
+| Name matches a cookie name observed in this HAR's `Set-Cookie` headers | `{cookie:<name>}` directive (double-submit CSRF shape). Wins even over a literal value — the literal is the captured session's token, not a reusable one. |
+| Value is a plain string literal | Emitted verbatim. |
+| Value is a computed expression or identifier | Dropped, with a warning naming the param and quoting the expression so the manual step has the evidence in front of it. |
+
+A `data:` payload that is a bare identifier (not an object literal)
+yields no params and a warning naming the identifier.
+
+**Every value comes from the contributor's own HAR.** Confirmed modems
+contribute the *patterns* (URL regexes in `action_patterns.json`, the
+call shapes this extractor parses); they never contribute values.
+Cookie names are read from this capture's `Set-Cookie` headers — name
+matching, not value matching, because the HAR sanitizer rewrites cookie
+values but not inline JS literals.
+
 #### Credential Param Classification
 
 After extracting action params, classify each param as a credential or
@@ -472,6 +507,11 @@ an action trigger.  This applies to both HTTP and HNAP actions.
 
 **Behaviour:**
 
+- Params whose value is a `{cookie:<name>}` directive are exempt from
+  classification — the directive instructs Core to echo a session
+  cookie at execution time; it is config, not a captured credential
+  value. Without this exemption the name heuristic would blank
+  `csrfp_token`-style params the call-site extractor just resolved.
 - Detected credential values are replaced with empty strings in the
   generated config.  The sanitized values are artifacts — they are
   neither the real credential nor a useful placeholder.

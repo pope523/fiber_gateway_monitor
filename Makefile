@@ -125,9 +125,12 @@ validate-ci: check test intake-regression pii-check spell-check catalog-readme-c
 	@$(VENV_BIN)/python scripts/check_owned_deps.py
 
 # Intake pipeline accuracy regression — mirrors CI test-packages step.
+# Gated by the committed fleet baseline: fails when a modem's pipeline
+# status or action grade gets worse. After a deliberate improvement,
+# refresh with --update-baseline and commit the file.
 intake-regression:
 	@echo "🔍 Running intake pipeline regression..."
-	@$(VENV_BIN)/python packages/cable_modem_monitor_catalog_tools/scripts/intake_pipeline_regression.py
+	@$(VENV_BIN)/python packages/cable_modem_monitor_catalog_tools/scripts/intake_pipeline_regression.py --baseline packages/cable_modem_monitor_catalog_tools/scripts/intake_baseline.json
 
 # Fixture PII / credential scan — mirrors CI pii-check job.
 pii-check:

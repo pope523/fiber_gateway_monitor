@@ -53,6 +53,20 @@ def test_http_logout_details(fixture_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "fixture_path",
+    [f for f in HTTP_FIXTURES if "_expected_warnings_contains" in load_fixture(f)],
+    ids=[f.stem for f in HTTP_FIXTURES if "_expected_warnings_contains" in load_fixture(f)],
+)
+def test_http_action_warnings(fixture_path: Path) -> None:
+    """Unresolvable call-site params surface as warnings."""
+    data = load_fixture(fixture_path)
+    warnings: list[str] = []
+    detect_actions(data["_entries"], "http", warnings)
+    for needle in data["_expected_warnings_contains"]:
+        assert any(needle in w for w in warnings), f"no warning mentions {needle!r}: {warnings}"
+
+
+@pytest.mark.parametrize(
+    "fixture_path",
     [f for f in HTTP_FIXTURES if load_fixture(f)["_expected_restart"] is not None],
     ids=[f.stem for f in HTTP_FIXTURES if load_fixture(f)["_expected_restart"] is not None],
 )

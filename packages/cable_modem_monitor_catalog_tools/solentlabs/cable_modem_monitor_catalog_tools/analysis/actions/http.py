@@ -13,6 +13,7 @@ from typing import Any
 
 from ...validation.har_utils import parse_form_params, path_from_url
 from ..types import CoreGap
+from .callsite import find_ajax_callsites
 from .patterns import get_logout_patterns, get_restart_patterns
 from .types import ActionDetail, ActionsDetail
 
@@ -50,13 +51,15 @@ def detect_http_actions(
         warnings = []
     if core_gaps is None:
         core_gaps = []
+    cookie_names = _collect_set_cookie_names(entries)
+
     logout = _find_http_action(entries, _LOGOUT_PATTERNS, "logout", warnings)
     if logout is None:
-        logout = _find_http_action_in_source(entries, _LOGOUT_PATTERNS, "logout")
+        logout = _find_http_action_in_source(entries, _LOGOUT_PATTERNS, "logout", cookie_names, warnings)
 
     restart = _find_http_action(entries, _RESTART_PATTERNS, "restart", warnings)
     if restart is None:
-        restart = _find_http_action_in_source(entries, _RESTART_PATTERNS, "restart")
+        restart = _find_http_action_in_source(entries, _RESTART_PATTERNS, "restart", cookie_names, warnings)
 
     # Flag unmatched action-like POSTs as core gaps (only when both traffic
     # and source-scan came up empty — source_inferred counts as found)
@@ -143,14 +146,45 @@ def _find_http_action_in_source(
     entries: list[dict[str, Any]],
     patterns: tuple[re.Pattern[str], ...],
     action_name: str,
+    cookie_names: frozenset[str],
+    warnings: list[str],
 ) -> ActionDetail | None:
     """Scan captured page source for action endpoint references.
 
     Used as a fallback when no matching request appears in HAR traffic.
-    Extracts quoted strings from response bodies and tests them against
-    the same URL patterns. Returns the first match as source_inferred.
+    Pass 1 parses ``$.ajax({...})`` call sites, which also yield the
+    method and data params. Pass 2 falls back to bare quoted strings
+    tested against the same URL patterns (endpoint only). Either way
+    the result is source_inferred.
     """
-    method = "GET" if action_name == "logout" else "POST"
+    fallback_method = "GET" if action_name == "logout" else "POST"
+
+    for entry in entries:
+        body = entry.get("response", {}).get("content", {}).get("text", "")
+        if not body or "$.ajax" not in body:
+            continue
+        for site in find_ajax_callsites(body):
+            path = site.url if site.url.startswith("/") else f"/{site.url}"
+            if not any(p.search(path) for p in patterns):
+                continue
+            params = _resolve_callsite_params(site.params, site.unresolved, cookie_names, action_name, path, warnings)
+            if site.data_identifier:
+                warnings.append(
+                    f"{action_name} action {path} (source_inferred): data payload is the "
+                    f"JS identifier '{site.data_identifier}' — params could not be "
+                    f"extracted from the call site."
+                )
+            return ActionDetail(
+                type="http",
+                # jQuery defaults a missing `type:` to GET, but every fleet action
+                # call site declares it; absent type falls back to the action-name
+                # prior rather than the jQuery default.
+                method=site.method or fallback_method,
+                endpoint=path,
+                params=params,
+                source="source_inferred",
+            )
+
     for entry in entries:
         body = entry.get("response", {}).get("content", {}).get("text", "")
         if not body:
@@ -161,11 +195,53 @@ def _find_http_action_in_source(
             if any(p.search(path) for p in patterns):
                 return ActionDetail(
                     type="http",
-                    method=method,
+                    method=fallback_method,
                     endpoint=path,
                     source="source_inferred",
                 )
     return None
+
+
+def _resolve_callsite_params(
+    literals: dict[str, str],
+    unresolved: dict[str, str],
+    cookie_names: frozenset[str],
+    action_name: str,
+    path: str,
+    warnings: list[str],
+) -> dict[str, str]:
+    """Resolve call-site data params to config values.
+
+    A param whose name matches a Set-Cookie name observed in the HAR
+    resolves to a ``{cookie:name}`` directive (double-submit CSRF shape)
+    — this wins even over a literal value, which would be the captured
+    session's token, not a reusable one. Remaining literals are emitted
+    verbatim; computed expressions are dropped with a warning.
+    """
+    params: dict[str, str] = {}
+    for name, value in literals.items():
+        params[name] = f"{{cookie:{name}}}" if name in cookie_names else value
+    for name, expression in unresolved.items():
+        if name in cookie_names:
+            params[name] = f"{{cookie:{name}}}"
+        else:
+            warnings.append(
+                f"{action_name} action {path} (source_inferred): param '{name}' is "
+                f"computed in page script ({expression!r}) — resolve its value "
+                f"manually from the page source."
+            )
+    return params
+
+
+def _collect_set_cookie_names(entries: list[dict[str, Any]]) -> frozenset[str]:
+    """Cookie names the modem issues via Set-Cookie response headers."""
+    names: set[str] = set()
+    for entry in entries:
+        for header in entry.get("response", {}).get("headers", []):
+            value = header.get("value", "")
+            if header.get("name", "").lower() == "set-cookie" and "=" in value:
+                names.add(value.split("=", 1)[0].strip())
+    return frozenset(names)
 
 
 def _detect_unmatched_actions(

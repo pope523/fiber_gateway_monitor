@@ -140,6 +140,30 @@ Report what was detected:
   - `none` — not found by either method; request from the contributor before adding config
 - Sections: list formats and channel counts
 
+For source_inferred actions found at a `$.ajax({...})` call site, the
+method and data params are extracted from the call site itself (see
+ONBOARDING_SPEC § Source-Inferred Call-Site Extraction). Params that
+resolve — `{cookie:<name>}` directives and string literals — need no
+manual work. A warning naming an unresolved param (a value computed in
+page script) marks the one remaining judgment step: read the quoted
+expression in the page source and resolve the value by hand. Never
+invent a value the page source doesn't support; if it can't be traced,
+leave the param out and ask the contributor.
+
+Two rules govern this layer:
+
+- **Patterns come from confirmed modems only.** New URL regexes in
+  `action_patterns.json` and new call-shape support in the extractor
+  are authored from hardware-confirmed modems. Unconfirmed intakes
+  consume patterns; they never contribute them.
+- **Every extraction rule must fire on at least one committed fleet
+  HAR.** A proposed rule with zero fleet matches is dead weight built
+  for a hypothesis — reject it. `make intake-regression` grades
+  detected actions against committed modem.yaml files and ratchets
+  them against the fleet baseline (see INTAKE_PIPELINE.md § Intake
+  Pipeline Regression) — an extractor change must improve grades or
+  leave them unchanged.
+
 If `auth.confidence` is not `high`, or `warnings` is non-empty for the auth
 entry, verify the detected strategy against the HAR before proceeding. Pull
 `analysis["auth"]["fields"]` and cross-check:
@@ -254,6 +278,17 @@ If tests fail, diagnose from the structured diff:
 - **Golden mismatch**: compare field-by-field diff
 
 Fix the config, re-run. Loop until green.
+
+Then refresh the fleet baseline so the new modem's grades are recorded
+(without this, `make intake-regression` flags the new entry as NEW and
+fails):
+
+```bash
+python3 packages/cable_modem_monitor_catalog_tools/scripts/intake_pipeline_regression.py \
+  --update-baseline packages/cable_modem_monitor_catalog_tools/scripts/intake_baseline.json
+```
+
+Stage `scripts/intake_baseline.json` alongside the catalog files.
 
 ## Step 10: Regenerate Catalog README
 
