@@ -232,7 +232,7 @@
       "pipeline": "drift",
       "actions": {
         "logout": "pipeline_only",
-        "restart": "mismatch"
+        "restart": "partial"
       },
       "auth": {
         "strategy": "mismatch"
@@ -261,7 +261,7 @@
       "pipeline": "drift",
       "actions": {
         "logout": "pipeline_only",
-        "restart": "mismatch"
+        "restart": "partial"
       },
       "auth": {
         "fields": "match",

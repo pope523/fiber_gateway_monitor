@@ -24,6 +24,11 @@ class ActionDetail:
     action_name: str = ""
     credential_params: list[str] = field(default_factory=list)
     source: str = "observed"  # "observed" | "source_inferred"
+    # Core pre-fetch shape for dynamic (session-tokenized) endpoints:
+    # GET pre_fetch_url, extract the live endpoint whose form action
+    # contains endpoint_pattern, fall back to the static endpoint
+    pre_fetch_url: str = ""
+    endpoint_pattern: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict for MCP tool output."""
@@ -39,6 +44,10 @@ class ActionDetail:
             result["action_name"] = self.action_name
         if self.credential_params:
             result["credential_params"] = self.credential_params
+        if self.pre_fetch_url:
+            result["pre_fetch_url"] = self.pre_fetch_url
+        if self.endpoint_pattern:
+            result["endpoint_pattern"] = self.endpoint_pattern
         return result
 
 

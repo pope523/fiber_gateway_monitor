@@ -143,6 +143,10 @@ def _build_single_action(action: dict[str, Any]) -> dict[str, Any]:
     if action["type"] == "http":
         result["method"] = action.get("method", "GET")
         result["endpoint"] = action.get("endpoint", "")
+        if action.get("endpoint_pattern"):
+            result["endpoint_pattern"] = action["endpoint_pattern"]
+        if action.get("pre_fetch_url"):
+            result["pre_fetch_url"] = action["pre_fetch_url"]
         if action.get("params"):
             result["params"] = action["params"]
     elif action["type"] == "hnap":

@@ -90,6 +90,36 @@ _HNAP_RESTART = {
             {"type": "http", "method": "POST", "endpoint": "/x", "params": {"n": 1}},
             "match",
         ),
+        # Detected pre-fetch shape the committed config lacks (c3700 case)
+        (
+            {
+                "type": "http",
+                "method": "POST",
+                "endpoint": "/goform/RouterStatus",
+                "pre_fetch_url": "/RouterStatus.htm",
+                "endpoint_pattern": "RouterStatus",
+            },
+            {"type": "http", "method": "POST", "endpoint": "/goform/RouterStatus"},
+            "partial",
+        ),
+        # Full pre-fetch shape reproduced (cm2000 case, params aside)
+        (
+            {
+                "type": "http",
+                "method": "POST",
+                "endpoint": "/goform/RouterStatus",
+                "pre_fetch_url": "/RouterStatus.htm",
+                "endpoint_pattern": "RouterStatus",
+            },
+            {
+                "type": "http",
+                "method": "POST",
+                "endpoint": "/goform/RouterStatus",
+                "pre_fetch_url": "/RouterStatus.htm",
+                "endpoint_pattern": "RouterStatus",
+            },
+            "match",
+        ),
     ],
 )
 def test_grade_action(detected: dict | None, committed: dict | None, expected_status: str | None) -> None:

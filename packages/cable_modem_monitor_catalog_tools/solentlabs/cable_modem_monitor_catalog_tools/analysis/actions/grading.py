@@ -91,6 +91,11 @@ def _grade_params(detected: dict[str, Any], committed: dict[str, Any]) -> Grade:
         notes.append(f"param values differ: {differ}")
     if committed.get("json_body") and not detected.get("json_body"):
         notes.append("json_body not produced")
+    for key in ("pre_fetch_url", "endpoint_pattern"):
+        det_value = detected.get(key)
+        com_value = committed.get(key)
+        if (det_value or com_value) and det_value != com_value:
+            notes.append(f"{key}: detected {det_value or 'none'} vs committed {com_value or 'none'}")
 
     if notes:
         return Grade("partial", "; ".join(notes))

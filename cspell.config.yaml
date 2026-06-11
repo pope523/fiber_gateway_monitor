@@ -224,6 +224,7 @@ words:
   - channelid
   - channelidup
   - channeltype
+  - wantype
   - cmconfiguration
   - cmconnectionstatus
   - cmstatus
@@ -434,6 +435,7 @@ words:
   - Callsite
   - callsites
   - connectionpool
+  - onsubmit
   - flowinfo
   - hostnames
   - hostport

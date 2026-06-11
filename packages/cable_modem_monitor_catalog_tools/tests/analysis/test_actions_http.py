@@ -49,6 +49,10 @@ def test_http_logout_details(fixture_path: Path) -> None:
         assert result.logout.credential_params == expected["credential_params"]
     if "source" in expected:
         assert result.logout.source == expected["source"]
+    if "pre_fetch_url" in expected:
+        assert result.logout.pre_fetch_url == expected["pre_fetch_url"]
+    if "endpoint_pattern" in expected:
+        assert result.logout.endpoint_pattern == expected["endpoint_pattern"]
 
 
 @pytest.mark.parametrize(
@@ -85,3 +89,7 @@ def test_http_restart_details(fixture_path: Path) -> None:
         assert result.restart.credential_params == expected["credential_params"]
     if "source" in expected:
         assert result.restart.source == expected["source"]
+    if "pre_fetch_url" in expected:
+        assert result.restart.pre_fetch_url == expected["pre_fetch_url"]
+    if "endpoint_pattern" in expected:
+        assert result.restart.endpoint_pattern == expected["endpoint_pattern"]

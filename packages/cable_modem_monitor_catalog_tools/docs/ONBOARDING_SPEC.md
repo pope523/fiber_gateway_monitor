@@ -461,7 +461,7 @@ not admin operations. Omitting restart is normal and correct.
 #### Source-Inferred Call-Site Extraction
 
 When no request in HAR traffic matches an action pattern, scan captured
-response bodies instead. Two passes, in order:
+response bodies instead. Three passes, in order:
 
 1. **`$.ajax({...})` call sites** (`analysis/actions/callsite.py`) — parse
    the options object for `type`, `url`, and `data`. A `url` matching an
@@ -470,10 +470,26 @@ response bodies instead. Two passes, in order:
    in fleet HARs (XB10 restart, S33-family logout). `$.post(url, {...})`
    appears in fleet page source but never at an action endpoint — it is
    deliberately unsupported until a fleet HAR shows one.
-2. **Bare quoted strings** — the legacy scan; yields endpoint only, with
+2. **`<form action>` URLs** — a captured page's form action matching an
+   action pattern yields the endpoint and method (attribute values may
+   be quoted or bare). A query string on the form action is a
+   per-session dynamic token (Netgear `?id=`), so the config gets the
+   Core pre-fetch shape: bare endpoint as fallback, `endpoint_pattern`
+   keyword, `pre_fetch_url` pointing at the page that embeds the live
+   URL. Form input values are rewritten by page script at submit time
+   (`advButtonClick` sets `buttonSelect` after page load), so params
+   are never extracted from form HTML — a warning names the form's
+   fields for the manual step.
+3. **Bare quoted strings** — the legacy scan; yields endpoint only, with
    the method guessed from the action name (GET for logout, POST for
    restart). The same action-name prior applies in pass 1 when a call
    site has no `type:` field.
+
+**Traffic-observed actions get pre-fetch from form evidence too.** When
+an observed action's endpoint equals a captured page's form action, that
+page is emitted as `pre_fetch_url` (with `endpoint_pattern` only when
+the form action carries a query token). The older keyword-overlap
+heuristic remains warning-only — it suggests, never emits.
 
 **Param resolution rules (pass 1), in precedence order:**
 
