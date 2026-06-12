@@ -14,6 +14,10 @@ actions:
   restart:
     type: hnap
     action_name: SetStatusSecuritySettings
+    # "XXX" is NOT a placeholder. The firmware's MotoStatusSecurity.html
+    # really calls GetMotoStatusSecXXX and sends MotoStatusSecXXX: "XXX".
+    # Confirmed by cvonk's restart-flow HAR (issue #60, June 2026): modem
+    # replied SetStatusSecuritySettingsResult: OK, Action: REBOOT.
     pre_fetch_action: GetMotoStatusSecXXX
     params:
       MotoStatusSecXXX: XXX
