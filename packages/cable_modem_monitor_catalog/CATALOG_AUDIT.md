@@ -2,7 +2,7 @@
 
 > Auto-generated. Run `scripts/generate_catalog_index.py` to refresh.
 
-**42 configurations supported** — 20 confirmed on real hardware, 22 awaiting verification.
+**42 configurations supported** — 21 confirmed on real hardware, 21 awaiting verification.
 
 ---
 
@@ -22,7 +22,6 @@ and share a diagnostics snapshot.
 | SB8200 (v7, url-token) | HTML | Comcast, Cox, Spectrum, Xfinity |  |
 | SB8200 (v7) | HTML | Service Electric Cablevision | synthetic fixture — real capture also welcome |
 | SB8200 (v3) | CBN | Comcast, Cox, Spectrum, Xfinity |  |
-| MB8611 | HNAP | Comcast, Xfinity, Cox, Spectrum |  |
 | C3700 | HTML | Comcast, Cox, Spectrum |  |
 | CM2000 | HTML | Comcast, Cox, Spectrum, Xfinity |  |
 | CM600 | HTML | Comcast, Cox, Spectrum, TWC |  |
@@ -65,6 +64,7 @@ Working on real hardware with a report on file.
 | CODA56 | HTML | Comcast, Xfinity |
 | MB7621 | HTML | Comcast, Cox, Spectrum, TWC, CableOne, RCN, Comcast Xfinity, Suddenlink, BrightHouse |
 | MB8600 | HNAP | Comcast, Xfinity, Cox, Spectrum |
+| MB8611 | HNAP | Comcast, Xfinity, Cox, Spectrum |
 | C7000v2 | HTML | Comcast |
 | CM1100 | HTML | Comcast |
 | CM1200 (basic) | HTML | Comcast, Spectrum, Cox |

@@ -31,7 +31,7 @@ hardware:
   chipset: Broadcom BCM3390
   release_date: "2020"
 
-status: awaiting_verification
+status: confirmed
 sources:
   auth_config: "[#6 MB8611 fails to connect](https://github.com/solentlabs/cable_modem_monitor/issues/6)"
   chipset: "[AfrozAhmad Review](https://afrozahmad.com/blog/motorola-mb8611-cable-modem-review/)"
