@@ -126,8 +126,8 @@ class ModemParserCoordinator:
 
         diagnostics = ParseDiagnostics(
             by_resource=dict(per_resource),
-            system_info_missing=missing,
-            system_info_failed=failed,
+            system_info_fields_missing=missing,
+            system_info_fields_failed=failed,
         )
         return result, diagnostics
 

@@ -587,8 +587,8 @@ class ModemDataCollector:
             return self._build_load_integrity_result(diagnostics, resources)
         # Field outcomes are diagnostics-only — recorded, never a signal.
         # PARSING_SPEC § Field Outcomes.
-        self._last_sysinfo_missing = list(diagnostics.system_info_missing)
-        self._sysinfo_failed.update(diagnostics.system_info_failed)
+        self._last_sysinfo_missing = list(diagnostics.system_info_fields_missing)
+        self._sysinfo_failed.update(diagnostics.system_info_fields_failed)
         return data
 
     def _build_load_integrity_result(self, diagnostics: ParseDiagnostics, resources: dict[str, Any]) -> ModemResult:

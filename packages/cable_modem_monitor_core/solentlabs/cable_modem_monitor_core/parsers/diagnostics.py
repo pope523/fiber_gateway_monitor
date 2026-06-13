@@ -56,18 +56,18 @@ class ParseDiagnostics:
 
     Attributes:
         by_resource: Mapping of resource path to its aggregate AnchorCount.
-        system_info_missing: Mapped system_info fields no configured
+        system_info_fields_missing: Mapped system_info fields no configured
             source produced — the modem did not send the source key.
             Section-level, post-merge. See PARSING_SPEC § Field Outcomes.
-        system_info_failed: Mapped system_info fields whose located
+        system_info_fields_failed: Mapped system_info fields whose located
             value was rejected by type conversion, mapped to the raw
             value (truncated to MAX_FAILED_FIELD_VALUE_LEN). The raw
             value is the repair datum for the catalog format string.
     """
 
     by_resource: dict[str, AnchorCount] = field(default_factory=dict)
-    system_info_missing: list[str] = field(default_factory=list)
-    system_info_failed: dict[str, str] = field(default_factory=dict)
+    system_info_fields_missing: list[str] = field(default_factory=list)
+    system_info_fields_failed: dict[str, str] = field(default_factory=dict)
 
     @property
     def has_zero_fulfillment(self) -> bool:

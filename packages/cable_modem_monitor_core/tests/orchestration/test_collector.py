@@ -1166,7 +1166,7 @@ class TestSystemInfoFieldOutcomes:
         config = _make_config(auth_type="none")
         collector = ModemDataCollector(config, MagicMock(), None, "http://localhost", "", "")
 
-        self._execute_with_diagnostics(collector, ParseDiagnostics(system_info_missing=["system_uptime"]))
+        self._execute_with_diagnostics(collector, ParseDiagnostics(system_info_fields_missing=["system_uptime"]))
         assert collector.last_system_info_fields_missing == ["system_uptime"]
 
         self._execute_with_diagnostics(collector, ParseDiagnostics())
@@ -1179,7 +1179,7 @@ class TestSystemInfoFieldOutcomes:
 
         self._execute_with_diagnostics(
             collector,
-            ParseDiagnostics(system_info_failed={"system_uptime": "01/17/2026 14:52:10"}),
+            ParseDiagnostics(system_info_fields_failed={"system_uptime": "01/17/2026 14:52:10"}),
         )
         self._execute_with_diagnostics(collector, ParseDiagnostics())
 
@@ -1192,12 +1192,12 @@ class TestSystemInfoFieldOutcomes:
 
         self._execute_with_diagnostics(
             collector,
-            ParseDiagnostics(system_info_failed={"system_uptime": "01/17/2026 14:52:10"}),
+            ParseDiagnostics(system_info_fields_failed={"system_uptime": "01/17/2026 14:52:10"}),
         )
         held = collector.system_info_fields_failed
         self._execute_with_diagnostics(
             collector,
-            ParseDiagnostics(system_info_failed={"docsis_status": "garbage"}),
+            ParseDiagnostics(system_info_fields_failed={"docsis_status": "garbage"}),
         )
 
         assert held == {"system_uptime": "01/17/2026 14:52:10"}

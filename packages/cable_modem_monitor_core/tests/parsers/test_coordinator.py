@@ -748,7 +748,7 @@ class TestFieldOutcomes:
         )
 
     def test_absent_field_reported_missing(self) -> None:
-        """Mapped field with no source key anywhere → system_info_missing."""
+        """Mapped field with no source key anywhere → system_info_fields_missing."""
         coordinator = ModemParserCoordinator(self._config())
         resources = {
             "hnap_response": {
@@ -760,11 +760,11 @@ class TestFieldOutcomes:
 
         assert result["system_info"]["software_version"] == "1.0"
         assert "system_uptime" not in result["system_info"]
-        assert diagnostics.system_info_missing == ["system_uptime"]
-        assert diagnostics.system_info_failed == {}
+        assert diagnostics.system_info_fields_missing == ["system_uptime"]
+        assert diagnostics.system_info_fields_failed == {}
 
     def test_failed_conversion_reported_with_raw(self) -> None:
-        """Mapped field rejected by conversion → system_info_failed with raw."""
+        """Mapped field rejected by conversion → system_info_fields_failed with raw."""
         coordinator = ModemParserCoordinator(self._config())
         resources = {
             "hnap_response": {
@@ -777,8 +777,8 @@ class TestFieldOutcomes:
 
         _, diagnostics = coordinator.parse(resources)
 
-        assert diagnostics.system_info_missing == []
-        assert diagnostics.system_info_failed == {"system_uptime": "01/17/2026 14:52:10"}
+        assert diagnostics.system_info_fields_missing == []
+        assert diagnostics.system_info_fields_failed == {"system_uptime": "01/17/2026 14:52:10"}
 
     def test_all_fields_produced(self) -> None:
         """Complete extraction → both outcome channels empty."""
@@ -795,8 +795,8 @@ class TestFieldOutcomes:
         result, diagnostics = coordinator.parse(resources)
 
         assert result["system_info"]["system_uptime"] == "16 days 05h:23m:42s"
-        assert diagnostics.system_info_missing == []
-        assert diagnostics.system_info_failed == {}
+        assert diagnostics.system_info_fields_missing == []
+        assert diagnostics.system_info_fields_failed == {}
 
     def test_field_produced_by_second_source_not_missing(self) -> None:
         """Section-level accounting: produced anywhere counts as produced."""
@@ -829,7 +829,7 @@ class TestFieldOutcomes:
         result, diagnostics = coordinator.parse(resources)
 
         assert result["system_info"]["model_name"] == "T100"
-        assert diagnostics.system_info_missing == []
+        assert diagnostics.system_info_fields_missing == []
 
     def test_underscore_fields_excluded_from_outcomes(self) -> None:
         """Internal fields (hook intermediates) never report as missing."""
@@ -858,5 +858,5 @@ class TestFieldOutcomes:
 
         _, diagnostics = coordinator.parse(resources)
 
-        assert diagnostics.system_info_missing == []
-        assert diagnostics.system_info_failed == {}
+        assert diagnostics.system_info_fields_missing == []
+        assert diagnostics.system_info_fields_failed == {}
