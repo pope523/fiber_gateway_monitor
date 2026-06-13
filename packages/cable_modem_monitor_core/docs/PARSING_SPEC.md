@@ -887,6 +887,86 @@ Diagnostics for Remote Troubleshooting`) as a list of
 Lets bug-report reviewers see at a glance which resources matched
 and which slipped to stub.
 
+### Field Outcomes (system_info)
+
+Anchor counts operate at resource grain. One level down, a parse can
+succeed — anchors fulfilled, channels extracted — while an individual
+`system_info` field that parser.yaml explicitly maps produces nothing.
+That state was previously invisible: an absent source key was skipped
+without logging, and a failed type conversion logged only at DEBUG.
+Field outcomes give it a home in diagnostics.
+
+For each field mapped in `system_info.sources`, the parse pass
+reports one of three outcomes:
+
+| Outcome | Meaning |
+|---------|---------|
+| produced | Field present in merged system_info output (the normal case; not reported, inferred from output) |
+| missing | No configured source produced a value for the field — the source key was absent or empty in every response |
+| failed | A source contained a non-empty value, but type conversion rejected it. The raw value is captured (truncated to a fixed cap) |
+
+Field names beginning with an underscore are internal hook
+intermediates — values a yaml mapping extracts solely as input for a
+parser.py hook — and are excluded from outcome accounting entirely.
+They are not part of the modem's data contract and would otherwise
+report as permanently missing.
+
+Fields produced only by parser.py (the escape hatch for extractions
+with no declarative path yet) are likewise outside the accounting:
+with no yaml declaration there is no expectation to compare against,
+so a broken hook extraction surfaces through field-set change
+detection, not here. When a field graduates from parser.py to a
+parser.yaml mapping (and its resource moves from the PostProcessor's
+`resources` declaration into the mapping), it enters outcome
+accounting automatically.
+
+### Field outcome semantics
+
+- Accounting is section-level, after the multi-source merge: a field
+  mapped in two sources counts as produced if either source produced
+  it. This matches user-visible impact.
+- **No signal or policy coupling.** Unlike zero anchor fulfillment,
+  a missing or failed field never raises a collector signal, never
+  triggers a retry, and never increments a streak. Field outcomes
+  are a diagnostics-only channel. Mapped fields legitimately go
+  missing on firmware variants (same rationale as partial anchor
+  fulfillment above); the catalog entry, not runtime policy, is the
+  place to resolve the mismatch.
+- **Distinct from field-set change detection.** The orchestrator's
+  field-set change event (ORCHESTRATION_SPEC) fires when the produced
+  field set *changes between polls* — a transition detector for
+  firmware updates. Field outcomes compare produced fields against
+  *configured* fields — a steady-state detector. A field that never
+  parses from the first poll onward produces no transition and is
+  visible only here.
+- The captured raw value on `failed` is the repair datum: it lets a
+  maintainer fix a `format` string or `map` entry directly from a
+  user-shared diagnostics download, without a debug-log round-trip.
+  Raw values are captured only for fields parser.yaml explicitly
+  maps — data the catalog already intends to publish in parsed form
+  (same trust decision as `last_stub_body`, see ORCHESTRATION_SPEC §
+  OrchestratorDiagnostics). Values are truncated to a fixed cap as a
+  guard against pathological responses; field values are small.
+
+### Field outcome implementation note
+
+As with anchor counts, this specification defines **what is
+reported**, not the mechanism. `missing` derives centrally from the
+configured-vs-produced set difference; `failed` reporting is
+format-specific — each system_info parser knows when a located value
+was rejected by conversion. The `BaseParser` output shape is
+unchanged; field outcomes ride the same sibling diagnostics channel
+as anchor counts.
+
+**Background:** Issue #98. An Arris S33v3 entry mapped
+`system_uptime` from a source-inferred (synthetic) HAR response. On
+real hardware the field never appeared, and nothing in logs or
+diagnostics could distinguish "modem doesn't send it" from "modem
+sends it in an unhandled format" — resolving the question consumed a
+maintainer session and the mapping had to be dropped on
+absence-of-evidence. Field outcomes make the next such case
+self-diagnosing from the first shared diagnostics download.
+
 ---
 
 ## Channel Type Detection

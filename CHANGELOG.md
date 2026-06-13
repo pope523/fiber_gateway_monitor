@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Diagnostics now report system_info field outcomes.** A mapped field
+  that produces nothing on a successful poll is no longer invisible:
+  the diagnostics download lists fields the modem never sent
+  (`system_info_fields_missing`) and fields whose value type conversion
+  rejected, with the raw value (`system_info_fields_failed`). Lets a
+  field-level parsing gap be diagnosed from the first shared
+  diagnostics file instead of a contributor round-trip. (Related to #98)
+- **Arris S33v3 confirmed on hardware.** Verified via contributor
+  diagnostics: 33 downstream + 6 upstream channels, HNAP SHA256 auth,
+  ICMP health checks working. The firmware does not report uptime;
+  Last Boot Time derives from counter-reset detection. (Related to #98)
+
 ### Changed
 
 - **parser.py declares its own resource needs.** A `PostProcessor` now
@@ -20,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`orphaned_statistics` service (P32).** Finds recorder statistics for a
+- **`orphaned_statistics` service.** Finds recorder statistics for a
   modem that have no registered entity — left behind by a mode switch,
   channel rebonding (ID mode), or a prefix change. Default call returns a
   commented preview of orphaned entity IDs. Pass `execute: true` to purge
@@ -91,7 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Field-set change detection for `system_info` (P25).** The orchestrator
+- **Field-set change detection for `system_info`.** The orchestrator
   now logs a WARNING when parser-level `system_info` fields appear or
   disappear between polls. Surfaces silent firmware-induced regressions
   (e.g., a CSS selector miss after a modem firmware update) that previously

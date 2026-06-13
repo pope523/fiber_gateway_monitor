@@ -539,6 +539,16 @@ captures structured diagnostic data for the user to share in a bug report:
 - **Modem identity:** manufacturer, model, variant, firmware version
   (if known from system_info)
 
+Expected-vs-found capture is not gated on poll failure. A successful
+poll can still under-deliver fields parser.yaml maps — a firmware
+variant that omits a field, or a value in an unhandled format. These
+surface as system_info field outcomes (`PARSING_SPEC § Field
+Outcomes`) in the same diagnostics download: missing fields as a
+list, conversion failures with the raw value that needs a catalog
+fix. Background: #98, where a silently absent uptime field was
+indistinguishable from a malformed one without a contributor
+round-trip.
+
 This data is exposed via HA's integration diagnostics download (JSON).
 The user downloads the file and attaches it to a GitHub issue — no
 log scraping required.

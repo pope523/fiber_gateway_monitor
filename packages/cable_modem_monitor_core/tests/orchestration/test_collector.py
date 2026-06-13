@@ -1143,3 +1143,69 @@ class TestResourceFetchesProperty:
         assert result.success is True
         assert len(collector.last_resource_fetches) == 1
         assert collector.last_resource_fetches[0].path == "/status.html"
+
+
+class TestSystemInfoFieldOutcomes:
+    """Collector exposure of field outcomes (PARSING_SPEC § Field Outcomes).
+
+    missing: snapshot of the most recent parse. failed: retained for
+    the runtime once recorded (stub-body retention rationale).
+    """
+
+    def _execute_with_diagnostics(self, collector: ModemDataCollector, diagnostics: ParseDiagnostics) -> None:
+        modem_data = {"downstream": [], "upstream": [], "system_info": {"model": "T100"}}
+        with (
+            patch.object(collector, "authenticate", return_value=MagicMock(success=True)),
+            patch.object(collector, "_load_resources", return_value=({"data": "ok"}, [])),
+            patch.object(collector, "_parse", return_value=(modem_data, diagnostics)),
+        ):
+            collector.execute()
+
+    def test_missing_is_last_parse_snapshot(self) -> None:
+        """missing reflects the most recent parse; a healed field clears."""
+        config = _make_config(auth_type="none")
+        collector = ModemDataCollector(config, MagicMock(), None, "http://localhost", "", "")
+
+        self._execute_with_diagnostics(collector, ParseDiagnostics(system_info_missing=["system_uptime"]))
+        assert collector.last_system_info_fields_missing == ["system_uptime"]
+
+        self._execute_with_diagnostics(collector, ParseDiagnostics())
+        assert collector.last_system_info_fields_missing == []
+
+    def test_failed_retained_across_polls(self) -> None:
+        """failed entries survive later healthy parses for the runtime."""
+        config = _make_config(auth_type="none")
+        collector = ModemDataCollector(config, MagicMock(), None, "http://localhost", "", "")
+
+        self._execute_with_diagnostics(
+            collector,
+            ParseDiagnostics(system_info_failed={"system_uptime": "01/17/2026 14:52:10"}),
+        )
+        self._execute_with_diagnostics(collector, ParseDiagnostics())
+
+        assert collector.system_info_fields_failed == {"system_uptime": "01/17/2026 14:52:10"}
+
+    def test_failed_property_returns_copy(self) -> None:
+        """A held failed dict must not change when later polls record more failures."""
+        config = _make_config(auth_type="none")
+        collector = ModemDataCollector(config, MagicMock(), None, "http://localhost", "", "")
+
+        self._execute_with_diagnostics(
+            collector,
+            ParseDiagnostics(system_info_failed={"system_uptime": "01/17/2026 14:52:10"}),
+        )
+        held = collector.system_info_fields_failed
+        self._execute_with_diagnostics(
+            collector,
+            ParseDiagnostics(system_info_failed={"docsis_status": "garbage"}),
+        )
+
+        assert held == {"system_uptime": "01/17/2026 14:52:10"}
+
+    def test_outcomes_empty_before_any_poll(self) -> None:
+        """Fresh collector exposes empty outcome channels."""
+        config = _make_config(auth_type="none")
+        collector = ModemDataCollector(config, MagicMock(), None, "http://localhost", "", "")
+
+        assert collector.last_system_info_fields_missing == []
+        assert collector.system_info_fields_failed == {}

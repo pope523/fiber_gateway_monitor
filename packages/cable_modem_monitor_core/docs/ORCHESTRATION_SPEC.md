@@ -851,6 +851,21 @@ class OrchestratorDiagnostics:
             downloads even after the modem recovers. Full body stored;
             no truncation (stub pages are small, and the full body is
             the diagnostic signal).
+        system_info_fields_missing: Field names parser.yaml maps in
+            system_info whose source key appeared in no configured
+            source's response on the most recent completed parse.
+            Snapshot semantics (recomputed per parse, like
+            resource_fetches): a persistent catalog/firmware mismatch
+            is always visible; a healed field clears.
+            See PARSING_SPEC § Field Outcomes.
+        system_info_fields_failed: Mapping of field name to the raw
+            value (truncated) that type conversion rejected. Retained
+            for the rest of the runtime once recorded (stub-body
+            retention rationale: an intermittent failure must survive
+            into a diagnostics download taken after a healthy poll).
+            The raw value is the repair datum for fixing the catalog
+            format string. Only fields parser.yaml explicitly maps are
+            captured. Diagnostics-only; never feeds signals or policy.
 
     Note: auth-failure wire detail is not stored on this dataclass.
     The collector emits a single sanitized ``WARNING`` log when
@@ -870,6 +885,8 @@ class OrchestratorDiagnostics:
     resource_fetches: list[ResourceFetch] = field(default_factory=list)
     last_poll_at: str | None = None
     last_stub_body: dict[str, str] = field(default_factory=dict)
+    system_info_fields_missing: list[str] = field(default_factory=list)
+    system_info_fields_failed: dict[str, str] = field(default_factory=dict)
 
 
 class ConnectionStatus(Enum):

@@ -124,6 +124,13 @@ class ModemDataCollector:
         # Stub body from last LOAD_INTEGRITY failure — kept until next event
         self._last_stub_bodies: dict[str, str] = {}
 
+        # system_info field outcomes (PARSING_SPEC § Field Outcomes).
+        # missing: snapshot of the most recent parse. failed: retained
+        # for the runtime so an intermittent conversion failure survives
+        # into a diagnostics download taken after a healthy poll.
+        self._last_sysinfo_missing: list[str] = []
+        self._sysinfo_failed: dict[str, str] = {}
+
     def execute(self) -> ModemResult:
         """Execute one data collection."""
         start = time.monotonic()
@@ -311,6 +318,19 @@ class ModemDataCollector:
     def last_stub_bodies(self) -> dict[str, str]:
         """Response body snippets from the last LOAD_INTEGRITY event, keyed by resource path."""
         return self._last_stub_bodies
+
+    @property
+    def last_system_info_fields_missing(self) -> list[str]:
+        """Mapped system_info fields no source produced on the most recent parse."""
+        return self._last_sysinfo_missing
+
+    @property
+    def system_info_fields_failed(self) -> dict[str, str]:
+        """Conversion-rejected raw values, retained for the runtime."""
+        # Copy: unlike the sibling properties (reassigned per event),
+        # this dict is mutated in place via update() across polls — a
+        # handed-out reference would change under its consumer.
+        return dict(self._sysinfo_failed)
 
     @property
     def session(self) -> requests.Session:
@@ -565,6 +585,10 @@ class ModemDataCollector:
             )
         if diagnostics.has_zero_fulfillment:
             return self._build_load_integrity_result(diagnostics, resources)
+        # Field outcomes are diagnostics-only — recorded, never a signal.
+        # PARSING_SPEC § Field Outcomes.
+        self._last_sysinfo_missing = list(diagnostics.system_info_missing)
+        self._sysinfo_failed.update(diagnostics.system_info_failed)
         return data
 
     def _build_load_integrity_result(self, diagnostics: ParseDiagnostics, resources: dict[str, Any]) -> ModemResult:
