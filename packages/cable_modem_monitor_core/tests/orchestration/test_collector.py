@@ -37,11 +37,13 @@ from solentlabs.cable_modem_monitor_core.models.modem_config.actions import (
     CbnAction,
     HttpAction,
 )
+from solentlabs.cable_modem_monitor_core.orchestration.auth_failure import (
+    _auth_failure_hint,
+    _should_detect_login_pages,
+)
 from solentlabs.cable_modem_monitor_core.orchestration.collector import (
     LoginLockoutError,
     ModemDataCollector,
-    _auth_failure_hint,
-    _should_detect_login_pages,
 )
 from solentlabs.cable_modem_monitor_core.orchestration.signals import (
     CollectorSignal,

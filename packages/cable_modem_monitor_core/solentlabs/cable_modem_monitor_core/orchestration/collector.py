@@ -13,7 +13,6 @@ import contextlib
 import logging
 import time
 from typing import Any, Final
-from urllib.parse import urlparse, urlunparse
 
 import requests
 
@@ -28,12 +27,17 @@ from ..loaders.http import (
     ResourceLoadError,
 )
 from ..models.modem_config.actions import HttpAction
-from ..models.modem_config.auth import BasicAuth, NoneAuth
+from ..models.modem_config.auth import NoneAuth
 from ..parsers.coordinator import ModemParserCoordinator
 from ..parsers.diagnostics import ParseDiagnostics
 from .actions import execute_action
+from .auth_failure import (
+    _auth_failure_hint,
+    _build_auth_failed_event,
+    _should_detect_login_pages,
+    _strategy_name,
+)
 from .events import (
-    AuthFailed,
     AuthSucceeded,
     CollectionComplete,
     ConnectionFailedDuringLoad,
@@ -59,10 +63,6 @@ from .signals import CollectorSignal
 _logger = logging.getLogger(__name__)
 _LOGOUT_LOG_LEVEL: Final[int] = logging.DEBUG
 _DEFAULT_AUTH_LOG_LEVEL: Final[int] = logging.DEBUG
-
-# Maximum response body characters stored in auth-failure logs (log-line budget).
-_FAILURE_BODY_SNIPPET_MAX: Final[int] = 500
-_REDACTED: Final[str] = "[REDACTED]"
 
 
 class LoginLockoutError(Exception):
@@ -648,29 +648,6 @@ class ModemDataCollector:
             execute_action(self, self._modem_config, actions.logout, log_level=_LOGOUT_LOG_LEVEL)
 
 
-def _auth_failure_hint(modem_config: Any) -> str:
-    """Return a context-appropriate hint for a 401/403 during resource loading."""
-    if modem_config.auth is None or isinstance(modem_config.auth, NoneAuth):
-        return "modem requires authentication (check config)"
-    if isinstance(modem_config.auth, BasicAuth):
-        return "credentials rejected"
-    return "session expired"
-
-
-def _should_detect_login_pages(modem_config: Any) -> bool:
-    """Determine if login page detection should be enabled.
-
-    Only applicable to form-based HTTP auth strategies where the
-    modem may silently serve a login page at data URLs when the
-    session expires. Not applicable to none, basic, or hnap.
-    """
-    if modem_config.auth is None:
-        return False
-    if isinstance(modem_config.auth, NoneAuth | BasicAuth):
-        return False
-    return bool(modem_config.transport != "hnap")
-
-
 def _to_resource_fetches(
     raw: list[tuple[str, float, int, int, str]],
 ) -> list[ResourceFetch]:
@@ -685,88 +662,3 @@ def _to_resource_fetches(
         )
         for r in raw
     ]
-
-
-# ---------------------------------------------------------------------------
-# Auth-failure event builder
-# ---------------------------------------------------------------------------
-
-
-def _build_auth_failed_event(
-    model: str,
-    strategy: str,
-    response: requests.Response | None,
-    error: str,
-    password: str,
-) -> AuthFailed:
-    """Build a sanitized AuthFailed event from raw auth result data."""
-    if response is None:
-        return AuthFailed(
-            model=model,
-            strategy=strategy,
-            error=error,
-            method=None,
-            url=None,
-            status_code=None,
-            content_type=None,
-            response_body=None,
-        )
-
-    method = response.request.method if response.request else "?"
-    url = _strip_url_query(response.url)
-    status = response.status_code
-    content_type = response.headers.get("Content-Type", "")
-    body_snippet = _scrub_password(response.text[:_FAILURE_BODY_SNIPPET_MAX], password)
-    if len(response.text) > _FAILURE_BODY_SNIPPET_MAX:
-        body_snippet = body_snippet + "... (truncated)"
-
-    return AuthFailed(
-        model=model,
-        strategy=strategy,
-        error=error,
-        method=method,
-        url=url,
-        status_code=status,
-        content_type=content_type,
-        response_body=body_snippet,
-    )
-
-
-def _strip_url_query(url: str) -> str:
-    """Replace any URL query string with ``?<redacted>``.
-
-    URL-token strategies put base64-encoded credentials directly in
-    the query (``?<base64(user:password)>``). Stripping the query
-    wholesale is conservative — non-credential queries lose
-    visibility, but they're rare in modem auth and not worth the
-    field-name guessing it would take to differentiate.
-    """
-    parsed = urlparse(url)
-    if not parsed.query:
-        return url
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, "<redacted>", parsed.fragment))
-
-
-def _strategy_name(modem_config: Any) -> str:
-    """Return the auth strategy name for the failure log (e.g., ``"form"``)."""
-    auth = getattr(modem_config, "auth", None)
-    return getattr(auth, "strategy", "none") if auth is not None else "none"
-
-
-def _scrub_password(text: str, password: str) -> str:
-    """Replace literal occurrences of the user's password with ``[REDACTED]``.
-
-    Catches the common cases:
-
-    - Modem error pages that echo the submitted password back.
-    - Form-encoded request bodies that some modems include in their
-      response (rare but observed).
-
-    Does not attempt to scrub derived forms (PBKDF2 hashes, encrypted
-    blobs) — those are protocol-shaped credentials, not the user's
-    secret, and reversing them isn't trivial enough to leak useful
-    info from a body snippet.
-    """
-    if not password:
-        return text
-    return text.replace(password, _REDACTED)
