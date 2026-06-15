@@ -64,17 +64,30 @@ Grep each drifted package name to find its declaration file and bucket it
 per the Key Rule. If a package is declared in both a published
 `pyproject.toml` runtime list and a dev file, treat it as HA-constrained.
 
-### 3. Bump the free set
+### 3. Decide whether each free package is even a file change
 
-For each free package, update its declaration per the file's pin style:
+Compare the **declared spec** (not the installed version) to the latest.
+The drift report (`pip list --outdated`) measures the local venv, not
+our declarations, so most "drift" on this floor-based project is just a
+stale venv:
 
-- Pinned `==X` → set to `==<latest>`.
-- Floored `>=X` → only raise the floor on purpose. A stale local venv
-  behind an already-permissive floor just needs `pip install -U <pkg>`,
-  no file edit. Prefer not to raise floors without reason.
+- Floor already permits the latest (e.g. `black>=26.5.1`, latest
+  `26.5.1`) → **nothing to commit.** CI and users install fresh and
+  already get the latest; only the local `.venv` is behind. Sync it with
+  `pip install -U <pkg>` if desired — no tracked change.
+- Spec **excludes** the latest — a cap (`~=`, `<`) or pin (`==`) → this
+  is the only case that needs a file edit, and caps are usually
+  deliberate (`har-capture~=0.9.0`, `types-requests<2.33.0`). Confirm the
+  reason in the nearby comment before touching it.
 
-Treat **major-version jumps** one at a time (e.g. `pytest` 8→9,
-`pytest-asyncio` 0.x→1.x) — they break APIs and tests.
+The build is the gate: notify when old, update only if it stays green.
+Floored deps already track latest in CI, so they are effectively updated
+on every run; the local action is `pip install -U` to match. For held
+caps and pins, periodically try moving the spec forward and adopt the
+new value only if `validate-ci` (and `ha-compat-check` for runtime deps)
+stays green. Take major-version jumps one at a time (e.g. `pytest` 8→9);
+several pins are governed by `pytest-homeassistant-custom-component`,
+not us, and stay where the harness puts them.
 
 ### 4. Verify, and back off breakage
 
