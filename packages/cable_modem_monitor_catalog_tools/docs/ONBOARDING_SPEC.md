@@ -34,7 +34,7 @@ review, commit authorization).
 | [Inputs](#inputs) | What the onboarding process requires |
 | [Outputs](#outputs) | Artifacts generated (modem.yaml, parser.yaml, etc.) |
 | [Workflow](#workflow) | End-to-end onboarding flow (capture → analysis → testing → review) |
-| [HAR Validation Gate](#har-validation-gate) | Three-step HAR quality check before proceeding |
+| [HAR Validation Gate](#har-validation-gate) | Four-step HAR quality check before proceeding |
 | [Decision Tree](#decision-tree) | 7-phase detection: transport, auth, session, format, fields |
 | [parser.py Decision](#parserpy-decision) | When code post-processing is needed vs config-only |
 | [Error Handling](#error-handling) | Hard stops, warnings, confidence annotations |
@@ -249,6 +249,26 @@ observed and what's missing. Do not guess.
 If the HAR shows no login flow and all requests return 200 with data
 content, this is valid for `auth: none` modems. The "post-auth only"
 hard stop does not apply when there is no auth to capture.
+
+### Step 4: Response body integrity
+
+Detect responses whose body was replaced or stripped **after** capture —
+over-sanitization that destroys the payload the parser needs. The signal
+is tool-agnostic: a recorded `content.size` that greatly exceeds the actual
+`content.text` length means the body shrank between capture and now. The
+common cause is a sanitizer that collapses a whole structured payload (e.g.
+base64-encoded JSON) down to a single redaction token; the field names and
+shape are not PII and must survive, so this is a defect, not expected
+sanitization.
+
+| Wire evidence | Action |
+|--------------|--------|
+| A data response's `content.size` dwarfs its body length (large recorded size, tiny non-empty body) | **HARD STOP**: the HAR is over-sanitized and carries no usable data. Recapture with a fixed sanitizer. |
+
+Empty bodies (`text: ""`) are the "no body captured" case and are not
+flagged here. Static assets and non-2xx responses are excluded. One flagged
+data response condemns the HAR — there is no point analyzing a capture whose
+payloads are gone.
 
 **How to distinguish `none` auth from post-auth HAR:**
 
