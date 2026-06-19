@@ -2,7 +2,7 @@
 
 > Auto-generated. Run `scripts/generate_catalog_index.py` to refresh.
 
-**42 configurations supported** — 21 confirmed on real hardware, 21 awaiting verification.
+**42 configurations supported** — 22 confirmed on real hardware, 20 awaiting verification.
 
 ---
 
@@ -17,10 +17,6 @@ and share a diagnostics snapshot.
 | G54 | HTML | Cox, Spectrum, Xfinity |  |
 | S34 | HNAP | Comcast, Cox, Spectrum, Xfinity |  |
 | SB6141 | HTML | Comcast, Cox, Spectrum, TWC, Mediacom |  |
-| SB8200 (v6, basic) | HTML | Spectrum |  |
-| SB8200 (v7, cookie) | HTML | Spectrum |  |
-| SB8200 (v7, url-token) | HTML | Comcast, Cox, Spectrum, Xfinity |  |
-| SB8200 (v7) | HTML | Service Electric Cablevision | synthetic fixture — real capture also welcome |
 | SB8200 (v3) | CBN | Comcast, Cox, Spectrum, Xfinity |  |
 | C3700 | HTML | Comcast, Cox, Spectrum |  |
 | CM2000 | HTML | Comcast, Cox, Spectrum, Xfinity |  |
@@ -42,6 +38,9 @@ May have open repair work — review individually.
 | Modem | Transport | ISPs |
 |-------|-----------|------|
 | SB6190 | HTML | Comcast, Cox, Spectrum, TWC |
+| SB8200 (v7, cookie) | HTML | Spectrum |
+| SB8200 (v7, url-token) | HTML | Comcast, Cox, Spectrum, Xfinity |
+| SB8200 (v7) | HTML | Service Electric Cablevision |
 | CM1200 | HTML | Comcast, Spectrum, Cox |
 
 ## Confirmed
@@ -57,6 +56,7 @@ Working on real hardware with a report on file.
 | S33 (v3) | HNAP | Comcast, Cox, Spectrum, Xfinity |
 | SB6183 | HTML | Comcast, Cox, Spectrum, Xfinity, Mediacom |
 | SB6190 (form-nonce) | HTML | Comcast, Spectrum |
+| SB8200 (v7, basic) | HTML | Spectrum |
 | SB8200 (v6) | HNAP | Cox |
 | TG3442DE | HTML | Vodafone DE |
 | TM1602A | HTML | Spectrum |

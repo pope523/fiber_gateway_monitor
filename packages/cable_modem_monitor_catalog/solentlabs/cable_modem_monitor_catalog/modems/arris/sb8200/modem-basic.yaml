@@ -13,8 +13,8 @@ auth:
 
 hardware:
   docsis_version: "3.1"
-  hw_version: v6
-  firmware: AB01.01
+  hw_version: v7
+  firmware: AB01.02.053.01
   chipset: "Broadcom BCM3390"
   release_date: "2017"
 
@@ -25,12 +25,14 @@ actions:
     endpoint: "/logout.html"
     requires_session: false
 
-status: awaiting_verification
+status: confirmed
 
 attribution:
   contributors:
     - github: https://github.com/bmn001
       contribution: "HW v6 HAR capture and logout flow HAR (Issue #170)"
+    - github: https://github.com/rct
+      contribution: "HW v7 / AB01.02 confirmation — diagnostics verified (Issue #124)"
 
 sources:
   auth_config: "[#170 — SB8200 v6 Basic auth variant (Spectrum)](https://github.com/solentlabs/cable_modem_monitor/issues/170)"
@@ -41,11 +43,15 @@ isps:
   - Spectrum
 
 notes: |
-  HW v6 firmware variant (AB01.01.009.51_080720_183.0A.NSH). Differs from
-  modem-cookie.yaml (v7) in one functional way: the server does not issue a
-  credential cookie via Set-Cookie on the login response. Instead, the server
-  returns a session token in the auth response body and the browser JS sets
-  it as the credential cookie:
+  Confirmed on HW v7 / AB01.02.053.01 (#124). The auth and parser config was
+  built from the #170 HAR capture on a HW v6 / AB01.01.009.51 Spectrum unit,
+  which was the build source but was never hardware-confirmed. Hardware version
+  does not determine the contract; firmware and ISP provisioning do.
+
+  Body-token auth differs from modem-cookie.yaml in one functional way: the
+  server does not issue a credential cookie via Set-Cookie on the login
+  response. Instead, the server returns a session token in the auth response
+  body and the browser JS sets it as the credential cookie:
     createCookie("credential", result)   // result = 31-char server-issued token
   Core replicates this via inject_credential_cookie: true, which sets the
   credential cookie to the auth response body. Confirmed by contributor (#170):
@@ -68,3 +74,4 @@ notes: |
 references:
   issues:
     - "[#170 — [Modem Request] Arris SB8200 v6 - Spectrum](https://github.com/solentlabs/cable_modem_monitor/issues/170)"
+    - "[#124 — SB8200 HTTPS variant (bare base64 token), HW v7 / AB01.02 confirmation](https://github.com/solentlabs/cable_modem_monitor/issues/124)"

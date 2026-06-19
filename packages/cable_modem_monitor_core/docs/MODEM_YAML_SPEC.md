@@ -513,6 +513,20 @@ auth:
 4. **Empty cookie fallback:** Cookie is empty → no token injection
    (loader attempts without). `AuthResult.response`/`response_url`
    MUST stay unset.
+5. **Login-page body (not a token):** The login response is the login
+   page itself — auth did not establish a session (single-session
+   contention, silent redirect, expired credentials). A token is a
+   single-line, header-safe value; a login page is multi-line HTML.
+   When `inject_credential_cookie` is set, a body that is not
+   header-safe is **not** injected as `cookie_name` — injecting it
+   would corrupt the next request's headers. The credential cookie is
+   left unset and the subsequent data fetch is classified by the
+   loader's login-page detection as `LOAD_AUTH` (the existing
+   self-correcting path — see `ORCHESTRATION_USE_CASES.md` UC-19b).
+   This branch never raises and never reports a spurious success with
+   a corrupt cookie. Regression: SB8200 inject variant #124 (rct —
+   login-page body stuffed into the `credential` cookie crashed
+   `http.client.putheader`).
 
 The collector prefers `auth_context.url_token` (body-derived) over
 cookie extraction when both are available. This ordering matters because
@@ -1431,6 +1445,15 @@ modems/arris/sb8200/
 5. **Per-variant metadata.** Status, attribution, ISPs, and references
    are per-variant. A variant can be `confirmed` while another is
    `awaiting_verification`.
+6. **The variant filename is the persisted config key.** A config
+   entry stores the variant name, and the integration re-resolves it
+   at runtime as `modem-{variant}.yaml` (HA `__init__.py`). Editing a
+   variant's contents — including cosmetic fields like `hw_version` —
+   is safe for existing installs. Renaming, merging, or removing a
+   variant file is not: it orphans every config entry bound to that
+   name and requires a config-entry migration. This is why
+   `hw_version` corrections happen in place rather than by reshaping
+   the variant set.
 
 ### Single-variant modems
 
