@@ -1329,13 +1329,14 @@ before telemetry submission.
 
 The global defaults
 (`packages/cable_modem_monitor_catalog/scripts/data/pii_fields_global.json`)
-cover `mac_address` and `serial_number` — the only PII fields
-observed across the catalog. Add `pii_fields` to a modem's YAML
-only for fields not already in the global list. Omit the key if
-the modem reports no PII beyond the global defaults.
+list `mac_address` and `serial_number` as defensive defaults. CMM no
+longer collects these (no parser extracts them; the intake mapping skips
+them — see SYSTEM_INFO_SPEC § Tiered Sensor Model), so the list is a
+safety net rather than an active strip target. Add `pii_fields` to a
+modem's YAML only for fields not already in the global list. Omit the
+key if the modem reports no PII beyond the global defaults.
 
-Currently no modem reports PII outside the global defaults, so no
-modem.yaml in the catalog carries this key.
+Currently no modem in the catalog carries this key.
 
 ### ISPs and notes
 

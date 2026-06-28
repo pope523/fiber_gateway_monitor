@@ -731,10 +731,13 @@ names/positions to canonical output fields.
 |-----------------|------|:------:|
 | `boot_status` | string | sometimes |
 | `docsis_version` | string | sometimes |
-| `serial_number` | string | sometimes |
 
-System info fields are open-ended — extract whatever the modem provides.
-See [Three-tier field mapping](#three-tier-field-mapping) below.
+System info fields are open-ended — extract whatever the modem provides,
+**except identity PII**: `serial_number` and `mac_address` are deliberately
+not mapped (no CMM consumer; PII risk). The intake mapping skips them so
+they never enter the pipeline. See
+[Three-tier field mapping](#three-tier-field-mapping) below and
+SYSTEM_INFO_SPEC § Tiered Sensor Model.
 
 #### Three-tier field mapping
 

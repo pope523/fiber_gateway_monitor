@@ -1040,11 +1040,14 @@ modem; see FIELD_REGISTRY.md § system_info for the baseline set.
 ### PII
 
 CMM fires the full snapshot. Consumers are responsible for stripping PII
-before any external transmission. Known PII fields in `system_info`:
-`mac_address`, `serial_number`. The global denylist lives in
-`packages/cable_modem_monitor_catalog/scripts/data/pii_fields_global.json`.
-Per-modem additions are declared in `pii_fields` in each modem's
-`modem.yaml`.
+before any external transmission. CMM does not collect identity PII
+(`mac_address`, `serial_number`) — no parser extracts them and the intake
+mapping skips them (see SYSTEM_INFO_SPEC § Tiered Sensor Model). The global
+denylist
+(`packages/cable_modem_monitor_catalog/scripts/data/pii_fields_global.json`)
+retains them as defensive defaults, and per-modem additions are declared in
+`pii_fields` in each modem's `modem.yaml`, so the strip contract still holds
+if a future field surfaces PII.
 
 ---
 

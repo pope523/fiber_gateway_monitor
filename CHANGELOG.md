@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Serial number and MAC address are no longer collected.** These
+  identity fields were scraped during earlier field enrichment but have
+  no consumer in the integration; they were only surfaced as generic
+  pass-through sensors. They are PII with no monitoring value, so the
+  parsers and the intake pipeline no longer extract them. On upgrade,
+  the "Serial Number" and "MAC Address" sensors on the Technicolor XB6,
+  XB7, and XB10 become unavailable and can be deleted.
+
 ## [3.14.0-beta.11] - 2026-06-15
 
 ### Added
