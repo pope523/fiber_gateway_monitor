@@ -55,7 +55,7 @@ Working on real hardware with a report on file.
 | S33 (v3) | HNAP | Comcast, Cox, Spectrum, Xfinity |
 | SB6183 | HTML | Comcast, Cox, Spectrum, Xfinity, Mediacom |
 | SB6190 (form-nonce) | HTML | Comcast, Spectrum |
-| SB8200 (v7, basic) | HTML | Spectrum |
+| SB8200 (v7, body-token) | HTML | Spectrum |
 | SB8200 (v6) | HNAP | Cox |
 | TG3442DE | HTML | Vodafone DE |
 | TM1602A | HTML | Spectrum |

@@ -6,7 +6,7 @@
     "host": "192.168.100.1",
     "manufacturer": "ARRIS",
     "model": "SB8200",
-    "variant": "basic",
+    "variant": "body-token",
     "protocol": "https",
     "legacy_ssl": true,
     "has_credentials": true,
