@@ -1,6 +1,6 @@
 {
   "domain": "cable_modem_monitor",
-  "name": "Cable Modem Monitor",
+  "name": "Fiber Gateway Monitor",
   "after_dependencies": [
     "recorder"
   ],

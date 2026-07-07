@@ -1,8 +1,8 @@
-"""The Cable Modem Monitor integration.
+"""The Fiber Gateway Monitor integration.
 
-Home Assistant adapter layer for monitoring cable modem signal quality
+Home Assistant adapter layer for monitoring fiber gateway signal quality
 and health.  Consumes Core (orchestration, parsing, auth) and Catalog
-(modem configs, parsers) packages — all modem-specific logic lives
+(gateway configs, parsers) packages — all gateway-specific logic lives
 there.
 
 Entry points:
@@ -157,15 +157,15 @@ async def _check_channel_bond_change(
         return
 
     if action == "onboarding":
-        title = "Cable Modem Monitor: Modem online"
+        title = "Fiber Gateway Monitor: Gateway online"
         message = format_onboarding_message(model=model, current=current)
-        notification_id = f"cable_modem_monitor_onboarding_{entry.entry_id}"
+        notification_id = f"fiber_gateway_monitor_onboarding_{entry.entry_id}"
     else:
         # "change" — evaluate only returns this when stored is not None.
         assert stored is not None
-        title = "Cable Modem Monitor: Channel bond changed"
+        title = "Fiber Gateway Monitor: Channel bond changed"
         message = format_change_message(model=model, prior=stored, current=current)
-        notification_id = f"cable_modem_monitor_channel_change_{entry.entry_id}"
+        notification_id = f"fiber_gateway_monitor_channel_change_{entry.entry_id}"
 
     await hass.services.async_call(
         "persistent_notification",
@@ -259,7 +259,7 @@ async def async_setup_entry(
     hass: HomeAssistant,
     entry: CableModemConfigEntry,
 ) -> bool:
-    """Set up Cable Modem Monitor from a config entry.
+    """Set up Fiber Gateway Monitor from a config entry.
 
     Follows the 12-step startup sequence defined in HA_ADAPTER_SPEC.md.
     Steps 1-5 (config loading, Core component creation) run in an
@@ -267,7 +267,7 @@ async def async_setup_entry(
     """
     pkg_versions = await hass.async_add_executor_job(_get_package_versions)
     _LOGGER.info(
-        "Cable Modem Monitor v%s starting [%s %s] — %s",
+        "Fiber Gateway Monitor v%s starting [%s %s] — %s",
         VERSION,
         entry.data.get(CONF_MANUFACTURER, ""),
         entry.data.get(CONF_MODEL, ""),
@@ -294,7 +294,7 @@ async def async_setup_entry(
             _create_core_components, entry.data
         )
     except Exception:
-        _LOGGER.exception("Failed to load modem configuration from catalog")
+        _LOGGER.exception("Failed to load gateway configuration from catalog")
         return False
 
     # Step 6: Create data DataUpdateCoordinator
@@ -315,7 +315,7 @@ async def async_setup_entry(
         _rebuild_channel_map(entry, snapshot, identity_mode)
         await _check_channel_bond_change(hass, entry, snapshot, orchestrator, model)
         hass.bus.async_fire(
-            "cable_modem_monitor_data_updated",
+            "fiber_gateway_monitor_data_updated",
             _build_snapshot_payload(snapshot),
         )
         return snapshot
@@ -323,7 +323,7 @@ async def async_setup_entry(
     data_coordinator = DataUpdateCoordinator[ModemSnapshot](
         hass,
         _LOGGER,
-        name=f"Cable Modem {coordinator_label}",
+        name=f"Fiber Gateway {coordinator_label}",
         update_method=_async_update_data,
         update_interval=(timedelta(seconds=scan_interval) if scan_interval > 0 else None),
         config_entry=entry,
@@ -346,7 +346,7 @@ async def async_setup_entry(
         health_coordinator = DataUpdateCoordinator[HealthInfo](
             hass,
             _LOGGER,
-            name=f"Cable Modem {coordinator_label} Health",
+            name=f"Fiber Gateway {coordinator_label} Health",
             update_method=_async_update_health,
             update_interval=(timedelta(seconds=health_check_interval) if health_check_interval > 0 else None),
             config_entry=entry,
@@ -494,7 +494,7 @@ async def _async_update_listener(
 def _create_core_components(
     data: Mapping[str, Any],
 ) -> tuple[Orchestrator, HealthMonitor | None, ModemIdentity]:
-    """Load modem config and create Core components.
+    """Load gateway config and create Core components.
 
     Implements startup Steps 1-5 from HA_ADAPTER_SPEC.md.  Runs in an
     executor thread because config loading reads YAML files from the

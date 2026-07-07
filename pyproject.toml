@@ -1,17 +1,17 @@
 # pyproject.toml
 # This file defines formatting, linting, type-checking, and test configuration
-# for development consistency across the cable-modem-monitor project.
+# for development consistency across the fiber-gateway-monitor project.
 
 [project]
-name = "cable-modem-monitor"
+name = "fiber-gateway-monitor"
 version = "0.1.0"
-description = "Monitor and analyze cable modem metrics with Home Assistant integration."
+description = "Monitor and analyze fiber gateway metrics with Home Assistant integration."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"  # Pin to Python 3.12 for compatibility and reproducibility
 
 dependencies = [
     # Runtime dependencies
-    "requests>=2.34.2",   # HTTP client for modem polling
+    "requests>=2.34.2",   # HTTP client for gateway polling
     "pydantic>=2.0",      # Data validation and modeling
     "har-capture~=0.9.0", # HAR sanitization + PII validation; library API (custom_patterns kwarg) used in catalog scripts
 ]
@@ -73,7 +73,7 @@ select = [
 # - INP (implicit-namespace-package): the project intentionally uses
 #   namespace packages in three places: tests/ dirs (per pytest's
 #   recommended convention — adding __init__.py causes rootdir and
-#   conftest scope issues), modem parser dirs under
+#   conftest scope issues), gateway parser dirs under
 #   solentlabs/cable_modem_monitor_catalog/modems/* (loaded via
 #   importlib mechanisms that don't require __init__.py), and
 #   scripts/ dirs (run as scripts, not imported). Enabling INP would
@@ -120,7 +120,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-norecursedirs = ["cable-modem-monitor-ql", ".git", "__pycache__", ".venv", "codeql"]
+norecursedirs = ["fiber-gateway-monitor-ql", ".git", "__pycache__", ".venv", "codeql"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-v --strict-markers --tb=short --disable-warnings"
